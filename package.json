@@ -1,0 +1,31 @@
+{
+  "name": "runtime-game",
+  "version": "0.1.0",
+  "description": "RUNTIME — jeu d'horreur rétro en première personne (PC, clavier-souris)",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/d4w647nmnx-hub/Claude-.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "SEE CREDITS.md",
+  "bugs": {
+    "url": "https://github.com/d4w647nmnx-hub/Claude-/issues"
+  },
+  "homepage": "https://github.com/d4w647nmnx-hub/Claude-#readme",
+  "dependencies": {
+    "gsap": "^3.13.0",
+    "three": "^0.160.0",
+    "tone": "^14.8.49"
+  },
+  "devDependencies": {
+    "vite": "^5.4.10"
+  },
+  "private": true,
+  "type": "module"
+}

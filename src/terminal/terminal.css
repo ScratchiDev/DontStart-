@@ -1,0 +1,69 @@
+/* L'écran du moniteur, affiché dans la 3D par CSS3DRenderer. 720 × 540 px CSS, mis à l'échelle sur la vitre du moniteur. */
+.term-root {
+  --c: 0;
+  --phos: hsl(calc(118 - 118 * var(--c)) 100% calc(62% - 12% * var(--c)));
+  --phos-dim: hsl(calc(118 - 118 * var(--c)) 80% 50% / .5);
+  --phos-glow: hsl(calc(118 - 118 * var(--c)) 100% 55% / .55);
+  --hot: #f0fff0;
+  --glass: #0c0905;
+  width: 720px; height: 540px;
+  background: radial-gradient(ellipse at 50% 45%, #0a1408, var(--glass) 75%);
+  position: relative; overflow: hidden; isolation: isolate;
+  font-family: var(--f-screen); color: var(--phos);
+  border-radius: 10px / 14px;
+  user-select: none;
+}
+.term-root.dawn { --phos: hsl(46 45% 86%); --phos-dim: hsl(46 30% 72% / .55); --phos-glow: hsl(46 70% 80% / .4); }
+.term-root .status { position: absolute; left: 0; right: 0; top: 0; z-index: 2; display: flex; gap: 22px; padding: 8px 26px; font-size: 15px; letter-spacing: .14em; color: var(--phos-dim); text-shadow: 0 0 6px var(--phos-glow); }
+.term-root .status b { font-weight: 400; color: var(--phos); font-variant-numeric: tabular-nums; }
+.term-root .status .bar { display: inline-block; width: 70px; height: 7px; vertical-align: middle; border: 1px solid var(--phos-dim); margin: 0 6px; }
+.term-root .status .bar i { display: block; height: 100%; background: var(--phos); transform-origin: left; transform: scaleX(0); }
+.term-root .status .hot b { color: #ff3b24; }
+.term-root .status .hot .bar i { background: #ff3b24; }
+#term { position: absolute; inset: 0; overflow-y: auto; padding: 42px 30px 26px; font-size: 24px; line-height: 1.18; color: var(--phos); text-shadow: 0 0 2px var(--phos), 0 0 12px var(--phos-glow); scrollbar-width: none; animation: flick 5s infinite; }
+#term::-webkit-scrollbar { display: none; }
+.curved #term { filter: url(#crt); }
+@keyframes flick { 0%, 100% { opacity: 1 } 47% { opacity: .96 } 48% { opacity: 1 } 72% { opacity: .98 } }
+.ln { white-space: pre-wrap; min-height: 1.18em; max-width: 60ch; overflow-wrap: anywhere; }
+.ln.dim { color: var(--phos-dim); }
+.ln.tiny { font-size: .7em; color: var(--phos-dim); }
+.ln.typing::after { content: '\2588'; animation: blink 1s steps(1) infinite; margin-left: 1px; }
+@keyframes blink { 50% { opacity: 0 } }
+.ln.err { width: fit-content; max-width: 100%; background: var(--phos); color: var(--glass); text-shadow: none; padding: 0 .35em; margin-block: .35em; box-shadow: 0 0 14px var(--phos-glow); }
+.key { color: var(--hot); text-shadow: 0 0 6px #fff, 0 0 18px var(--phos); }
+.err .key { background: var(--glass); color: var(--hot); padding: 0 .1em; }
+.lvl { display: flex; flex-direction: column; gap: .1em; margin-bottom: 1em; }
+.lvl small { font-size: .75em; color: var(--phos-dim); letter-spacing: .2em; }
+.lvl b { font-family: var(--f-goth); font-weight: 400; font-size: 2.1em; letter-spacing: .02em; line-height: 1; }
+.ln.goth { font-family: var(--f-goth); font-size: 1.6em; }
+.choices { display: flex; flex-direction: column; align-items: flex-start; gap: .15em; margin-block: .7em .5em; }
+.opt { font: inherit; color: inherit; text-shadow: inherit; background: none; border: 0; padding: .05em .4em; margin-left: -.4em; cursor: default; text-align: left; }
+.opt .n { color: var(--phos-dim); }
+.opt.hover, .opt.picked { background: var(--phos); color: var(--glass); text-shadow: none; outline: none; }
+.opt.hover .n, .opt.picked .n { color: var(--glass); }
+.opt.dead { opacity: .28; text-decoration: line-through; }
+.ask { display: flex; align-items: center; gap: .4em; margin-block: .4em; }
+.ask label { color: var(--phos-dim); font-size: .8em; letter-spacing: .1em; }
+.ask input { font: inherit; color: inherit; text-shadow: inherit; background: transparent; border: 0; border-bottom: 1px dashed var(--phos-dim); outline: none; caret-color: var(--phos); flex: 1; min-width: 0; max-width: 14em; text-transform: uppercase; }
+.ask .enter { font-family: var(--f-screen); font-size: .8em; background: none; border: 1px solid var(--phos-dim); color: var(--phos); padding: 0 .4em; }
+.possessed input { color: #ff3b24; text-shadow: 0 0 8px #ff3b24; }
+.fin { margin-top: 1.4em; display: flex; flex-direction: column; align-items: flex-start; gap: .5em; }
+.fin-t { font-size: 1.6em; letter-spacing: .14em; border-block: 1px solid var(--phos-dim); padding-block: .15em; }
+.fin ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .2em 1.2em; color: var(--phos-dim); font-size: .85em; }
+.fin li.got { color: var(--phos); }
+.ch { display: inline-block; white-space: pre; }
+.term-root .fx { position: absolute; inset: 0; pointer-events: none; }
+.term-root #noise { width: 100%; height: 100%; image-rendering: pixelated; opacity: .5; mix-blend-mode: screen; z-index: 2; }
+.term-root .scan { z-index: 3; background: repeating-linear-gradient(to bottom, rgba(0, 0, 0, .3) 0 1px, transparent 1px 3px); }
+.term-root .roll { z-index: 3; background: linear-gradient(to bottom, transparent 0, rgba(255, 255, 255, .045) 50%, transparent 100%); background-size: 100% 38%; background-repeat: no-repeat; animation: roll 9s linear infinite; }
+@keyframes roll { from { background-position: 0 -40% } to { background-position: 0 140% } }
+.term-root .vignette { z-index: 3; background: radial-gradient(ellipse at center, transparent 52%, rgba(0, 0, 0, .78) 100%); box-shadow: inset 0 0 50px rgba(0, 0, 0, .85); }
+.term-root .glare { z-index: 4; background: linear-gradient(160deg, rgba(255, 255, 255, .06), transparent 32%); }
+.term-root #ghost { z-index: 1; display: grid; place-items: center; font-size: 130px; opacity: 0; color: var(--phos); filter: blur(1.5px); text-align: center; line-height: 1; overflow: hidden; }
+.term-root #watch { z-index: 0; opacity: 0; width: 100%; height: 100%; image-rendering: pixelated; mix-blend-mode: screen; -webkit-mask-image: linear-gradient(to right, rgba(0, 0, 0, .45), #000 60%); mask-image: linear-gradient(to right, rgba(0, 0, 0, .45), #000 60%); }
+.term-root #sflash { position: absolute; inset: 0; z-index: 7; background: #000; opacity: 0; pointer-events: none; }
+.term-root #sflash canvas { width: 100%; height: 100%; image-rendering: pixelated; display: block; }
+.term-root #crash { position: absolute; inset: 0; z-index: 6; background: var(--phos); color: var(--glass); padding: 30px 30px; font-size: 22px; line-height: 1.2; white-space: pre-wrap; margin: 0; overflow: hidden; font-family: var(--f-screen); }
+.term-root.rgb #term { text-shadow: -3px 0 rgba(255, 0, 70, .85), 3px 0 rgba(0, 255, 230, .65); }
+.term-root.frozen #term { animation-play-state: paused; }
+@media (prefers-reduced-motion: reduce) { #term, .term-root .roll, .ln.typing::after { animation: none; } }
