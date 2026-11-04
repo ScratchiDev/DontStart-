@@ -1,9 +1,9 @@
 import { defineConfig } from 'vite';
 
-// Le site est servi sur https://d4w647nmnx-hub.github.io/Claude-/ par GitHub Pages,
-// d'où la base. En local (npm run dev) Vite gère ce préfixe tout seul.
+// Sur GitHub Pages, le site est servi sous /<nom-du-dépôt>/ : le workflow passe ce
+// préfixe via BASE_PATH. En local (npm run dev), le jeu est servi à la racine.
 export default defineConfig({
-  base: '/Claude-/',
+  base: process.env.BASE_PATH || '/',
   build: {
     target: 'es2020',
     chunkSizeWarningLimit: 1500,

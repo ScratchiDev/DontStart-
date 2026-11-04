@@ -6,13 +6,13 @@ Une disquette trouvée dans un vide-grenier. Une chambre d'ado plongée dans le 
 
 ## Jouer
 
-- **En ligne** : https://d4w647nmnx-hub.github.io/Claude-/ (une fois GitHub Pages activé, voir plus bas).
+- **En ligne** : https://scratchidev.github.io/runtime/ (une fois GitHub Pages activé, voir plus bas).
 - **En local** :
   ```bash
   npm install
   npm run dev
   ```
-  puis ouvre l'adresse affichée (`http://localhost:5173/Claude-/`).
+  puis ouvre l'adresse affichée (`http://localhost:5173/`).
 
 Conseils : seul, dans le noir, avec un casque. Le jeu contient des sursauts, des cris et des effets clignotants.
 
@@ -37,12 +37,12 @@ Pendant le jeu-terminal, tu peux toujours tourner la tête. Ce n'est pas toujour
 
 ## Mettre en ligne (GitHub Pages)
 
-Le dépôt contient un workflow (`.github/workflows/deploy.yml`) qui construit et publie le jeu à chaque push sur `main`.
+Le dépôt contient un workflow (`.github/workflows/deploy.yml`) qui construit le jeu à chaque push sur `main` et le publie sur la branche `gh-pages`.
 
 1. Sur GitHub, ouvre **Settings → Pages**.
-2. Dans **Build and deployment → Source**, choisis **GitHub Actions**.
+2. Dans **Build and deployment → Source**, choisis **Deploy from a branch**, puis la branche **gh-pages** (dossier `/ (root)`).
 3. Pousse un commit (ou relance le workflow dans l'onglet **Actions**).
-4. Le jeu est servi sur `https://d4w647nmnx-hub.github.io/Claude-/`.
+4. Le jeu est servi sur `https://scratchidev.github.io/runtime/`.
 
 ## Qualité et performances
 

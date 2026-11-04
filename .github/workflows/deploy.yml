@@ -23,9 +23,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+        env:
+          # le site est servi sous https://<compte>.github.io/<nom-du-dépôt>/
+          BASE_PATH: /${{ github.event.repository.name }}/
       - run: touch dist/.nojekyll
-      # Publie le dossier dist sur la branche gh-pages, que GitHub Pages sert
-      # sur https://d4w647nmnx-hub.github.io/Claude-/
+      # Publie le dossier dist sur la branche gh-pages, que GitHub Pages sert.
       - uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
