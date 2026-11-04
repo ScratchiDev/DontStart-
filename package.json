@@ -9,15 +9,15 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/d4w647nmnx-hub/Claude-.git"
+    "url": "git+https://github.com/ScratchiDev/DontStart-.git"
   },
   "keywords": [],
   "author": "",
   "license": "SEE CREDITS.md",
   "bugs": {
-    "url": "https://github.com/d4w647nmnx-hub/Claude-/issues"
+    "url": "https://github.com/ScratchiDev/DontStart-/issues"
   },
-  "homepage": "https://github.com/d4w647nmnx-hub/Claude-#readme",
+  "homepage": "https://github.com/ScratchiDev/DontStart-#readme",
   "dependencies": {
     "gsap": "^3.13.0",
     "three": "^0.160.0",

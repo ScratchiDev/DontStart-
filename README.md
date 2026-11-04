@@ -6,7 +6,7 @@ Une disquette trouvée dans un vide-grenier. Une chambre d'ado plongée dans le 
 
 ## Jouer
 
-- **En ligne** : https://scratchidev.github.io/runtime/ (une fois GitHub Pages activé, voir plus bas).
+- **En ligne** : https://scratchidev.github.io/DontStart-/ (une fois GitHub Pages activé, voir plus bas).
 - **En local** :
   ```bash
   npm install
@@ -42,7 +42,7 @@ Le dépôt contient un workflow (`.github/workflows/deploy.yml`) qui construit l
 1. Sur GitHub, ouvre **Settings → Pages**.
 2. Dans **Build and deployment → Source**, choisis **Deploy from a branch**, puis la branche **gh-pages** (dossier `/ (root)`).
 3. Pousse un commit (ou relance le workflow dans l'onglet **Actions**).
-4. Le jeu est servi sur `https://scratchidev.github.io/runtime/`.
+4. Le jeu est servi sur `https://scratchidev.github.io/DontStart-/`.
 
 ## Qualité et performances
 
