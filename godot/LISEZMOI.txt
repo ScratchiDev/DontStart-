@@ -1,0 +1,26 @@
+RUNTIME - version de développement
+===================================
+
+Lancer le jeu
+-------------
+1. Extrais tout le dossier du .zip (clic droit > Extraire tout).
+2. Double-clique sur RUNTIME.exe.
+
+Windows peut afficher « Windows a protégé votre ordinateur » : le jeu n'est pas
+encore signé numériquement (ce sera fait pour la sortie sur Steam).
+Clique sur « Informations complémentaires », puis sur « Exécuter quand même ».
+
+Commandes
+---------
+ZQSD / WASD ou flèches : marcher        Souris : regarder
+E ou clic gauche : agir                  F : lampe de poche
+Maj : courir                             C ou Ctrl : s'accroupir
+Échap : menu (options : sensibilité, volume, plein écran, qualité)
+
+Conseils : seul, dans le noir, avec un casque.
+Le jeu contient des sursauts et des effets clignotants.
+
+Si le jeu rame : Échap > Options > décoche « Qualité élevée ».
+
+Configuration conseillée : Windows 10 ou 11 64 bits, carte graphique compatible Vulkan
+(la plupart des PC de moins de 10 ans).

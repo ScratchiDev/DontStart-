@@ -1,0 +1,42 @@
+[gd_scene load_steps=8 format=3]
+
+[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Script" path="res://scripts/room.gd" id="2_room"]
+[ext_resource type="PackedScene" path="res://scenes/player.tscn" id="3_player"]
+[ext_resource type="Script" path="res://scripts/hud.gd" id="4_hud"]
+[ext_resource type="Script" path="res://scripts/menu.gd" id="5_menu"]
+[ext_resource type="Shader" path="res://shaders/retro_post.gdshader" id="6_retro"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_retro"]
+shader = ExtResource("6_retro")
+
+[node name="Main" type="Node3D"]
+script = ExtResource("1_main")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+
+[node name="Room" type="Node3D" parent="."]
+script = ExtResource("2_room")
+
+[node name="Player" parent="." instance=ExtResource("3_player")]
+
+[node name="Post" type="CanvasLayer" parent="."]
+layer = 1
+
+[node name="Retro" type="ColorRect" parent="Post"]
+material = SubResource("ShaderMaterial_retro")
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="HUD" type="CanvasLayer" parent="."]
+layer = 5
+script = ExtResource("4_hud")
+
+[node name="Menu" type="CanvasLayer" parent="."]
+process_mode = 3
+layer = 10
+script = ExtResource("5_menu")

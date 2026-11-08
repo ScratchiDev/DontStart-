@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <rect width="128" height="128" rx="14" fill="#0b0a0d"/>
+  <rect x="18" y="14" width="92" height="100" rx="6" fill="#1d1a1e"/>
+  <rect x="28" y="20" width="72" height="30" rx="2" fill="#efe7d2"/>
+  <line x1="32" y1="31" x2="96" y2="31" stroke="#aab0d6" stroke-width="1.5"/>
+  <line x1="32" y1="40" x2="96" y2="40" stroke="#aab0d6" stroke-width="1.5"/>
+  <text x="64" y="38" font-family="cursive" font-size="13" fill="#26286a" text-anchor="middle">NE PAS JOUER</text>
+  <circle cx="64" cy="78" r="15" fill="#0a090a" stroke="#6a6152" stroke-width="4"/>
+  <rect x="58" y="96" width="12" height="16" rx="6" fill="#3f362a"/>
+  <circle cx="41" cy="80" r="3" fill="#5cff6a"/>
+</svg>

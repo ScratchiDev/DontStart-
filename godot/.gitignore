@@ -1,0 +1,5 @@
+# cache d'import et réglages locaux de l'éditeur Godot
+.godot/
+# sorties d'export
+/build/
+*.tmp

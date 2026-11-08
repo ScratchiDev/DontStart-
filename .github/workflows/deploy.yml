@@ -1,8 +1,11 @@
-name: Déployer RUNTIME sur GitHub Pages
+name: Déployer la version web sur GitHub Pages
 
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'godot/**'
+      - '.github/workflows/godot-windows.yml'
   workflow_dispatch:
 
 permissions:

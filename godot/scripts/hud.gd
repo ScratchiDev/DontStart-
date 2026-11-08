@@ -1,0 +1,227 @@
+extends CanvasLayer
+## Interface en jeu : point de visée, invite [E], objectif, messages, disquette en main,
+## mot à lire en plein écran, fondu au noir. Tout est en 640×360, police pixel VT323.
+
+const GREEN := Color(0.36, 1.0, 0.42)
+const PAPER := Color(0.94, 0.9, 0.82)
+const INK := Color(0.15, 0.16, 0.42)
+
+var player: Node
+var root: Control
+var crosshair: ColorRect
+var prompt: Label
+var objective: Label
+var hint_lbl: Label
+var hand: Control
+var paper: Control
+var paper_text: Label
+var fade: ColorRect
+var paper_open := false
+var _hint_left := 0.0
+
+
+func _ready() -> void:
+	add_to_group("hud")
+	root = Control.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var th := Theme.new()
+	th.default_font = Game.fonts.pixel
+	th.default_font_size = 16
+	root.theme = th
+	add_child(root)
+
+	crosshair = ColorRect.new()
+	crosshair.color = Color(1, 1, 1, 0.45)
+	crosshair.set_anchors_preset(Control.PRESET_CENTER)
+	crosshair.size = Vector2(2, 2)
+	crosshair.position = Vector2(-1, -1)
+	crosshair.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(crosshair)
+
+	prompt = _label(GREEN)
+	prompt.set_anchors_preset(Control.PRESET_CENTER)
+	prompt.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	prompt.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	prompt.position = Vector2(-160, 26)
+	prompt.size = Vector2(320, 18)
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0, 0, 0, 0.6)
+	sb.content_margin_left = 6
+	sb.content_margin_right = 6
+	prompt.add_theme_stylebox_override("normal", sb)
+	prompt.visible = false
+	root.add_child(prompt)
+
+	objective = _label(Color(0.62, 0.66, 0.6, 0.85))
+	objective.position = Vector2(10, 6)
+	root.add_child(objective)
+
+	hint_lbl = _label(Color(0.85, 0.82, 0.74))
+	hint_lbl.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	hint_lbl.offset_left = 72
+	hint_lbl.offset_right = -72
+	hint_lbl.offset_top = -52
+	hint_lbl.offset_bottom = -10
+	hint_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint_lbl.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+	hint_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint_lbl.add_theme_constant_override("outline_size", 4)
+	hint_lbl.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+	hint_lbl.modulate.a = 0.0
+	root.add_child(hint_lbl)
+
+	hand = _build_hand()
+	hand.visible = false
+	root.add_child(hand)
+
+	paper = _build_paper()
+	paper.visible = false
+	root.add_child(paper)
+
+	fade = ColorRect.new()
+	fade.color = Color.BLACK
+	fade.set_anchors_preset(Control.PRESET_FULL_RECT)
+	fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(fade)
+
+	Game.objective_changed.connect(func(t: String) -> void: objective.text = t)
+	Game.hint_requested.connect(show_hint)
+
+
+func _label(c: Color) -> Label:
+	var l := Label.new()
+	l.add_theme_color_override("font_color", c)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return l
+
+
+func _build_hand() -> Control:
+	var box := Panel.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.06, 0.06, 0.07)
+	sb.corner_radius_top_left = 2
+	sb.corner_radius_top_right = 2
+	sb.corner_radius_bottom_left = 2
+	sb.corner_radius_bottom_right = 2
+	box.add_theme_stylebox_override("panel", sb)
+	box.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	box.size = Vector2(40, 40)
+	box.position = Vector2(-52, -52)
+	box.rotation = 0.18
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var lab := TextureRect.new()
+	lab.texture = load("res://assets/images/floppy_label.png")
+	lab.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	lab.stretch_mode = TextureRect.STRETCH_SCALE
+	lab.position = Vector2(4, 3)
+	lab.size = Vector2(32, 12)
+	box.add_child(lab)
+	var hub := ColorRect.new()
+	hub.color = Color(0.38, 0.35, 0.3)
+	hub.position = Vector2(16, 22)
+	hub.size = Vector2(8, 8)
+	box.add_child(hub)
+	return box
+
+
+func _build_paper() -> Control:
+	var wrap := ColorRect.new()
+	wrap.color = Color(0, 0, 0, 0.7)
+	wrap.set_anchors_preset(Control.PRESET_FULL_RECT)
+	var sheet := ColorRect.new()
+	sheet.color = PAPER
+	sheet.set_anchors_preset(Control.PRESET_CENTER)
+	sheet.size = Vector2(190, 250)
+	sheet.position = Vector2(-95, -132)
+	sheet.rotation = -0.025
+	wrap.add_child(sheet)
+	for i in 10:
+		var line := ColorRect.new()
+		line.color = Color(0.6, 0.64, 0.82, 0.45)
+		line.position = Vector2(0, 38 + i * 21)
+		line.size = Vector2(190, 1)
+		sheet.add_child(line)
+	paper_text = Label.new()
+	paper_text.add_theme_font_override("font", Game.fonts.hand)
+	paper_text.add_theme_font_size_override("font_size", 26)
+	paper_text.add_theme_color_override("font_color", INK)
+	paper_text.add_theme_constant_override("line_spacing", -7)
+	paper_text.position = Vector2(20, 18)
+	paper_text.size = Vector2(160, 220)
+	sheet.add_child(paper_text)
+	var foot := _label(Color(0.7, 0.68, 0.6))
+	foot.text = "E OU ÉCHAP POUR REPOSER"
+	foot.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	foot.position = Vector2(-80, -22)
+	wrap.add_child(foot)
+	return wrap
+
+
+func set_prompt(it: Interactable) -> void:
+	if it and Game.phase == "room":
+		prompt.text = "[E] " + it.label
+		prompt.visible = true
+		crosshair.color = Color(GREEN, 0.9)
+		crosshair.size = Vector2(3, 3)
+		crosshair.position = Vector2(-1.5, -1.5)
+	else:
+		prompt.visible = false
+		crosshair.color = Color(1, 1, 1, 0.45)
+		crosshair.size = Vector2(2, 2)
+		crosshair.position = Vector2(-1, -1)
+
+
+func show_hint(text: String, seconds := 3.5) -> void:
+	hint_lbl.text = text
+	_hint_left = seconds
+	create_tween().tween_property(hint_lbl, "modulate:a", 1.0, 0.25)
+
+
+func _process(delta: float) -> void:
+	if player and prompt.visible and player.current:
+		prompt.text = "[E] " + player.current.label
+	if _hint_left > 0.0:
+		_hint_left -= delta
+		if _hint_left <= 0.0:
+			create_tween().tween_property(hint_lbl, "modulate:a", 0.0, 0.6)
+
+
+func show_crosshair(v: bool) -> void:
+	crosshair.visible = v
+
+
+func show_hand(v: bool) -> void:
+	hand.visible = v
+
+
+func read_paper(text: String) -> void:
+	paper_text.text = text
+	paper.visible = true
+	paper_open = true
+	prompt.visible = false
+	if player:
+		player.can_move = false
+		player.can_look = false
+	Sfx.play("bookOpen", -10.0)
+
+
+func close_paper() -> void:
+	paper.visible = false
+	paper_open = false
+	if player:
+		player.can_move = true
+		player.can_look = true
+	Sfx.play("bookClose", -12.0)
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	if paper_open and event.is_action_pressed("interact"):
+		get_viewport().set_input_as_handled()
+		close_paper()
+
+
+func fade_to(alpha: float, seconds := 1.0) -> void:
+	var tw := create_tween()
+	tw.tween_property(fade, "color:a", alpha, seconds)
+	await tw.finished
