@@ -13,6 +13,7 @@ const START_POS := Vector3(2.15, 0.0, 1.85)
 const START_YAW := 0.32
 
 var env: Environment
+var gi: VoxelGI
 var waiting_stand := false
 var explore_time := 0.0
 var creaks_done := 0
@@ -20,6 +21,7 @@ var creaks_done := 0
 
 func _ready() -> void:
 	_build_environment()
+	_build_gi()
 	_apply_quality()
 	Game.settings_changed.connect(_apply_quality)
 	hud.player = player
@@ -44,7 +46,7 @@ func _build_environment() -> void:
 	var sky := Sky.new()
 	var pano := PanoramaSkyMaterial.new()
 	pano.panorama = load("res://assets/sky/moonless_golf_1k.hdr")
-	pano.energy_multiplier = 0.35
+	pano.energy_multiplier = 0.22
 	sky.sky_material = pano
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
@@ -72,8 +74,28 @@ func _build_environment() -> void:
 	world.environment = env
 
 
+## Éclairage indirect : la lumière rebondit sur les murs (écran, lampadaire, éclairs, lampe de poche).
+## Le volume est « cuit » au lancement, la lumière, elle, reste dynamique.
+func _build_gi() -> void:
+	gi = VoxelGI.new()
+	gi.name = "VoxelGI"
+	gi.subdiv = VoxelGI.SUBDIV_128
+	gi.size = Vector3(6.8, 3.0, 5.6)
+	gi.position = Vector3(0, 1.3, 0)
+	add_child(gi)
+	var t0 := Time.get_ticks_msec()
+	gi.bake()
+	if gi.data:
+		gi.data.interior = true
+		gi.data.energy = 1.5
+		gi.data.propagation = 0.8
+		gi.data.use_two_bounces = true
+	print("VoxelGI cuit en %d ms" % (Time.get_ticks_msec() - t0))
+
+
 func _apply_quality() -> void:
 	var hq := Game.high_quality
+	gi.visible = hq
 	env.volumetric_fog_enabled = hq
 	env.ssao_enabled = hq
 	room.screen_light.shadow_enabled = hq
@@ -125,7 +147,7 @@ func _stand_up() -> void:
 	player.stand(Vector3(room.seat_pos.x, 0.0, room.seat_pos.z + 0.75), 0.0)
 	hud.show_crosshair(true)
 	Game.phase = "room"
-	Game.objective("Version 0.1 · merci d'avoir testé")
+	Game.objective("Version 0.2 · merci d'avoir testé")
 
 
 func _process(delta: float) -> void:
@@ -211,6 +233,14 @@ func _autotest() -> void:
 	await _view(Vector3(-1.0, 0, 0.2), 0.45, -0.05, "04_armoire")
 	await _view(Vector3(-0.5, 0, -0.6), -PI * 0.5, -0.05, "05_porte")
 	await _view(Vector3(0.5, 0, -1.2), PI, -0.15, "06_vers_le_fond")
+	await _view(Vector3(-2.2, 0, -0.45), PI / 2.0, -0.08, "06b_fenetre_dehors", 1.5)
+	await _view(Vector3(1.7, 0, 1.45), PI / 2.0, -0.75, "06c_empreintes")
+	await _view(Vector3(1.4, 0, -0.55), -0.35, 0.05, "06d_etagere_tableau")
+	await _view(Vector3(-1.1, 0, 1.3), PI / 2.0, 0.55, "06e_plafond_lit")
+	await _view(Vector3(0.3, 0, 0.9), PI * 0.62, 0.0, "06f_avant_eclair", 0.4)
+	room.outside.strike()
+	await get_tree().create_timer(0.14).timeout
+	await _shot("06g_eclair")
 	# parcours joué comme un joueur : on vise avec le rayon, puis on « appuie sur E »
 	await _use_at(Vector3(-2.5, 0, -1.25), 0.0, -0.25, "Ouvrir l'armoire")
 	await get_tree().create_timer(2.0).timeout

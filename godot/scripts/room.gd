@@ -40,6 +40,9 @@ var moon: SpotLight3D
 var door_leaf: Node3D
 var chair: Node3D
 var rng := RandomNumberGenerator.new()
+var window_glass_mat: ShaderMaterial
+var outside: Node3D
+var decor: Node3D
 
 
 func _ready() -> void:
@@ -52,6 +55,14 @@ func _ready() -> void:
 	_build_wall_things()
 	_build_lights()
 	_build_dust()
+	outside = (load("res://scripts/outside.gd") as GDScript).new()
+	outside.name = "Outside"
+	add_child(outside)
+	outside.build(self, window_glass_mat)
+	decor = (load("res://scripts/decor.gd") as GDScript).new()
+	decor.name = "Decor"
+	add_child(decor)
+	decor.build(self)
 
 
 # ------------------------------------------------------------------ matériaux
@@ -77,18 +88,54 @@ func _normal_from_height(file: String, strength: float) -> Texture2D:
 	return ImageTexture.create_from_image(img)
 
 
-func _make_materials() -> void:
-	var wall := StandardMaterial3D.new()
-	wall.albedo_texture = _tex("wall_plaster_dirty_color.jpg")
-	wall.albedo_color = Color(0.66, 0.6, 0.47)
-	wall.normal_enabled = true
-	wall.normal_texture = _tex("wall_plaster_dirty_normalgl.jpg")
-	wall.roughness_texture = _tex("wall_plaster_dirty_roughness.jpg")
-	mats.wall = _triplanar(wall, 0.5)
+var _grime_tex: Texture2D
 
-	var ceil := wall.duplicate() as StandardMaterial3D
-	ceil.albedo_color = Color(0.45, 0.43, 0.39)
-	mats.ceil = ceil
+
+## Crasse et usure : une texture de saleté multipliée par-dessus, projetée dans l'espace
+## (pas de répétition visible d'un meuble à l'autre).
+func _grimy(m: StandardMaterial3D, scale := 0.9) -> StandardMaterial3D:
+	m.detail_enabled = true
+	m.detail_albedo = _grime_tex
+	m.detail_blend_mode = BaseMaterial3D.BLEND_MODE_MUL
+	m.detail_uv_layer = BaseMaterial3D.DETAIL_UV_2
+	m.uv2_triplanar = true
+	m.uv2_world_triplanar = true
+	m.uv2_scale = Vector3.ONE * scale
+	return m
+
+
+func _make_materials() -> void:
+	_grime_tex = _tex("grime.png")
+	var plaster := StandardMaterial3D.new()
+	plaster.albedo_texture = _tex("wall_plaster_dirty_color.jpg")
+	plaster.albedo_color = Color(0.66, 0.6, 0.47)
+	plaster.normal_enabled = true
+	plaster.normal_texture = _tex("wall_plaster_dirty_normalgl.jpg")
+	plaster.roughness_texture = _tex("wall_plaster_dirty_roughness.jpg")
+	mats.plaster = _triplanar(plaster, 0.5)
+
+	# papier peint années 80 (le motif fait 0,6 m), avec le relief du plâtre dessous
+	var wall := StandardMaterial3D.new()
+	wall.albedo_texture = _tex("wallpaper.png")
+	wall.albedo_color = Color(0.8, 0.76, 0.68)
+	wall.normal_enabled = true
+	wall.normal_texture = _normal_from_height("wallpaper_height.png", 1.4)
+	wall.normal_scale = 0.6
+	wall.roughness = 0.92
+	mats.wall = _grimy(_triplanar(wall, 1.0 / 0.6), 0.35)
+
+	# lambris en bas des murs
+	var wains := StandardMaterial3D.new()
+	wains.albedo_texture = _tex("beadboard.png")
+	wains.albedo_color = Color(0.82, 0.78, 0.74)
+	wains.normal_enabled = true
+	wains.normal_texture = _normal_from_height("beadboard_height.png", 5.0)
+	wains.roughness = 0.55
+	mats.wainscot = _grimy(_triplanar(wains, 1.0), 0.6)
+
+	var ceil := plaster.duplicate() as StandardMaterial3D
+	ceil.albedo_color = Color(0.5, 0.48, 0.43)
+	mats.ceil = _grimy(ceil, 0.3)
 
 	var floor_ := StandardMaterial3D.new()
 	floor_.albedo_texture = _tex("hardwood2_diffuse.jpg")
@@ -96,19 +143,20 @@ func _make_materials() -> void:
 	floor_.normal_enabled = true
 	floor_.normal_texture = _normal_from_height("hardwood2_bump.jpg", 6.0)
 	floor_.roughness_texture = _tex("hardwood2_roughness.jpg")
-	mats.floor = _triplanar(floor_, 0.42)
+	mats.floor = _grimy(_triplanar(floor_, 0.42), 0.25)
 
 	var wood := StandardMaterial3D.new()
 	wood.albedo_texture = _tex("hardwood2_diffuse.jpg")
 	wood.albedo_color = Color(0.46, 0.31, 0.21)
 	wood.roughness = 0.62
-	mats.wood = _triplanar(wood, 3.2)
+	mats.wood = _grimy(_triplanar(wood, 3.2))
 	var wood_dark := wood.duplicate() as StandardMaterial3D
 	wood_dark.albedo_color = Color(0.3, 0.2, 0.14)
 	mats.wood_dark = wood_dark
 
-	mats.paint = _plain(Color(0.78, 0.74, 0.66), 0.55)
-	mats.beige = _plain(Color(0.56, 0.52, 0.43), 0.55)
+	mats.paint = _grimy(_plain(Color(0.74, 0.7, 0.62), 0.55), 1.2)
+	mats.beige = _grimy(_plain(Color(0.56, 0.52, 0.43), 0.55), 2.0)
+	mats.door = _grimy(_plain(Color(0.66, 0.63, 0.56), 0.6), 0.8)
 	mats.dark = _plain(Color(0.05, 0.05, 0.055), 0.6)
 	mats.metal = _plain(Color(0.55, 0.53, 0.5), 0.35, 0.8)
 	mats.black_plastic = _plain(Color(0.08, 0.08, 0.08), 0.45)
@@ -132,7 +180,7 @@ func _plain(c: Color, rough := 0.8, metal := 0.0) -> StandardMaterial3D:
 func _remap(m: Material, tint: Dictionary) -> Material:
 	var key := m.resource_name.to_lower() if m else ""
 	if tint.has(key):
-		return _plain(tint[key], 0.95)
+		return _grimy(_plain(tint[key], 0.95))
 	match key:
 		"wood":
 			return mats.wood
@@ -141,22 +189,21 @@ func _remap(m: Material, tint: Dictionary) -> Material:
 		"glass":
 			return mats.glass
 		"lamp":
-			var l := _plain(Color(0.9, 0.86, 0.74), 0.7)
-			return l
+			return _grimy(_plain(Color(0.9, 0.86, 0.74), 0.7))
 		"fur":
-			return _plain(Color(0.33, 0.24, 0.17), 1.0)
+			return _grimy(_plain(Color(0.33, 0.24, 0.17), 1.0))
 		"plant":
-			return _plain(Color(0.16, 0.24, 0.13), 1.0)
+			return _grimy(_plain(Color(0.16, 0.24, 0.13), 1.0))
 		"metaldark":
-			return _plain(Color(0.12, 0.12, 0.12), 0.5, 0.4)
+			return _grimy(_plain(Color(0.12, 0.12, 0.12), 0.5, 0.4))
 	var base := Color(0.5, 0.5, 0.5)
 	if m is BaseMaterial3D:
 		base = (m as BaseMaterial3D).albedo_color
 	if key.begins_with("metal"):
-		return _plain(base * 0.8, 0.38, 0.7)
+		return _grimy(_plain(base * 0.8, 0.38, 0.7))
 	if key.begins_with("carpet"):
-		return _plain(base.darkened(0.45), 1.0)
-	return _plain(base.darkened(0.25), 0.8)
+		return _grimy(_plain(base.darkened(0.45), 1.0))
+	return _grimy(_plain(base.darkened(0.25), 0.8))
 
 
 # ------------------------------------------------------------------ outils de construction
@@ -305,12 +352,23 @@ func _build_shell() -> void:
 	var y := (WIN_Y0 + WIN_Y1) / 2.0
 	_box(Vector3(t, h, WIN_Z0 + D / 2.0), Vector3(x, y, (WIN_Z0 - D / 2.0) / 2.0), mats.wall, true)
 	_box(Vector3(t, h, D / 2.0 - WIN_Z1), Vector3(x, y, (WIN_Z1 + D / 2.0) / 2.0), mats.wall, true)
-	# plinthes
+	# lambris (0 à 0,92 m), cimaise, plinthes, moulures au plafond
+	var wh := 0.92
+	var wt := 0.022
 	var b: Material = mats.wood_dark
-	_box(Vector3(W, 0.1, 0.02), Vector3(0, 0.05, -D / 2.0 + 0.01), b)
-	_box(Vector3(W, 0.1, 0.02), Vector3(0, 0.05, D / 2.0 - 0.01), b)
-	_box(Vector3(0.02, 0.1, D), Vector3(W / 2.0 - 0.01, 0.05, 0), b)
-	_box(Vector3(0.02, 0.1, D), Vector3(-W / 2.0 + 0.01, 0.05, 0), b)
+	for side in [-1.0, 1.0]:
+		var z: float = side * (D / 2.0 - wt / 2.0)
+		_box(Vector3(W, wh, wt), Vector3(0, wh / 2.0, z), mats.wainscot)
+		_box(Vector3(W, 0.045, 0.045), Vector3(0, wh + 0.02, side * (D / 2.0 - 0.022)), b)
+		_box(Vector3(W, 0.11, 0.035), Vector3(0, 0.055, side * (D / 2.0 - wt - 0.017)), b)
+		_box(Vector3(W, 0.07, 0.07), Vector3(0, H - 0.035, side * (D / 2.0 - 0.035)), mats.paint)
+		_box(Vector3(W, 0.03, 0.11), Vector3(0, H - 0.085, side * (D / 2.0 - 0.055)), mats.paint)
+		var xw: float = side * (W / 2.0 - wt / 2.0)
+		_box(Vector3(wt, wh, D), Vector3(xw, wh / 2.0, 0), mats.wainscot)
+		_box(Vector3(0.045, 0.045, D), Vector3(side * (W / 2.0 - 0.022), wh + 0.02, 0), b)
+		_box(Vector3(0.035, 0.11, D), Vector3(side * (W / 2.0 - wt - 0.017), 0.055, 0), b)
+		_box(Vector3(0.07, 0.07, D), Vector3(side * (W / 2.0 - 0.035), H - 0.035, 0), mats.paint)
+		_box(Vector3(0.11, 0.03, D), Vector3(side * (W / 2.0 - 0.055), H - 0.085, 0), mats.paint)
 
 
 func _build_window() -> void:
@@ -327,10 +385,17 @@ func _build_window() -> void:
 	_box(Vector3(0.05, fh, 0.04), Vector3(x - 0.02, fy, fz), p)
 	_box(Vector3(0.05, 0.04, fw), Vector3(x - 0.02, fy + 0.08, fz), p)
 	_box(Vector3(0.26, 0.035, fw + 0.32), Vector3(x + 0.1, WIN_Y0 - 0.02, fz), mats.wood)
-	var glass := _quad(Vector2(fw, fh), Vector3(x - 0.03, fy, fz), mats.glass, PI / 2.0)
+	window_glass_mat = ShaderMaterial.new()
+	window_glass_mat.shader = load("res://shaders/rain_glass.gdshader")
+	window_glass_mat.set_shader_parameter("glass_size", Vector2(fw, fh))
+	var glass := _quad(Vector2(fw, fh), Vector3(x - 0.03, fy, fz), window_glass_mat, PI / 2.0)
 	glass.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var look := _interactable("Regarder dehors", Vector3(0.1, fh, fw), Vector3(x, fy, fz))
-	look.used.connect(func(_i: Interactable) -> void: Game.hint("Dehors, rien ne bouge. Pas même les branches."))
+	look.used.connect(func(_i: Interactable) -> void:
+		if outside.someone_there:
+			Game.hint("La pluie, le lampadaire. Et en face, à la fenêtre allumée, quelqu'un qui regarde par ici.", 4.5)
+		else:
+			Game.hint("La pluie, le lampadaire. La fenêtre d'en face est vide, maintenant.", 4.5))
 	# rideaux (plis animés par un shader)
 	var curtain := ShaderMaterial.new()
 	curtain.shader = load("res://shaders/curtain.gdshader")
@@ -377,6 +442,7 @@ func _build_furniture() -> void:
 		{"carpet": Color(0.24, 0.12, 0.15), "carpetwhite": Color(0.52, 0.5, 0.46)}, "Se coucher")
 	bed.get_meta("interactable").used.connect(func(_i: Interactable) -> void:
 		Game.hint("Pas maintenant. Tu n'as pas sommeil. Tu n'auras plus jamais sommeil."))
+	_build_duvet(bed)
 	prop("bear", Vector3(-2.35, 0.55, 2.25), -110.0, Vector3(0, 0.34, 0), false)
 	var night := prop("cabinetBedDrawerTable", Vector3(-2.92, 0, 0.3), 90.0, Vector3(0.48, 0.55, 0.42))
 	_build_clock(Vector3(-2.95, (night.get_meta("size") as Vector3).y, 0.32))
@@ -390,9 +456,7 @@ func _build_furniture() -> void:
 	_build_floppy(Vector3(-2.42, 1.035, -2.22))
 
 	# porte (mur de droite), fermée
-	var door := prop("doorway", Vector3(W / 2.0 - 0.12, 0, 1.4), -90.0, Vector3(0, 2.12, 0), true, {}, "Ouvrir la porte")
-	door.get_meta("interactable").used.connect(_on_door)
-	door_leaf = door.find_child("door", true, false) as Node3D
+	_build_door(Vector3(W / 2.0, 0, 1.4))
 
 	# commode, photo encadrée (visages rayés), linge par terre
 	var dresser := prop("sideTableDrawers", Vector3(0.75, 0, 2.36), 180.0, Vector3(1.1, 0.8, 0.45))
@@ -410,6 +474,106 @@ func _build_furniture() -> void:
 		{"carpet": Color(0.27, 0.11, 0.12), "carpetdarker": Color(0.14, 0.06, 0.07)})
 	var lamp := prop("lampSquareCeiling", Vector3(0.15, H - 0.38, 0.45), 0.0, Vector3(0, 0.38, 0), false)
 	lamp.position.y = H - (lamp.get_meta("size") as Vector3).y
+
+
+## Vraie porte à panneaux : chambranle, battant sur gonds (door_leaf pivote), poignée, serrure.
+func _build_door(at: Vector3) -> void:
+	var dw := 0.86
+	var dh := 2.04
+	var t := 0.045
+	var x := at.x
+	var zc := at.z
+	var casing: Material = mats.paint
+	_box(Vector3(0.035, dh + 0.1, 0.085), Vector3(x - 0.04, (dh + 0.1) / 2.0, zc - dw / 2.0 - 0.042), casing)
+	_box(Vector3(0.035, dh + 0.1, 0.085), Vector3(x - 0.04, (dh + 0.1) / 2.0, zc + dw / 2.0 + 0.042), casing)
+	_box(Vector3(0.035, 0.09, dw + 0.17), Vector3(x - 0.04, dh + 0.045, zc), casing)
+	_collider(Vector3(0.2, dh, dw + 0.1), Vector3(x - 0.1, dh / 2.0, zc))
+	door_leaf = Node3D.new()
+	door_leaf.position = Vector3(x - 0.035 - t / 2.0, 0, zc - dw / 2.0)
+	add_child(door_leaf)
+	_box(Vector3(t, dh - 0.012, dw - 0.008), Vector3(0, dh / 2.0 + 0.006, dw / 2.0), mats.door, false, door_leaf)
+	var face := -t / 2.0 - 0.005
+	for py in [0.62, 1.58]:
+		for pz in [0.24, dw - 0.24]:
+			var ph := 0.78 if py < 1.0 else 0.66
+			_box(Vector3(0.01, ph, 0.3), Vector3(face, py, pz), mats.door, false, door_leaf)
+			_box(Vector3(0.006, ph - 0.08, 0.22), Vector3(face - 0.007, py, pz), mats.door, false, door_leaf)
+	var knob := MeshInstance3D.new()
+	var sm := SphereMesh.new()
+	sm.radius = 0.028
+	sm.height = 0.05
+	knob.mesh = sm
+	knob.material_override = mats.metal
+	knob.position = Vector3(face - 0.06, 1.0, dw - 0.075)
+	door_leaf.add_child(knob)
+	var neck := MeshInstance3D.new()
+	var cm := CylinderMesh.new()
+	cm.top_radius = 0.009
+	cm.bottom_radius = 0.009
+	cm.height = 0.06
+	neck.mesh = cm
+	neck.material_override = mats.metal
+	neck.rotation.z = PI / 2.0
+	neck.position = Vector3(face - 0.03, 1.0, dw - 0.075)
+	door_leaf.add_child(neck)
+	_box(Vector3(0.006, 0.09, 0.05), Vector3(face - 0.003, 1.0, dw - 0.075), mats.metal, false, door_leaf)
+	_box(Vector3(0.008, 0.02, 0.008), Vector3(face - 0.006, 0.92, dw - 0.075), mats.dark, false, door_leaf)
+	var it := _interactable("Ouvrir la porte", Vector3(0.12, dh, dw), Vector3(0, dh / 2.0, dw / 2.0), door_leaf)
+	it.used.connect(_on_door)
+
+
+## Couette froissée qui recouvre le lit et retombe sur les côtés (maillage généré).
+func _build_duvet(bed: Node3D) -> void:
+	var cover := bed.find_child("cover", true, false) as Node3D
+	var box := _aabb_of(cover if cover else bed, self)
+	var top := box.end.y
+	var cx := box.get_center().x
+	var w := box.size.x
+	var hang := 0.3
+	var zs := box.position.z + box.size.z * 0.24
+	var ze := box.end.z + 0.03
+	var noise := FastNoiseLite.new()
+	noise.seed = 9
+	noise.frequency = 1.6
+	var nx := 30
+	var nz := 34
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for j in nz + 1:
+		for i in nx + 1:
+			var s := lerpf(-w / 2.0 - hang, w / 2.0 + hang, float(i) / nx)
+			var z := lerpf(zs, ze, float(j) / nz)
+			var over := absf(s) - w / 2.0
+			var x := cx + s
+			var y := top + 0.045
+			if over > 0.0:
+				x = cx + signf(s) * (w / 2.0 + 0.025 + over * 0.12)
+				y = top + 0.045 - over * 1.05
+			y += noise.get_noise_2d(s * 1.3, z * 1.3) * 0.04
+			if j < 3:
+				y += 0.03 * (3 - j) / 3.0
+			x += noise.get_noise_2d(z * 4.0, s * 4.0) * 0.008
+			st.set_uv(Vector2(float(i) / nx * 3.0, float(j) / nz * 4.0))
+			st.add_vertex(Vector3(x, y, z))
+	for j in nz:
+		for i in nx:
+			var a := j * (nx + 1) + i
+			var b := a + 1
+			var c := a + nx + 1
+			var d := c + 1
+			st.add_index(a)
+			st.add_index(c)
+			st.add_index(b)
+			st.add_index(b)
+			st.add_index(c)
+			st.add_index(d)
+	st.generate_normals()
+	var mi := MeshInstance3D.new()
+	mi.mesh = st.commit()
+	var m := _grimy(_plain(Color(0.3, 0.13, 0.14), 1.0), 0.8)
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mi.material_override = m
+	add_child(mi)
 
 
 func _build_clock(top: Vector3) -> void:
@@ -581,8 +745,8 @@ func _build_lights() -> void:
 	# clair de lune : vient de dehors, traverse la vitre et dessine les croisillons au sol
 	moon = SpotLight3D.new()
 	moon.light_color = Color(0.55, 0.66, 0.92)
-	moon.light_energy = 9.0
-	moon.light_volumetric_fog_energy = 2.5
+	moon.light_energy = 3.0
+	moon.light_volumetric_fog_energy = 1.0
 	moon.spot_range = 16.0
 	moon.spot_angle = 20.0
 	moon.spot_attenuation = 0.6

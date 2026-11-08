@@ -14,7 +14,7 @@ Le code du jeu RUNTIME est original. Les ressources ci-dessous sont libres de dr
 
 ## Textures
 
-- `wall_plaster_dirty_*`, `hospital_floor_*`, `wall_brick_*` : [ambientCG](https://ambientcg.com) — licence **CC0 1.0**, via le miroir [itz019/tls-textures](https://github.com/itz019/tls-textures). Redimensionnées en 1024 px.
+- `wall_plaster_dirty_*`, `hospital_floor_*`, `wall_brick_*`, `asphalt_wet_*` (asphalte mouillé de la rue) : [ambientCG](https://ambientcg.com) — licence **CC0 1.0**, via le miroir [itz019/tls-textures](https://github.com/itz019/tls-textures). Redimensionnées en 1024 px (512 px pour l'asphalte).
 - `hardwood2_*` : textures de plancher des exemples de [three.js](https://github.com/mrdoob/three.js/tree/dev/examples/textures) (licence MIT du dépôt three.js).
 
 ## Ciel
@@ -24,11 +24,11 @@ Le code du jeu RUNTIME est original. Les ressources ci-dessous sont libres de dr
 ## Sons
 
 - **RPG Audio** et **Impact Sounds** par [Kenney](https://kenney.nl) — licence **CC0 1.0**. `godot/assets/audio/*.ogg`.
-- `room_tone.wav`, `crt_hum.wav`, `drive_seek.wav` : générés pour le jeu par `godot/tools/make_assets.py`.
+- `room_tone.wav`, `crt_hum.wav`, `drive_seek.wav`, `rain_loop.wav`, `thunder.wav` : générés pour le jeu par `godot/tools/make_assets.py`.
 
 ## Images
 
-- Affiches, mot punaisé, étiquette de disquette, photo de famille : générées pour le jeu par `godot/tools/make_assets.py`.
+- Affiches, mot punaisé, étiquette de disquette, photo de famille, calendrier, tableau en liège, horloge, papiers, manuel, fenêtre d'en face, papier peint, lambris, crasse, décalques (taches, moisissure, griffures, empreintes) : générés pour le jeu par `godot/tools/make_assets.py`.
 
 ## Polices
 

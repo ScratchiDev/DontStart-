@@ -97,6 +97,6 @@ func boot() -> void:
 	await _line("Tu es assis devant moi. La porte est fermée.", GREEN, 0.035, 0.8)
 	await _line("Elle le restera.", DIM, 0.05, 1.6)
 	text.newline()
-	await _line("[ VERSION 0.1 · LA PARTIE COMMENCE DANS LA PROCHAINE VERSION ]", DIM, 0.008, 0.2)
+	await _line("[ VERSION 0.2 · LA PARTIE COMMENCE DANS UNE PROCHAINE VERSION ]", DIM, 0.008, 0.2)
 	mode = "done"
 	boot_finished.emit()

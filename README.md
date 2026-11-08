@@ -23,9 +23,16 @@ Conseils : seul, dans le noir, avec un casque. Le jeu contient des sursauts et d
 | Lampe de poche | F |
 | Menu, options | Échap (sensibilité, volume, plein écran, qualité) |
 
-## État du jeu (version 0.1)
+## État du jeu (version 0.2)
 
-- **Fait** : écran-titre, menus et options sauvegardées ; la chambre en 3D (meubles, textures, clair de lune par la fenêtre, lampe de poche, brouillard volumétrique, poussière, rendu rétro 640×360 avec tramage) ; déplacements et interactions (armoire, disquette, ordinateur, mot, photo, réveil, porte, interrupteur, radio) ; s'asseoir devant l'ordinateur, insérer la disquette, démarrage de l'écran ; export Windows automatique.
+- **Fait** :
+  - écran-titre, menus et options sauvegardées ;
+  - la chambre en 3D au premier étage : papier peint années 80, lambris, moulures, meubles salis par le temps, vraie porte à panneaux, couette froissée, et tout le désordre d'une chambre habitée (livres, cassettes VHS, disquettes, manuel, mug, crayons, câble, tableau en liège, calendrier, horloge arrêtée, linge, chaussures, sac) ;
+  - des traces : taches d'humidité au plafond, moisissure, griffures et mots grattés au-dessus du lit, empreintes de pieds nus de la porte jusque sous le lit ;
+  - dehors : jardin, clôture, rue mouillée, lampadaire orange, maison d'en face avec une fenêtre allumée (et quelqu'un derrière), arbres nus dans le vent, pluie, gouttes qui glissent sur la vitre, éclairs qui illuminent la pièce, tonnerre ;
+  - lumière : lampe de poche, lampadaire et éclairs qui projettent l'ombre des croisillons dans la pièce, lueur de l'écran, éclairage indirect (la lumière rebondit sur les murs), brouillard volumétrique, rendu rétro 640×360 avec tramage ;
+  - déplacements et interactions (armoire, disquette, ordinateur, mot, photo, tableau, calendrier, horloge, manuel, réveil, porte, interrupteur, radio, fenêtre) ; s'asseoir devant l'ordinateur, insérer la disquette, démarrage de l'écran ;
+  - export Windows automatique.
 - **Prochaine version** : le jeu-terminal complet sur l'écran du moniteur (les 4 niveaux, les choix à durée limitée, la corruption, les 4 fins), la musique et les sons de tension, les événements dans la chambre pendant la partie, l'entité et les screamers.
 
 ## Développer
