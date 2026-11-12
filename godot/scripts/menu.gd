@@ -192,6 +192,13 @@ func _build_options() -> Control:
 		Game.soft_flashes = on
 		Game.apply_settings())
 	v.add_child(sf)
+	var wh := CheckBox.new()
+	wh.text = "Chuchotements (voix de Windows)"
+	wh.button_pressed = Game.whispers
+	wh.toggled.connect(func(on: bool) -> void:
+		Game.whispers = on
+		Game.apply_settings())
+	v.add_child(wh)
 	v.add_child(_button("Retour", func() -> void:
 		Game.save_settings()
 		if back_target == "title":

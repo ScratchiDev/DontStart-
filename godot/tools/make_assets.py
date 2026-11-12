@@ -1,6 +1,7 @@
 """Génère les images et sons « faits maison » du jeu (affiches, mot, étiquette, ambiances).
 
 Usage : python3 godot/tools/make_assets.py
+        python3 godot/tools/make_assets.py story   (seulement l'acte I ; aussi : house, music)
 Dépendances : Pillow, numpy. Les polices viennent de godot/assets/fonts (licence OFL).
 Ce dossier contient un fichier .gdignore : Godot ne l'importe pas.
 """
@@ -901,14 +902,549 @@ def riser():
 MUSIC = [music_house, music_tension, sting, riser]
 
 
+# ============================================================ v0.3 : l'acte I
+# Objets et sons de la nuit du 31 octobre 2040 chez Henriette et Albert.
+# Chaque fonction a ses PROPRES générateurs à graine fixe (random.Random, np.random.RandomState) :
+# le résultat ne dépend pas de l'ordre d'exécution. Ces fonctions remplacent volontairement
+# calendar.png, floppy_label.png et photo.png des versions précédentes (STORY passe en dernier).
+# Les sons en boucle sont construits de façon circulaire (filtres dans le domaine fréquentiel,
+# enveloppes périodiques) : la fin raccorde exactement avec le début.
+
+
+def _grime_local(img, amount, rng):
+    """Comme grime(), mais avec son propre générateur (random.Random) : ne touche pas au hasard global."""
+    w, h = img.size
+    over = Image.new('RGBA', (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(over)
+    for _ in range(int(w * h / 900)):
+        x, y = rng.randrange(w), rng.randrange(h)
+        d.point((x, y), fill=(0, 0, 0, int(rng.random() * 60 * amount)))
+    for _ in range(6):
+        x = rng.randrange(w)
+        d.line([(x, 0), (x + rng.randint(-20, 20), h)], fill=(255, 255, 255, int(18 * amount)), width=1)
+    for _ in range(3):
+        cx, cy, r = rng.randrange(w), rng.randrange(h), rng.randint(20, 60)
+        d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(60, 40, 10, int(40 * amount)))
+    over = over.filter(ImageFilter.GaussianBlur(1.2))
+    return Image.alpha_composite(img.convert('RGBA'), over).convert('RGB')
+
+
+def _to_img(arr):
+    return Image.fromarray((np.clip(arr, 0, 1) * 255).astype(np.uint8))
+
+
+def _to_arr(img):
+    return np.asarray(img.convert('RGB')).astype(np.float32) / 255.0
+
+
+def _wobbly(pts, rng, amp):
+    """Petit tremblement de la main sur une suite de points."""
+    return [(x + rng.uniform(-amp, amp), y + rng.uniform(-amp, amp)) for x, y in pts]
+
+
+def calendar_octobre():
+    """Calendrier d'octobre 2016, dans l'ancienne chambre de Manon : tous les jours barrés en rouge
+    jusqu'au 30, de plus en plus rageusement ; le 31 entouré si fort que le stylo a troué le papier."""
+    w, h = 300, 420
+    rng = random.Random(301)
+    rs = np.random.RandomState(301)
+    img = Image.new('RGB', (w, h), (232, 226, 210))
+    d = ImageDraw.Draw(img)
+    # le haut illustré : nuit, lune, sapins noirs
+    top, bot = 14, 168
+    sky = lambda y: (int(30 + 30 * (y - top) / (bot - top)), int(40 + 20 * (y - top) / (bot - top)),
+                     int(36 + 10 * (y - top) / (bot - top)))
+    for y in range(top, bot):
+        d.line([(10, y), (w - 11, y)], fill=sky(y))
+    d.ellipse([212, 34, 240, 62], fill=(168, 170, 150))
+    d.ellipse([219, 30, 247, 58], fill=sky(44))                      # croissant de lune
+    trees = Image.new('L', (w, h), 0)
+    dtr = ImageDraw.Draw(trees)
+    for i in range(15):
+        x = 6 + i * 19 + rng.randint(-4, 4)
+        tip = 58 + rng.randint(0, 50)
+        dtr.polygon([(x, bot), (x + 10, tip), (x + 20, bot)], fill=255)
+        for k in range(4):   # étages de branches
+            yy = tip + (bot - tip) * (0.3 + 0.18 * k)
+            half = 4 + (yy - tip) * 0.16
+            dtr.polygon([(x + 10 - half - 3, yy + 4), (x + 10, yy - 8), (x + 10 + half + 3, yy + 4)], fill=255)
+    dtr.rectangle([0, bot - 6, w, bot], fill=255)
+    clip = Image.new('L', (w, h), 0)
+    ImageDraw.Draw(clip).rectangle([10, top, w - 11, bot - 1], fill=255)
+    img.paste((12, 18, 14), (0, 0), Image.fromarray(np.minimum(np.asarray(trees), np.asarray(clip))))
+    d.ellipse([w / 2 - 4, 3, w / 2 + 4, 11], fill=(90, 80, 70))       # trou du clou
+    # le mois
+    d.text((w / 2, 188), 'OCTOBRE 2016', font=font('IBMPlexMono-Bold.ttf', 27), fill=(40, 30, 28), anchor='mm')
+    small = font('IBMPlexMono-Bold.ttf', 12)
+    f = font('IBMPlexMono-Regular.ttf', 18)
+    x0, dx, y0, dy = 32, 40, 238, 29
+    for col, lettre in enumerate('LMMJVSD'):
+        d.text((x0 + col * dx, 213), lettre, font=small, fill=(150, 60, 50) if col == 6 else (110, 100, 92), anchor='mm')
+    d.line([(14, 222), (w - 14, 222)], fill=(190, 180, 164), width=1)
+    ink = Image.new('RGBA', (w, h), (0, 0, 0, 0))   # l'encre rouge, sur un calque
+    di = ImageDraw.Draw(ink)
+    pos = {}
+    for day in range(1, 32):
+        i = day - 1 + 5                              # le 1er octobre 2016 est un samedi
+        row, col = divmod(i, 7)
+        x, y = x0 + col * dx, y0 + row * dy
+        pos[day] = (x, y)
+        d.text((x, y), str(day), font=f, fill=(150, 60, 50) if col == 6 else (50, 44, 40), anchor='mm')
+        if day <= 30:
+            k = day / 30.0                           # de plus en plus fort
+            s = 10 + 5 * k
+            wd = 2 if day < 20 else 3
+            col_ink = (165 + rng.randint(0, 25), 22 + rng.randint(0, 14), 26 + rng.randint(0, 10), 235)
+            for a, b in (((-s, -s * .8), (s, s * .8)), ((s, -s * .8), (-s, s * .8))):
+                mid = (x + (a[0] + b[0]) / 2 + rng.uniform(-2, 2), y + (a[1] + b[1]) / 2 + rng.uniform(-2, 2))
+                di.line(_wobbly([(x + a[0], y + a[1]), mid, (x + b[0], y + b[1])], rng, 1.2), fill=col_ink, width=wd)
+            if day >= 27:                            # repasser plusieurs fois
+                di.line(_wobbly([(x - s, y - s * .7), (x + s, y + s * .9)], rng, 1.5), fill=col_ink, width=2)
+    # le 31 : le cercle repassé encore et encore
+    cx, cy = pos[31]
+    rx, ry = 20, 16
+    for k in range(14):
+        ph = rng.uniform(0, 2 * np.pi)
+        a = np.linspace(ph, ph + 2 * np.pi * rng.uniform(1.0, 1.25), 60)
+        jr = 1 + 0.08 * np.sin(a * 3 + rng.uniform(0, 6))
+        pts = [(cx + rng.uniform(-1.5, 1.5) + rx * jr[j] * np.cos(a[j]), cy + rng.uniform(-1.5, 1.5) + ry * jr[j] * np.sin(a[j]))
+               for j in range(len(a))]
+        di.line(pts, fill=(150 + rng.randint(0, 40), 14, 18, 220), width=rng.choice([2, 2, 3]))
+    img = Image.alpha_composite(img.convert('RGBA'), ink.filter(ImageFilter.GaussianBlur(0.35))).convert('RGB')
+    # le trou : une déchirure le long du cercle, en bas à droite, là où la pointe a traversé
+    hole = Image.new('L', (w, h), 0)
+    dh = ImageDraw.Draw(hole)
+    a = np.linspace(-0.75, 2.3, 44)
+    wid = 1.5 + 7.5 * np.sin(np.pi * (a - a[0]) / (a[-1] - a[0])) ** 0.7 * (1 + 0.25 * np.sin(a * 7))
+    outer = [(cx + (rx + wid[j] * .6 + rng.uniform(-1, 1.2)) * np.cos(a[j]), cy + (ry + wid[j] * .6 + rng.uniform(-1, 1.2)) * np.sin(a[j]))
+             for j in range(len(a))]
+    inner = [(cx + (rx - wid[j] * .55 + rng.uniform(-1.2, 1)) * np.cos(a[j]), cy + (ry - wid[j] * .55 + rng.uniform(-1.2, 1)) * np.sin(a[j]))
+             for j in range(len(a))][::-1]
+    dh.polygon(outer + inner, fill=255)
+    bx, by = cx + (rx + 1) * np.cos(0.9), cy + (ry + 1) * np.sin(0.9)    # là où la pointe a percé
+    dh.polygon([(bx + 9 * np.cos(t) * rng.uniform(.6, 1.15), by + 8 * np.sin(t) * rng.uniform(.6, 1.15))
+                for t in np.linspace(0, 2 * np.pi, 18, endpoint=False)], fill=255)
+    px, py = cx + rx * np.cos(-1.6), cy + ry * np.sin(-1.6)              # une seconde petite perforation
+    dh.polygon([(px + 2.5 * np.cos(t) * rng.uniform(.6, 1.2), py + 2.5 * np.sin(t) * rng.uniform(.6, 1.2))
+                for t in np.linspace(0, 2 * np.pi, 9, endpoint=False)], fill=255)
+    # un lambeau de papier replié vers l'intérieur du trou
+    fx, fy = cx + (rx + 2) * np.cos(0.35), cy + (ry + 2) * np.sin(0.35)
+    flap = [(fx - 2, fy - 4), (fx + 3, fy - 2), (fx - 3, fy + 5)]
+    m = np.asarray(hole).astype(np.float32) / 255.0
+    rim = np.asarray(hole.filter(ImageFilter.MaxFilter(3))).astype(np.float32) / 255.0 - m
+    rim *= rs.rand(h, w) < 0.7                                           # fibres déchirées, irrégulières
+    halo = np.asarray(hole.filter(ImageFilter.GaussianBlur(3))).astype(np.float32) / 255.0
+    arr = _to_arr(img)
+    crush = 0.5 * np.clip(halo * 2, 0, 1) * (1 - m)                      # encre et papier écrasés autour
+    arr = arr * (1 - crush[..., None]) + arr * np.array([0.7, 0.2, 0.2]) * crush[..., None]
+    arr = arr * (1 - rim[..., None] * 0.85) + rim[..., None] * np.array([0.95, 0.93, 0.87]) * 0.85  # fibres claires
+    # derrière le trou : le mur, dans l'ombre, un peu plus clair d'un côté (épaisseur du papier)
+    inner_light = np.asarray(hole.filter(ImageFilter.GaussianBlur(2))).astype(np.float32) / 255.0
+    void = np.array([0.06, 0.05, 0.045]) * (0.6 + 0.8 * (1 - inner_light))[..., None] + 0.02 * rs.rand(h, w, 1)
+    arr = arr * (1 - m[..., None]) + void * m[..., None]
+    img = _to_img(arr)
+    ImageDraw.Draw(img).polygon(flap, fill=(176, 160, 140))
+    arr = _to_arr(img)
+    # papier jauni, gondolé
+    stain = fbm_tile(512, 2.3, 3011)[:h, :w]
+    arr *= (0.88 + 0.16 * stain)[..., None] * np.array([1.0, 0.98, 0.93])
+    img = _grime_local(_to_img(arr), .7, rng)
+    img.save(os.path.join(IMG, 'calendar.png'))
+
+
+def floppy_label_albert():
+    """Étiquette de disquette jaunie : « RUNTIME — SAUV. 01/11/99 » tapé à la machine, et par-dessus,
+    au feutre noir, de travers, l'écriture d'Albert : NE PAS JOUER."""
+    w, h = 256, 96
+    rng = random.Random(302)
+    rs = np.random.RandomState(302)
+    stain = fbm_tile(256, 2.4, 3021)[:h, :w]
+    fib = fbm_tile(256, 0.5, 3022)[:h, :w]
+    yy, xx = np.mgrid[0:h, 0:w]
+    edge = np.minimum(np.minimum(xx, w - 1 - xx), np.minimum(yy, h - 1 - yy))
+    arr = np.array([0.89, 0.84, 0.66]) * ((0.86 + 0.18 * stain) * (0.96 + 0.06 * fib)
+                                          * (0.8 + 0.2 * np.clip(edge / 9.0, 0, 1)))[..., None]
+    img = _to_img(arr)
+    d = ImageDraw.Draw(img)
+    for y in (38, 60, 82):                                   # lignes pré-imprimées
+        d.line([(8, y), (w - 9, y)], fill=(168, 160, 150), width=1)
+    d.rectangle([0, 0, w - 1, 4], fill=(150, 48, 40))         # liseré rouge du haut de l'étiquette
+    # la machine à écrire : chaque lettre un peu décalée, plus ou moins encrée
+    typed = Image.new('L', (w, h), 0)
+    dt = ImageDraw.Draw(typed)
+    tf = font('IBMPlexMono-Regular.ttf', 15)
+    txt = 'RUNTIME — SAUV. 01/11/99'
+    adv = tf.getlength('M')
+    x0 = (w - adv * len(txt)) / 2
+    for i, ch in enumerate(txt):
+        dt.text((x0 + i * adv + rng.uniform(-.3, .3), 22 + rng.uniform(-.7, .7)), ch, font=tf,
+                fill=int(255 * rng.uniform(.62, 1.0)), anchor='lm')
+    t = np.asarray(typed.filter(ImageFilter.GaussianBlur(.45))).astype(np.float32) / 255.0
+    t = np.clip(t * (0.8 + 0.35 * rs.rand(h, w)), 0, 1)    # ruban fatigué
+    arr = _to_arr(img)
+    arr = arr * (1 - t[..., None] * .92) + np.array([0.1, 0.09, 0.12]) * t[..., None] * .92
+    # le feutre : gros trait noir, penché, qui déborde sur le texte tapé
+    hand = None
+    for size in range(64, 30, -2):
+        hand = font('ReenieBeanie.ttf', size)
+        x_a, y_a, x_b, y_b = hand.getbbox('NE PAS JOUER', stroke_width=2)
+        if x_b - x_a < 226:
+            break
+    big = Image.new('L', (w * 2, h * 2), 0)
+    db = ImageDraw.Draw(big)
+    cx, cy = w, h + 8
+    words = [('NE', -.9), ('PAS', .1), ('JOUER', 1.0)]   # chaque mot un peu plus bas : la main qui descend
+    total = hand.getlength('NE PAS JOUER')
+    x = cx - total / 2
+    for word, drop in words:
+        db.text((x, cy + drop * 3), word, font=hand, fill=255, anchor='lm', stroke_width=2, stroke_fill=255)
+        x += hand.getlength(word + ' ')
+    big = big.rotate(-7.5, resample=Image.BICUBIC, center=(cx, cy))
+    big = big.crop((w // 2, h // 2, w // 2 + w, h // 2 + h))
+    m = np.asarray(big.filter(ImageFilter.GaussianBlur(.6))).astype(np.float32) / 255.0
+    streak = 0.88 + 0.12 * np.repeat(rs.rand(1, w), h, axis=0)   # feutre qui sèche un peu
+    m = np.clip(m * 1.15, 0, 1) * streak
+    arr = arr * (1 - m[..., None] * .93) + np.array([0.05, 0.045, 0.05]) * m[..., None] * .93
+    _grime_local(_to_img(arr), .45, rng).save(os.path.join(IMG, 'floppy_label.png'))
+
+
+PHOTO_DATE = "'16 10 31"   # dateur orange dans le coin de la photo (appareil réglé sur l'année, mois, jour)
+
+
+def photo_manon():
+    """Photo jaunie de 2016 : Manon, de dos et de trois-quarts, assise à son bureau devant un écran
+    cathodique vert, dans cette même chambre. Son visage a été rayé au stylo à bille."""
+    w, h = 300, 220
+    rng = random.Random(303)
+    rs = np.random.RandomState(303)
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    scx, scy = 207.0, 92.0                                   # centre de l'écran
+    glow = np.exp(-(((xx - scx) / 85) ** 2 + ((yy - scy) / 70) ** 2))
+    glow_wide = np.exp(-(((xx - scx) / 170) ** 2 + ((yy - scy) / 130) ** 2))
+    green = np.array([0.32, 0.78, 0.42])
+    # la pièce : mur sombre à rayures, fenêtre de nuit à gauche, une affiche
+    stripes = 0.92 + 0.08 * (np.sin(xx * 0.42) > 0)
+    arr = (np.array([0.10, 0.085, 0.07]) * stripes[..., None]
+           + green * (glow * 0.55 + glow_wide * 0.12)[..., None] * stripes[..., None])
+    img = _to_img(arr)
+    d = ImageDraw.Draw(img)
+    d.rectangle([6, 14, 58, 104], fill=(14, 20, 34))                      # fenêtre noire bleutée
+    d.line([(32, 14), (32, 104)], fill=(6, 6, 8), width=3)
+    d.line([(6, 58), (58, 58)], fill=(6, 6, 8), width=3)
+    d.rectangle([0, 8, 14, 120], fill=(26, 20, 18))                       # rideau
+    d.rectangle([94, 18, 132, 66], fill=(46, 52, 44))                     # affiche, à peine éclairée
+    d.rectangle([98, 22, 128, 46], fill=(30, 34, 30))
+    # le bureau
+    d.polygon([(70, 150), (300, 142), (300, 220), (70, 220)], fill=(34, 30, 24))
+    d.polygon([(70, 150), (300, 142), (300, 150), (70, 158)], fill=(70, 96, 70))   # chant éclairé
+    # l'écran cathodique : caisse beige, dalle verte bombée
+    d.polygon([(158, 50), (256, 46), (262, 142), (152, 146)], fill=(64, 70, 58))
+    d.rectangle([174, 142, 238, 150], fill=(44, 46, 40))                   # pied
+    d.polygon([(164, 160), (250, 156), (256, 170), (160, 174)], fill=(40, 44, 38))   # clavier
+    for k in range(4):
+        d.line([(166 + k, 163 + k * 3), (250 + k, 159 + k * 3)], fill=(70, 96, 72), width=1)
+    scr = Image.new('L', (w, h), 0)
+    ds = ImageDraw.Draw(scr)
+    ds.rounded_rectangle([170, 60, 246, 128], radius=9, fill=255)
+    sm = np.asarray(scr.filter(ImageFilter.GaussianBlur(1.0))).astype(np.float32) / 255.0
+    curve = 1 - 0.45 * (((xx - 208) / 40) ** 2 + ((yy - 94) / 36) ** 2)  # coins plus sombres
+    lines = 0.82 + 0.18 * (np.sin(yy * np.pi / 1.5) > 0)                  # lignes de balayage
+    text = np.ones_like(xx)
+    for r in range(8):                                                     # lignes de texte vert pâle
+        ty = 66 + r * 7
+        ln = rng.randint(20, 66)
+        text[ty:ty + 3, 176:176 + ln] = 1.35
+    arr = _to_arr(img)
+    screen = np.array([0.5, 1.0, 0.6]) * (np.clip(curve, 0, 1) * lines * text * 0.85)[..., None]
+    arr = arr * (1 - sm[..., None]) + screen * sm[..., None]
+    # Manon, de dos, tournée vers l'écran : une silhouette en contre-jour
+    sil = Image.new('L', (w, h), 0)
+    dp = ImageDraw.Draw(sil)
+    dp.ellipse([97, 62, 141, 112], fill=255)                               # tête
+    dp.polygon([(98, 88), (140, 84), (147, 116), (151, 146), (124, 152), (93, 148), (95, 116)], fill=255)  # cheveux
+    dp.ellipse([70, 122, 170, 172], fill=255)                              # épaules arrondies
+    dp.polygon([(72, 146), (168, 146), (160, 220), (80, 220)], fill=255)   # dos
+    dp.line([(158, 138), (182, 160), (204, 160)], fill=255, width=13, joint='curve')  # bras vers le clavier
+    dp.ellipse([198, 154, 212, 165], fill=255)                             # main
+    dp.rounded_rectangle([54, 158, 84, 220], radius=5, fill=255)           # dossier de la chaise
+    s = np.asarray(sil.filter(ImageFilter.GaussianBlur(.8))).astype(np.float32) / 255.0
+    body = np.array([0.03, 0.035, 0.03])
+    arr = arr * (1 - s[..., None]) + body * s[..., None]
+    # liseré vert sur les bords tournés vers l'écran (contre-jour)
+    shifted = np.roll(s, -3, axis=1)
+    rim = np.clip(s - shifted, 0, 1) * np.clip(glow * 2.2, 0, 1)
+    arr += green * rim[..., None] * 0.9
+    # la joue, de trois-quarts, à peine éclairée par l'écran
+    cheek = Image.new('L', (w, h), 0)
+    ImageDraw.Draw(cheek).chord([116, 68, 144, 110], -80, 80, fill=255)
+    c = np.asarray(cheek.filter(ImageFilter.GaussianBlur(1.5))).astype(np.float32) / 255.0
+    arr += np.array([0.1, 0.26, 0.14]) * c[..., None]
+    hair = Image.new('L', (w, h), 0)                                       # mèches éclairées
+    dhr = ImageDraw.Draw(hair)
+    for k in range(9):
+        x = 128 + rng.uniform(0, 12)
+        dhr.line([(x, 66 + rng.uniform(0, 8)), (x + rng.uniform(6, 14), 118 + rng.uniform(0, 28))], fill=150, width=1)
+    hm = np.asarray(hair.filter(ImageFilter.GaussianBlur(.5))).astype(np.float32) / 255.0 * s
+    arr += green * hm[..., None] * 0.35
+    # dateur orange
+    stamp = Image.new('L', (w, h), 0)
+    ImageDraw.Draw(stamp).text((w - 12, h - 12), PHOTO_DATE, font=font('IBMPlexMono-Bold.ttf', 12), fill=255, anchor='rb')
+    st = np.asarray(stamp).astype(np.float32) / 255.0
+    stg = np.asarray(stamp.filter(ImageFilter.GaussianBlur(1.6))).astype(np.float32) / 255.0
+    arr += np.array([1.0, 0.5, 0.12]) * np.clip(st * .8 + stg * .5, 0, 1)[..., None]
+    # tirage de 2016 qui a vieilli : flou, grain, noirs délavés, jaunissement, vignette
+    img = _to_img(arr).filter(ImageFilter.GaussianBlur(.7))
+    arr = _to_arr(img)
+    arr += rs.randn(h, w, 1) * 0.025 + rs.randn(h, w, 3) * 0.01
+    lum = arr @ np.array([0.3, 0.55, 0.15])
+    arr = arr * 0.72 + (lum[..., None] * np.array([1.05, 0.95, 0.7])) * 0.28
+    arr = 0.12 + arr * 0.86
+    arr *= np.array([1.0, 0.93, 0.7])
+    vig = 1 - 0.35 * (((xx - w / 2) / (w * .62)) ** 2 + ((yy - h / 2) / (h * .62)) ** 2)
+    stain = fbm_tile(512, 2.4, 3031)[:h, :w]
+    arr *= (vig * (0.9 + 0.16 * stain))[..., None]
+    img = _grime_local(_to_img(arr), .9, rng)
+    # le visage rayé au stylo à bille, par-dessus le tirage : des allers-retours serrés, rageurs
+    ink = Image.new('RGBA', (w, h), (0, 0, 0, 0))
+    di = ImageDraw.Draw(ink)
+    fx, fy, frx, fry = 127, 88, 25, 28
+    for layer in range(6):
+        ang = rng.uniform(-0.9, 0.9)
+        ca, sa = np.cos(ang), np.sin(ang)
+        pts = []
+        v = -fry - 4
+        side = 1
+        while v < fry + 4:
+            half = frx * np.sqrt(max(0.05, 1 - (v / (fry + 4)) ** 2)) + rng.uniform(-4, 4) + (9 if rng.random() < .12 else 0)
+            u = side * half
+            pts.append((fx + u * ca - v * sa, fy + u * sa + v * ca))
+            v += rng.uniform(1.0, 2.2)
+            side = -side
+        di.line(pts, fill=(14, 12, 22, 225), width=1)
+        if layer % 2:                                                       # reflet de l'encre fraîche
+            di.line([(x + 1, y) for x, y in pts[::4]], fill=(96, 104, 140, 45), width=1)
+    for k in range(7):                                                     # quelques coups qui débordent
+        a0 = rng.uniform(0, 2 * np.pi)
+        r0 = rng.uniform(14, 22)
+        di.line([(fx + r0 * np.cos(a0), fy + r0 * np.sin(a0)),
+                 (fx - (r0 + rng.uniform(6, 16)) * np.cos(a0), fy - (r0 + rng.uniform(4, 12)) * np.sin(a0))],
+                fill=(14, 12, 22, 210), width=rng.choice([1, 2]))
+    for k in range(4):                                                     # sillons clairs dans l'émulsion
+        a0 = rng.uniform(0, 2 * np.pi)
+        pts = [(fx + rng.uniform(-8, 8), fy + rng.uniform(-10, 10))]
+        for j in range(5):
+            a0 += rng.uniform(-0.5, 0.5)
+            pts.append((pts[-1][0] + 5 * np.cos(a0), pts[-1][1] + 5 * np.sin(a0)))
+        di.line(pts, fill=(214, 206, 184, 85), width=1)
+    img = Image.alpha_composite(img.convert('RGBA'), ink.filter(ImageFilter.GaussianBlur(.3))).convert('RGB')
+    framed = Image.new('RGB', (w + 24, h + 24), (226, 218, 196))
+    framed.paste(img, (12, 12))
+    fa = _to_arr(framed)
+    fs = fbm_tile(512, 2.2, 3032)[:h + 24, :w + 24]
+    fa *= (0.9 + 0.12 * fs)[..., None] * np.array([1.0, 0.98, 0.9])
+    _to_img(fa).save(os.path.join(IMG, 'photo.png'))
+
+
+def _code39(txt):
+    """Barres d'un code 39 (chiffres et *) : liste de (largeur, est_une_barre)."""
+    table = {'0': '000110100', '1': '100100001', '2': '001100001', '3': '101100000', '4': '000110001',
+             '5': '100110000', '6': '001110000', '7': '000100101', '8': '100100100', '9': '001100100',
+             '*': '010010100'}
+    out = []
+    for ch in '*' + txt + '*':
+        for i, bit in enumerate(table[ch]):
+            out.append((3 if bit == '1' else 1, i % 2 == 0))
+        out.append((1, False))
+    return out
+
+
+def ceraf_label():
+    """Autocollant d'inventaire en alu brossé, usé : CERAF · INVENTAIRE N° 0312, code-barres,
+    PROPRIÉTÉ DU CERAF — NE PAS SORTIR DU SITE. Collé sur le matériel qu'Albert a ramené du labo."""
+    w, h = 256, 96
+    rng = random.Random(304)
+    rs = np.random.RandomState(304)
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    # alu brossé : stries horizontales (bruit étalé le long de x), reflet en bande
+    raw = rs.randn(h, w + 64)
+    k = np.ones(48) / 48
+    brushed = np.array([np.convolve(r, k, mode='same') for r in raw])[:, 32:32 + w]
+    brushed = brushed / (np.abs(brushed).max() + 1e-9)
+    sheen = 0.58 + 0.28 * np.exp(-((yy - 26 - 0.12 * xx) / 26) ** 2)
+    metal = sheen + 0.07 * brushed + 0.02 * rs.randn(h, w)
+    metal = metal[..., None] * np.array([0.97, 0.98, 1.0])
+    # tout ce qui est imprimé en noir, sur un masque
+    ink = Image.new('L', (w, h), 0)
+    di = ImageDraw.Draw(ink)
+    di.rectangle([5, 5, w - 6, 28], fill=255)                                # bandeau noir
+    di.text((w / 2, 17), 'CERAF · INVENTAIRE N° 0312', font=font('IBMPlexMono-Bold.ttf', 14), fill=0, anchor='mm')
+    x = 14
+    for wd, bar in _code39('0312'):
+        if bar:
+            di.rectangle([x, 35, x + wd - 1, 62], fill=255)
+        x += wd
+    di.text((14 + (x - 14) / 2, 69), '0312', font=font('IBMPlexMono-Regular.ttf', 10), fill=255, anchor='mm')
+    di.text((178, 47), 'N° 0312', font=font('IBMPlexMono-Bold.ttf', 24), fill=255, anchor='mm')
+    di.line([(118, 63), (w - 10, 63)], fill=255, width=1)
+    di.text((w / 2, 83), 'PROPRIÉTÉ DU CERAF — NE PAS SORTIR DU SITE', font=font('IBMPlexMono-Bold.ttf', 9),
+            fill=255, anchor='mm')
+    di.rectangle([2, 2, w - 3, h - 3], outline=255, width=1)                 # filet du bord
+    m = np.asarray(ink).astype(np.float32) / 255.0
+    # usure : l'encre part sur les bords, aux frottements et le long des rayures
+    wear = fbm_tile(256, 1.6, 3041)[:h, :w]
+    edge = np.minimum(np.minimum(xx, w - 1 - xx), np.minimum(yy, h - 1 - yy))
+    keep = np.clip((wear + 0.55 * np.clip(edge / 14, 0, 1) - 0.42) * 6, 0, 1)
+    scr = Image.new('L', (w, h), 0)
+    dsc = ImageDraw.Draw(scr)
+    for _ in range(18):
+        x0, y0 = rng.uniform(0, w), rng.uniform(0, h)
+        a = rng.uniform(-0.5, 0.5) + (np.pi / 2 if rng.random() < .2 else 0)
+        ln = rng.uniform(6, 42)
+        dsc.line([(x0, y0), (x0 + ln * np.cos(a), y0 + ln * np.sin(a))], fill=rng.randint(70, 190), width=1)
+    sc = np.asarray(scr).astype(np.float32) / 255.0
+    m = m * keep * (1 - sc * 0.75)
+    arr = metal * (1 - m[..., None]) + np.array([0.06, 0.06, 0.07]) * m[..., None]
+    arr += sc[..., None] * 0.12 * (1 - m[..., None])                         # rayures brillantes dans l'alu
+    dirt = fbm_tile(256, 2.6, 3042)[:h, :w]
+    arr *= (0.78 + 0.25 * dirt * (0.6 + 0.4 * np.clip(edge / 10, 0, 1)))[..., None]
+    arr *= (0.75 + 0.25 * np.clip(edge / 4, 0, 1))[..., None]                # bords encrassés
+    # le coin en bas à droite se décolle
+    img = _to_img(arr)
+    d = ImageDraw.Draw(img)
+    d.polygon([(w - 1, h - 16), (w - 1, h - 1), (w - 16, h - 1)], fill=(40, 40, 42))
+    d.polygon([(w - 1, h - 16), (w - 12, h - 12), (w - 16, h - 1)], fill=(206, 204, 196))
+    d.line([(w - 1, h - 16), (w - 16, h - 1)], fill=(120, 118, 112), width=1)
+    img.save(os.path.join(IMG, 'ceraf_label.png'))
+
+
+def _spec_filter(x, gain):
+    """Filtre circulaire dans le domaine fréquentiel (la boucle reste sans couture). gain(f) -> amplitude."""
+    n = len(x)
+    f = np.fft.rfftfreq(n, 1 / RATE)
+    return np.fft.irfft(np.fft.rfft(x) * gain(f), n)
+
+
+def _butter(f, fc, order, high=False):
+    """Réponse en amplitude d'un Butterworth (passe-bas, ou passe-haut si high)."""
+    r = (np.maximum(f, 1e-6) / fc) if not high else (fc / np.maximum(f, 1e-6))
+    return 1 / np.sqrt(1 + r ** (2 * order))
+
+
+def _seg_env(t, start, dur, shape, period):
+    """Enveloppe d'un segment [start, start+dur] dans une boucle de durée period (u de 0 à 1)."""
+    u = ((t - start) % period) / dur
+    inside = u < 1
+    uu = np.where(inside, u, 0.0)
+    return np.where(inside, shape(uu), 0.0), uu, inside
+
+
+def snore():
+    """Albert ronfle derrière le mur : inspiration ronflée (le voile du palais qui bat vers 30 Hz,
+    souffle grave), puis expiration plus douce. Deux respirations différentes, 8 s, boucle."""
+    sec = 8
+    n = RATE * sec
+    t = np.arange(n) / RATE
+    out = np.zeros(n)
+    # (début, durée inspiration, durée expiration, fréquence du battement, force)
+    for i, (t0, din, dout, fl, amp) in enumerate([(0.45, 1.75, 1.55, 31.0, 1.0), (4.35, 1.55, 1.7, 27.0, 0.82)]):
+        env, u, inside = _seg_env(t, t0, din, lambda u: np.sin(np.pi * u) ** 0.5 * (0.55 + 0.45 * u) * (1 - u ** 6), sec)
+        f = fl * (1 + 0.07 * np.sin(np.pi * u) + 0.03 * np.sin(2 * np.pi * 3.1 * u * din))
+        phase = 2 * np.pi * np.cumsum(f * inside) / RATE
+        pulses = ((1 + np.cos(phase)) / 2) ** 7
+        pulses -= pulses[inside].mean() if inside.any() else 0
+        noise = _band_noise(n, 90, 420, 3050 + i)
+        flap = pulses * 1.1 + noise * (0.4 + 1.1 * ((1 + np.cos(phase)) / 2) ** 3)
+        out += flap * env * amp
+        env2, u2, _ = _seg_env(t, t0 + din + 0.08, dout, lambda u: np.sin(np.pi * u ** 0.6) ** 1.6, sec)
+        breath = _band_noise(n, 110, 600, 3052 + i) * 0.55
+        puff = _band_noise(n, 60, 200, 3054 + i) * 0.4 * np.exp(-u2 * 6)  # petit « pff » des lèvres
+        out += (breath + puff) * env2 * amp * 0.55
+    # le mur : passe-bas fort, coupe le très grave, petite résonance de la cloison
+    wall = lambda f: (_butter(f, 380, 2) * _butter(f, 50, 2, high=True)
+                      * (1 + 0.6 * np.exp(-0.5 * ((f - 130) / 30) ** 2)))
+    out = _spec_filter(out, wall)
+    out = _reverb(out, 0.7, 306, 0.22)                    # la chambre d'à côté (convolution circulaire)
+    out += _band_noise(n, 40, 200, 3056) * np.std(out) * 0.04
+    out /= np.max(np.abs(out))
+    write_wav('snore.wav', out * 0.7)
+
+
+def breath_slow():
+    """Henriette dort derrière sa porte : respiration lente et profonde, étouffée. 10 s, deux cycles, boucle."""
+    sec = 10
+    n = RATE * sec
+    t = np.arange(n) / RATE
+    out = np.zeros(n)
+    for i, (t0, din, dout, amp) in enumerate([(0.35, 1.9, 2.5, 1.0), (5.3, 2.05, 2.35, 0.9)]):
+        env, _, _ = _seg_env(t, t0, din, lambda u: np.sin(np.pi * u ** 0.8) ** 1.3, sec)
+        nose = _band_noise(n, 300, 1800, 3070 + i, tilt=-0.2)       # inspiration par le nez
+        out += nose * env * amp * 0.75
+        env2, u2, _ = _seg_env(t, t0 + din + 0.12, dout, lambda u: (1 - np.exp(-u * 5)) * (1 - u) ** 1.7, sec)
+        mouth = _band_noise(n, 140, 900, 3072 + i)                  # expiration, bouche entrouverte
+        out += mouth * env2 * amp
+    # la porte : très étouffé, un peu d'aigu passe par la fente du bas
+    door = lambda f: (_butter(f, 450, 2) + 0.025 * _butter(f, 2400, 2)) * _butter(f, 70, 2, high=True)
+    out = _spec_filter(out, door)
+    out = _reverb(out, 0.5, 307, 0.18)
+    out /= np.max(np.abs(out))
+    write_wav('breath_slow.wav', out * 0.55)
+
+
+def door_slide():
+    """On glisse une clé et un papier sous la porte : frottement de papier, la clé qui racle et tinte. 1,2 s."""
+    n = int(RATE * 1.2)
+    pad = int(RATE * 0.4)
+    m = n + pad
+    t = np.arange(m) / RATE
+    rs = np.random.RandomState(308)
+    # papier : souffle aigu, irrégulier (accroche-glisse), poussé en deux fois
+    grains = (rs.rand(m) < 140 / RATE) * rs.rand(m)
+    grains = np.convolve(grains, np.hanning(int(RATE * 0.006)), mode='same')
+    push = (np.clip(t / 0.03, 0, 1) * np.clip((0.42 - t) / 0.06, 0, 1)
+            + 0.8 * np.clip((t - 0.46) / 0.03, 0, 1) * np.clip((0.78 - t) / 0.12, 0, 1))
+    hiss = _spec_filter(rs.randn(m), lambda f: _butter(f, 900, 2, high=True) * _butter(f, 7000, 2))
+    body = _spec_filter(rs.randn(m), lambda f: _butter(f, 180, 2, high=True) * _butter(f, 700, 2))
+    paper = (hiss * (0.35 + 1.4 * grains / (grains.max() + 1e-9)) + body * 0.5) * push
+    # la clé racle le plancher sous le papier : petites résonances métalliques excitées par le frottement
+    scrape_env = np.clip((t - 0.5) / 0.05, 0, 1) * np.clip((0.8 - t) / 0.05, 0, 1)
+    excite = _spec_filter(rs.randn(m), lambda f: _butter(f, 2500, 2, high=True)) * scrape_env
+    ring = np.zeros(m)
+    for fr, a in ((3170, 1.0), (4890, 0.7), (7120, 0.45)):
+        res = lambda f, fr=fr: np.exp(-0.5 * ((f - fr) / 120) ** 2)
+        ring += a * _spec_filter(excite, res)
+    scrape = excite * 0.3 + ring * 1.6
+    # le tintement : la clé retombe sur le plancher (deux petits rebonds)
+    tink = np.zeros(m)
+    for t0, a in ((0.82, 1.0), (0.905, 0.45), (0.95, 0.2)):
+        tt = t - t0
+        on = tt >= 0
+        part = sum(b * np.sin(2 * np.pi * fr * tt) * np.exp(-np.maximum(tt, 0) / dec)
+                   for fr, b, dec in ((2870, 1.0, 0.09), (4410, .7, .06), (6230, .5, .045), (7960, .35, .03), (9580, .2, .02)))
+        click = rs.randn(m) * np.exp(-np.maximum(tt, 0) / 0.002)
+        tink += a * on * (part + click * 0.6)
+    out = paper * 0.55 + scrape * 0.5 + tink * 0.25
+    out = _spec_filter(out, lambda f: _butter(f, 9000, 2) * _butter(f, 60, 2, high=True))
+    out = _reverb(out, 0.45, 309, 0.18, loop=False)[:n]
+    out[:int(RATE * .004)] *= np.linspace(0, 1, int(RATE * .004))
+    out[-int(RATE * .06):] *= np.linspace(1, 0, int(RATE * .06))
+    out /= np.max(np.abs(out))
+    write_wav('door_slide.wav', out * 0.85)
+
+
+STORY = [calendar_octobre, floppy_label_albert, photo_manon, ceraf_label, snore, breath_slow, door_slide]
+
+
 if __name__ == '__main__':
     import sys
-    if len(sys.argv) > 1:   # ne régénérer que certaines ressources : make_assets.py house
+    if len(sys.argv) > 1:   # ne régénérer que certaines ressources : make_assets.py house | music | story
         if 'house' in sys.argv:
             for f in HOUSE:
                 f()
         if 'music' in sys.argv:
             for f in MUSIC:
+                f()
+        if 'story' in sys.argv:
+            for f in STORY:
                 f()
         print('ok')
         raise SystemExit
@@ -940,5 +1476,7 @@ if __name__ == '__main__':
     for f in HOUSE:
         f()
     for f in MUSIC:
+        f()
+    for f in STORY:   # en dernier : remplace calendar.png, floppy_label.png et photo.png
         f()
     print('ok')

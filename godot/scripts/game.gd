@@ -16,6 +16,7 @@ var fullscreen := true
 var high_quality := true
 var reduced_scares := false   # le visage reste sur l'écran, sons de sursaut plus bas, pas de secousse
 var soft_flashes := false     # éclairs adoucis, pas de flash plein écran
+var whispers := true          # chuchotements par la synthèse vocale de Windows
 
 # --- état de la partie ---
 var hero := "alexandre"   # « alexandre » ou « aurelia », choisi sur l'écran-titre
@@ -112,6 +113,7 @@ func _load_settings() -> void:
 	high_quality = cfg.get_value("video", "high_quality", high_quality)
 	reduced_scares = cfg.get_value("accessibilite", "sursauts_reduits", reduced_scares)
 	soft_flashes = cfg.get_value("accessibilite", "eclairs_adoucis", soft_flashes)
+	whispers = cfg.get_value("audio", "chuchotements", whispers)
 
 
 func save_settings() -> void:
@@ -122,6 +124,7 @@ func save_settings() -> void:
 	cfg.set_value("video", "high_quality", high_quality)
 	cfg.set_value("accessibilite", "sursauts_reduits", reduced_scares)
 	cfg.set_value("accessibilite", "eclairs_adoucis", soft_flashes)
+	cfg.set_value("audio", "chuchotements", whispers)
 	cfg.save(SETTINGS_PATH)
 
 
@@ -144,7 +147,7 @@ func hint(text: String, seconds := 3.5) -> void:
 
 ## Voix chuchotée du système (synthèse vocale de Windows), si une voix française est installée.
 func whisper(text: String) -> void:
-	if autotest:
+	if autotest or not whispers:
 		return
 	var voices := DisplayServer.tts_get_voices_for_language("fr")
 	if voices.is_empty():

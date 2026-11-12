@@ -339,6 +339,12 @@ func _build_pc() -> void:
 	_box(Vector3(0.52, 0.13, 0.44), Vector3(x, base + 0.065, z), mats.beige)
 	_box(Vector3(0.2, 0.012, 0.01), Vector3(x - 0.09, base + 0.075, z + 0.221), mats.dark)
 	_box(Vector3(0.05, 0.02, 0.01), Vector3(x + 0.17, base + 0.06, z + 0.221), mats.dark)
+	# autocollant d'inventaire du laboratoire, sur le flanc de l'unité centrale
+	var sticker := _quad(Vector2(0.13, 0.049), Vector3(x + 0.2615, base + 0.07, z + 0.08), _image_mat("ceraf_label.png", 0.5), PI / 2.0)
+	sticker.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var st_it := _interactable("Regarder l'autocollant", Vector3(0.06, 0.1, 0.18), Vector3(x + 0.28, base + 0.07, z + 0.08))
+	st_it.used.connect(func(_i: Interactable) -> void:
+		Game.hint("« CERAF · INVENTAIRE N° 0312. Propriété du CERAF, ne pas sortir du site. » L'ordinateur de ta mère vient d'un laboratoire.", 5.0))
 	led_mat = _plain(Color(0.15, 0.1, 0.03), 0.4)
 	_box(Vector3(0.016, 0.01, 0.006), Vector3(x + 0.03, base + 0.075, z + 0.223), led_mat)
 	# moniteur cathodique : coque avec un creux pour la dalle (CSG)
@@ -702,8 +708,7 @@ func face_scare(p: Node) -> void:
 ## Fin de la séance : la clé de la chambre et un mot d'Albert glissent sous la porte.
 func key_under_door() -> void:
 	var at := Vector3(W / 2.0 - 0.32, 0.0, 1.32)
-	Sfx.play_at("metalClick", at + Vector3(0, 0.1, 0), -2.0, 0.6, 3.0)
-	Sfx.play_at("cloth", at + Vector3(0, 0.1, 0), -6.0, 1.3, 3.0)
+	Sfx.play_at("door_slide", at + Vector3(0.3, 0.1, 0), 0.0, 1.0, 3.0)
 	var holder := Node3D.new()
 	holder.name = "KeyAndNote"
 	add_child(holder)
