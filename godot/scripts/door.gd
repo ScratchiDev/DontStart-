@@ -16,6 +16,10 @@ var hinge_left := true
 var open_angle := 1.62
 var locked := false
 var locked_msg := "Fermée à clé."
+var key_id := ""                  # objet de l'inventaire qui la déverrouille (Game.items)
+var key_msg := "Tu déverrouilles la porte."
+var stuck := 0                    # porte coincée : nombre d'appuis encore nécessaires (« Forcer »)
+var glass := false                # porte vitrée (verre cathédrale) : on devine ce qu'il y a derrière
 var label_open := "Ouvrir la porte"
 var label_close := "Fermer la porte"
 var is_open := false
@@ -46,10 +50,22 @@ func build(b: Builder) -> void:
 	add_child(leaf)
 	var dir := 1.0 if hinge_left else -1.0   # le battant s'étend de ce côté du gond
 	var cx := dir * w / 2.0
-	b._box(Vector3(w - 0.008, h - 0.012, t), Vector3(cx, h / 2.0 + 0.006, 0), b.mats.door, false, leaf)
+	if glass:
+		# battant à petits bois : bas plein, haut vitré (verre cathédrale dépoli)
+		b._box(Vector3(w - 0.008, 1.06, t), Vector3(cx, 0.536, 0), b.mats.door, false, leaf)
+		b._box(Vector3(w - 0.008, 0.1, t), Vector3(cx, h - 0.05, 0), b.mats.door, false, leaf)
+		b._box(Vector3(0.1, h - 1.16, t), Vector3(dir * 0.05, 1.07 + (h - 1.16) / 2.0, 0), b.mats.door, false, leaf)
+		b._box(Vector3(0.1, h - 1.16, t), Vector3(dir * (w - 0.058), 1.07 + (h - 1.16) / 2.0, 0), b.mats.door, false, leaf)
+		b._box(Vector3(0.04, h - 1.16, t * 0.8), Vector3(cx, 1.07 + (h - 1.16) / 2.0, 0), b.mats.door, false, leaf)
+		var pane := b._box(Vector3(w - 0.2, h - 1.16, 0.006), Vector3(cx, 1.07 + (h - 1.16) / 2.0, 0), b.mats.frosted, false, leaf)
+		pane.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	else:
+		b._box(Vector3(w - 0.008, h - 0.012, t), Vector3(cx, h / 2.0 + 0.006, 0), b.mats.door, false, leaf)
 	for face_side in [-1.0, 1.0]:
 		var face: float = face_side * (t / 2.0 + 0.005)
 		for py in [0.62, 1.58]:
+			if glass and py > 1.0:
+				continue
 			for pu in [0.24, w - 0.24]:
 				var ph := 0.78 if py < 1.0 else 0.66
 				b._box(Vector3(0.3, ph, 0.01), Vector3(dir * pu, py, face), b.mats.door, false, leaf)
@@ -99,10 +115,26 @@ func _target_angle() -> float:
 func _on_used(_it: Interactable) -> void:
 	if is_open:
 		close()
-	elif locked:
+		return
+	if locked and key_id != "" and Game.has_item(key_id):
+		locked = false
+		Sfx.play_at("metalLatch", global_position + Vector3(0, 1.0, 0), -2.0, 0.85)
+		Game.hint(key_msg)
+		await get_tree().create_timer(0.4, false).timeout
+	if locked:
 		rattle()
 		Game.hint(locked_msg)
 		tried.emit()
+	elif stuck > 0:
+		stuck -= 1
+		rattle()
+		Sfx.play_at("thud", global_position + Vector3(0, 1.0, 0), -6.0, 0.9)
+		if stuck > 0:
+			Game.hint(locked_msg)
+			it.label = "Forcer la porte"
+			tried.emit()
+		else:
+			open(0.5)
 	else:
 		open()
 

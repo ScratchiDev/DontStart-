@@ -123,6 +123,45 @@ func _make_materials() -> void:
 	glass.roughness = 0.05
 	glass.metallic_specular = 1.0
 	mats.glass = glass
+
+	# --- autres pièces de la maison
+	var floral := wall.duplicate() as StandardMaterial3D
+	floral.albedo_texture = _tex("wallpaper_floral.png")
+	floral.normal_texture = _normal_from_height("wallpaper_floral_height.png", 1.4)
+	floral.albedo_color = Color(0.82, 0.78, 0.74)
+	mats.wall_floral = floral
+	var stripes := wall.duplicate() as StandardMaterial3D
+	stripes.albedo_texture = _tex("wallpaper_stripes.png")
+	stripes.normal_texture = _normal_from_height("wallpaper_stripes_height.png", 1.4)
+	stripes.albedo_color = Color(0.8, 0.78, 0.7)
+	mats.wall_stripes = stripes
+	var stripes_dark := stripes.duplicate() as StandardMaterial3D
+	stripes_dark.albedo_color = Color(0.5, 0.46, 0.4)
+	mats.wall_stripes_dark = stripes_dark
+	mats.wall_paint = _grimy(_triplanar(_plain(Color(0.78, 0.76, 0.7), 0.85), 0.5), 0.5)
+	var faience := StandardMaterial3D.new()
+	faience.albedo_texture = _tex("tiles_wall.png")
+	faience.normal_enabled = true
+	faience.normal_texture = _normal_from_height("tiles_wall_height.png", 3.0)
+	faience.roughness = 0.25
+	mats.faience = _grimy(_triplanar(faience, 1.0 / 0.6), 0.4)
+	var tiles := StandardMaterial3D.new()
+	tiles.albedo_texture = _tex("tiles_floor.png")
+	tiles.normal_enabled = true
+	tiles.normal_texture = _normal_from_height("tiles_floor_height.png", 3.0)
+	tiles.roughness = 0.4
+	mats.carrelage = _grimy(_triplanar(tiles, 1.0 / 0.8), 0.3)
+	var carpet := StandardMaterial3D.new()
+	carpet.albedo_texture = _tex("carpet.png")
+	carpet.normal_enabled = true
+	carpet.normal_texture = _normal_from_height("carpet_height.png", 2.0)
+	carpet.roughness = 1.0
+	mats.moquette = _triplanar(carpet, 1.0)
+	var frosted := StandardMaterial3D.new()
+	frosted.albedo_color = Color(0.7, 0.75, 0.8, 0.55)
+	frosted.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	frosted.roughness = 0.9
+	mats.frosted = frosted
 	_cache = mats
 
 

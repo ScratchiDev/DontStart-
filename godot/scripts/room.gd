@@ -1,4 +1,4 @@
-extends Builder
+extends HouseRoom
 ## La chambre, construite au lancement : murs texturés (ambientCG, CC0), meubles (Kenney, CC0)
 ## mis à l'échelle en mètres réels, fenêtre sur la nuit, ordinateur rétro, objets interactifs.
 ## Repère : x de -3.2 (fenêtre) à 3.2 (porte), z de -2.6 (bureau) à 2.6, y du sol (0) au plafond.
@@ -15,6 +15,7 @@ const WIN_Z0 := -1.15
 const WIN_Z1 := 0.25
 const WIN_Y0 := 0.95
 const WIN_Y1 := 2.2
+const DOOR_Z := 1.4
 
 var desk_top := 0.76
 var pc_x := 1.2
@@ -34,6 +35,7 @@ var ceiling_on := false
 var ceiling_dead := false
 var moon: SpotLight3D
 var door_leaf: Node3D
+var door_node: Door
 var chair: Node3D
 var rng := RandomNumberGenerator.new()
 var window_glass_mat: ShaderMaterial
@@ -42,6 +44,7 @@ var decor: Node3D
 
 
 func _ready() -> void:
+	setup("mere", Rect2(-W / 2.0, -D / 2.0, W, D), 0.0, H, "Chambre de ta mère")
 	rng.seed = 312
 	_make_materials()
 	_build_shell()
@@ -65,36 +68,21 @@ func _ready() -> void:
 
 func _build_shell() -> void:
 	var t := 0.1
-	_box(Vector3(W + 0.4, t, D + 0.4), Vector3(0, -t / 2.0, 0), mats.floor, true)
-	_box(Vector3(W + 0.4, t, D + 0.4), Vector3(0, H + t / 2.0, 0), mats.ceil, true)
-	_box(Vector3(W + 0.4, H, t), Vector3(0, H / 2.0, -D / 2.0 - t / 2.0), mats.wall, true)
-	_box(Vector3(W + 0.4, H, t), Vector3(0, H / 2.0, D / 2.0 + t / 2.0), mats.wall, true)
-	_box(Vector3(t, H, D), Vector3(W / 2.0 + t / 2.0, H / 2.0, 0), mats.wall, true)
-	# mur de gauche, percé pour la fenêtre
-	var x := -W / 2.0 - t / 2.0
-	_box(Vector3(t, WIN_Y0, D), Vector3(x, WIN_Y0 / 2.0, 0), mats.wall, true)
-	_box(Vector3(t, H - WIN_Y1, D), Vector3(x, (H + WIN_Y1) / 2.0, 0), mats.wall, true)
-	var h := WIN_Y1 - WIN_Y0
-	var y := (WIN_Y0 + WIN_Y1) / 2.0
-	_box(Vector3(t, h, WIN_Z0 + D / 2.0), Vector3(x, y, (WIN_Z0 - D / 2.0) / 2.0), mats.wall, true)
-	_box(Vector3(t, h, D / 2.0 - WIN_Z1), Vector3(x, y, (WIN_Z1 + D / 2.0) / 2.0), mats.wall, true)
+	# sol et plafond jusqu'aux plans médians des murs : les pièces voisines prennent le reste
+	_box(Vector3(W + t, t, D + t), Vector3(0, -t / 2.0, 0), mats.floor, true)
+	_box(Vector3(W + t, t, D + t), Vector3(0, H + t / 2.0, 0), mats.ceil, true)
+	_box(Vector3(W + 2 * t, H, t), Vector3(0, H / 2.0, -D / 2.0 - t / 2.0), mats.wall, true)
+	_box(Vector3(W + 2 * t, H, t), Vector3(0, H / 2.0, D / 2.0 + t / 2.0), mats.wall, true)
+	# mur du couloir, percé pour la porte
+	wall("z", -D / 2.0, D / 2.0, W / 2.0 + t / 2.0, H, [Builder.door_hole(DOOR_Z)], mats.wall, t)
+	# mur de la façade, percé pour la fenêtre
+	wall("z", -D / 2.0, D / 2.0, -W / 2.0 - t / 2.0, H, [[WIN_Z0, WIN_Z1, WIN_Y0, WIN_Y1]], mats.wall, t)
 	# lambris (0 à 0,92 m), cimaise, plinthes, moulures au plafond
-	var wh := 0.92
-	var wt := 0.022
-	var b: Material = mats.wood_dark
-	for side in [-1.0, 1.0]:
-		var z: float = side * (D / 2.0 - wt / 2.0)
-		_box(Vector3(W, wh, wt), Vector3(0, wh / 2.0, z), mats.wainscot)
-		_box(Vector3(W, 0.045, 0.045), Vector3(0, wh + 0.02, side * (D / 2.0 - 0.022)), b)
-		_box(Vector3(W, 0.11, 0.035), Vector3(0, 0.055, side * (D / 2.0 - wt - 0.017)), b)
-		_box(Vector3(W, 0.07, 0.07), Vector3(0, H - 0.035, side * (D / 2.0 - 0.035)), mats.paint)
-		_box(Vector3(W, 0.03, 0.11), Vector3(0, H - 0.085, side * (D / 2.0 - 0.055)), mats.paint)
-		var xw: float = side * (W / 2.0 - wt / 2.0)
-		_box(Vector3(wt, wh, D), Vector3(xw, wh / 2.0, 0), mats.wainscot)
-		_box(Vector3(0.045, 0.045, D), Vector3(side * (W / 2.0 - 0.022), wh + 0.02, 0), b)
-		_box(Vector3(0.035, 0.11, D), Vector3(side * (W / 2.0 - wt - 0.017), 0.055, 0), b)
-		_box(Vector3(0.07, 0.07, D), Vector3(side * (W / 2.0 - 0.035), H - 0.035, 0), mats.paint)
-		_box(Vector3(0.11, 0.03, D), Vector3(side * (W / 2.0 - 0.055), H - 0.085, 0), mats.paint)
+	trim("x", -W / 2.0, W / 2.0, -D / 2.0, 1.0, H)
+	trim("x", -W / 2.0, W / 2.0, D / 2.0, -1.0, H)
+	trim("z", -D / 2.0, D / 2.0, -W / 2.0, 1.0, H)
+	var dh: Array = Builder.door_hole(DOOR_Z)
+	trim("z", -D / 2.0, D / 2.0, W / 2.0, -1.0, H, [[dh[0], dh[1]]])
 
 
 func _build_window() -> void:
@@ -202,50 +190,15 @@ func _build_furniture() -> void:
 	lamp.position.y = H - (lamp.get_meta("size") as Vector3).y
 
 
-## Vraie porte à panneaux : chambranle, battant sur gonds (door_leaf pivote), poignée, serrure.
-func _build_door(at: Vector3) -> void:
-	var dw := 0.86
-	var dh := 2.04
-	var t := 0.045
-	var x := at.x
-	var zc := at.z
-	var casing: Material = mats.paint
-	_box(Vector3(0.035, dh + 0.1, 0.085), Vector3(x - 0.04, (dh + 0.1) / 2.0, zc - dw / 2.0 - 0.042), casing)
-	_box(Vector3(0.035, dh + 0.1, 0.085), Vector3(x - 0.04, (dh + 0.1) / 2.0, zc + dw / 2.0 + 0.042), casing)
-	_box(Vector3(0.035, 0.09, dw + 0.17), Vector3(x - 0.04, dh + 0.045, zc), casing)
-	_collider(Vector3(0.2, dh, dw + 0.1), Vector3(x - 0.1, dh / 2.0, zc))
-	door_leaf = Node3D.new()
-	door_leaf.position = Vector3(x - 0.035 - t / 2.0, 0, zc - dw / 2.0)
-	add_child(door_leaf)
-	_box(Vector3(t, dh - 0.012, dw - 0.008), Vector3(0, dh / 2.0 + 0.006, dw / 2.0), mats.door, false, door_leaf)
-	var face := -t / 2.0 - 0.005
-	for py in [0.62, 1.58]:
-		for pz in [0.24, dw - 0.24]:
-			var ph := 0.78 if py < 1.0 else 0.66
-			_box(Vector3(0.01, ph, 0.3), Vector3(face, py, pz), mats.door, false, door_leaf)
-			_box(Vector3(0.006, ph - 0.08, 0.22), Vector3(face - 0.007, py, pz), mats.door, false, door_leaf)
-	var knob := MeshInstance3D.new()
-	var sm := SphereMesh.new()
-	sm.radius = 0.028
-	sm.height = 0.05
-	knob.mesh = sm
-	knob.material_override = mats.metal
-	knob.position = Vector3(face - 0.06, 1.0, dw - 0.075)
-	door_leaf.add_child(knob)
-	var neck := MeshInstance3D.new()
-	var cm := CylinderMesh.new()
-	cm.top_radius = 0.009
-	cm.bottom_radius = 0.009
-	cm.height = 0.06
-	neck.mesh = cm
-	neck.material_override = mats.metal
-	neck.rotation.z = PI / 2.0
-	neck.position = Vector3(face - 0.03, 1.0, dw - 0.075)
-	door_leaf.add_child(neck)
-	_box(Vector3(0.006, 0.09, 0.05), Vector3(face - 0.003, 1.0, dw - 0.075), mats.metal, false, door_leaf)
-	_box(Vector3(0.008, 0.02, 0.008), Vector3(face - 0.006, 0.92, dw - 0.075), mats.dark, false, door_leaf)
-	var it := _interactable("Ouvrir la porte", Vector3(0.12, dh, dw), Vector3(0, dh / 2.0, dw / 2.0), door_leaf)
-	it.used.connect(_on_door)
+## La porte de la chambre : fermée à clé de l'extérieur (par Albert) jusqu'à ce que la clé glisse dessous.
+func _build_door(_at: Vector3) -> void:
+	door_node = door("z", Vector3(W / 2.0 + 0.05, 0.0, DOOR_Z), 1.0, true, 0.1)
+	door_node.name = "DoorP1"
+	door_node.locked = true
+	door_node.key_id = "cle_chambre"
+	door_node.locked_msg = "Fermée. De l'extérieur."
+	door_node.key_msg = "La clé de Papi tourne dans la serrure."
+	door_leaf = door_node.leaf
 
 
 ## Couette froissée qui recouvre le lit et retombe sur les côtés (maillage généré).
@@ -411,6 +364,7 @@ func _build_pc() -> void:
 	screen_mat = ShaderMaterial.new()
 	screen_mat.shader = load("res://shaders/crt_screen.gdshader")
 	screen_mat.set_shader_parameter("screen", vp.get_texture())
+	terminal.screen_mat = screen_mat
 	screen_center = Vector3(x, my + 0.215, z + 0.193)
 	var screen := _quad(Vector2(0.38, 0.29), screen_center, screen_mat)
 	screen.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -484,7 +438,7 @@ func _build_lights() -> void:
 	# lueur verte de l'écran
 	screen_light = OmniLight3D.new()
 	screen_light.light_color = Color(0.36, 1.0, 0.42)
-	screen_light.light_energy = 0.5
+	screen_light.light_energy = 0.32
 	screen_light.light_volumetric_fog_energy = 0.12
 	screen_light.omni_range = 2.5
 	screen_light.omni_attenuation = 1.8
@@ -566,19 +520,6 @@ func _on_floppy(_it: Interactable) -> void:
 	floppy_taken.emit()
 
 
-func _on_door(_it: Interactable) -> void:
-	var p := (door_leaf.global_position if door_leaf else Vector3(W / 2.0, 1.0, 1.4)) + Vector3(0, 1.0, 0)
-	Sfx.play_at("metalLatch", p, -2.0)
-	get_tree().create_timer(0.35).timeout.connect(func() -> void: Sfx.play_at("thud", p, -6.0, 1.2))
-	if door_leaf:
-		var base := door_leaf.rotation.y
-		var tw := create_tween()
-		for k in 6:
-			tw.tween_property(door_leaf, "rotation:y", base + (0.012 if k % 2 == 0 else -0.012), 0.05)
-		tw.tween_property(door_leaf, "rotation:y", base, 0.05)
-	Game.hint("Fermée. De l'extérieur.")
-
-
 func _on_switch(it: Interactable) -> void:
 	Sfx.play_at("metalClick", it.global_position, -8.0)
 	if ceiling_dead:
@@ -608,3 +549,154 @@ func _on_radio(it: Interactable) -> void:
 	Sfx.play_at("cloth", it.global_position, -14.0, 0.6)
 	Game.whisper("c'est toi. c'est toi. c'est toi.")
 	Game.hint("Un souffle. Puis, très bas, quelqu'un répète ton nom.")
+
+
+# ------------------------------------------------------------------ réactions pendant la séance
+
+func door_center() -> Vector3:
+	return Vector3(W / 2.0, 1.1, DOOR_Z)
+
+
+## Trois coups à la porte (c'est Albert, mais on ne le sait pas encore).
+func door_knock() -> void:
+	var p := door_center()
+	for k in 3:
+		Sfx.play_at("thud", p, 2.0, 1.25 + 0.05 * k, 3.0)
+		await get_tree().create_timer(0.48, false).timeout
+
+
+func door_rattle() -> void:
+	door_node.rattle()
+	await get_tree().create_timer(0.4, false).timeout
+	door_node.rattle()
+
+
+func wardrobe_close_silent() -> void:
+	for d in wardrobe_doors:
+		d.rotation.y = 0.0
+
+
+## L'armoire s'entrouvre lentement dans le dos du joueur.
+func wardrobe_creak_open() -> void:
+	var c := (props["bookcaseClosedDoors"] as Node3D).global_position + Vector3(0, 1.2, 0.3)
+	Sfx.play_at("creak", c, 0.0, 0.62, 3.0)
+	var tw := create_tween().set_parallel().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	for d in wardrobe_doors:
+		var sign_ := -1.0 if String(d.name).to_lower().contains("left") else 1.0
+		tw.tween_property(d, "rotation:y", sign_ * 0.55, 3.5)
+
+
+## Le plafonnier s'allume tout seul, en grésillant (le champ de l'entité déborde).
+func ceiling_flicker_on() -> void:
+	if ceiling_dead:
+		return
+	ceiling_on = true
+	Sfx.play_at("metalClick", ceiling_light.global_position, -6.0, 0.7)
+	for k in 10:
+		ceiling_light.light_energy = 1.6 if rng.randf() < 0.5 else 0.1
+		await get_tree().create_timer(rng.randf_range(0.05, 0.2), false).timeout
+	ceiling_light.light_energy = 0.9
+
+
+## L'ampoule éclate : noir complet, sauf l'écran.
+func ceiling_burst() -> void:
+	if ceiling_dead:
+		return
+	ceiling_light.light_energy = 6.0
+	await get_tree().create_timer(0.1, false).timeout
+	ceiling_light.light_energy = 0.0
+	ceiling_dead = true
+	ceiling_on = false
+	Sfx.play_at("glass", ceiling_light.global_position, 2.0)
+	Sfx.play_at("metal", ceiling_light.global_position, -8.0, 0.7)
+
+
+## Le seul vrai sursaut de l'acte I : le visage (celui du docteur Ferrand, copié par l'entité),
+## à quelques centimètres, quand le joueur se retourne. Orbites vides, lumière par en dessous.
+func face_scare(p: Node) -> void:
+	var cam: Camera3D = p.camera
+	var face: Node3D = (load("res://assets/models/face/LeePerrySmith.glb") as PackedScene).instantiate()
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = load("res://assets/models/face/Map-COL.jpg")
+	mat.albedo_color = Color(0.55, 0.53, 0.5)
+	mat.roughness = 0.7
+	for mi in face.find_children("*", "MeshInstance3D", true, false):
+		(mi as MeshInstance3D).material_override = mat
+	# orbites vides (repère du modèle scanné)
+	var black := _plain(Color(0.0, 0.0, 0.0), 1.0)
+	for ex in [-0.92, 0.92]:
+		var eye := MeshInstance3D.new()
+		var sm := SphereMesh.new()
+		sm.radius = 0.5
+		sm.height = 0.7
+		eye.mesh = sm
+		eye.material_override = black
+		eye.position = Vector3(ex, 1.95, 1.72)
+		face.add_child(eye)
+	var under := OmniLight3D.new()
+	under.light_color = Color(1.0, 0.82, 0.75)
+	under.omni_range = 12.0
+	under.light_energy = 0.0
+	face.add_child(under)
+	under.position = Vector3(0, -3.0, 4.0)
+	add_child(face)
+	face.scale = Vector3.ONE * 0.034
+	face.visible = false
+	# le joueur se retourne d'un coup
+	var from_yaw: float = p.yaw
+	var tw := create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_method(func(k: float) -> void: p.set_look(from_yaw + PI * 0.92 * k, 0.02), 0.0, 1.0, 0.3)
+	await tw.finished
+	var fwd := -cam.global_transform.basis.z
+	face.global_position = cam.global_position + fwd * 0.5 + Vector3(0, -0.07, 0)
+	face.look_at(cam.global_position + Vector3(0, -0.07, 0), Vector3.UP, true)
+	face.visible = true
+	Sfx.sting(0.0)
+	var post := get_tree().get_first_node_in_group("retro")
+	if post:
+		post.material.set_shader_parameter("corruption", 1.0)
+	var head: Node3D = p.head
+	var base := head.position
+	var t := 0.0
+	while t < 1.0:
+		face.global_position -= fwd * 0.006   # il avance
+		under.light_energy = 3.0 if rng.randf() < 0.65 else 0.4
+		if not ceiling_dead:
+			ceiling_light.light_energy = 2.5 if rng.randf() < 0.5 else 0.2
+		head.position = base + Vector3(rng.randf_range(-1, 1), rng.randf_range(-1, 1), 0) * 0.012 * (1.0 - t)
+		await get_tree().create_timer(0.04, false).timeout
+		t += 0.04
+	head.position = base
+	face.visible = false
+	if post:
+		post.material.set_shader_parameter("corruption", 0.15)
+	if not ceiling_dead:
+		await ceiling_burst()
+	face.queue_free()
+	await get_tree().create_timer(1.2, false).timeout
+	var back := create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	var y2: float = p.yaw
+	back.tween_method(func(k: float) -> void: p.set_look(lerpf(y2, p.seat_yaw, k), lerpf(0.02, -0.05, k)), 0.0, 1.0, 1.4)
+	await back.finished
+
+## Fin de la séance : la clé de la chambre et un mot d'Albert glissent sous la porte.
+func key_under_door() -> void:
+	var at := Vector3(W / 2.0 - 0.32, 0.0, 1.32)
+	Sfx.play_at("metalClick", at + Vector3(0, 0.1, 0), -2.0, 0.6, 3.0)
+	Sfx.play_at("cloth", at + Vector3(0, 0.1, 0), -6.0, 1.3, 3.0)
+	var holder := Node3D.new()
+	holder.name = "KeyAndNote"
+	add_child(holder)
+	holder.position = at
+	var paper := _quad(Vector2(0.15, 0.1), Vector3(-0.04, 0.003, 0.05), _image_mat("note.png"), 0.0, holder)
+	paper.rotation = Vector3(-PI / 2.0, 0.3, 0)
+	var key := _box(Vector3(0.06, 0.006, 0.022), Vector3(0.05, 0.004, -0.04), mats.metal, false, holder)
+	key.rotation.y = 0.7
+	var it := _interactable("Ramasser la clé et le mot", Vector3(0.4, 0.3, 0.4), Vector3(0, 0.15, 0), holder, LAYER_INTERACT, 2.6)
+	it.used.connect(func(_i: Interactable) -> void:
+		holder.queue_free()
+		Sfx.play("handleSmallLeather", -8.0)
+		Game.add_item("cle_chambre", "Clé de la chambre", "Glissée sous la porte par Papi.", "cle")
+		Game.add_item("mot_albert", "Mot de Papi", "« N'ouvre à personne. Même pas à moi. »", "doc")
+		get_tree().get_first_node_in_group("hud").read_paper("Ferme à clé de l'intérieur.\nN'ouvre à personne.\nMême pas à moi.\n\n— A.")
+		Game.objective("Sors de la chambre"))

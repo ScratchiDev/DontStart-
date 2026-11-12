@@ -313,3 +313,25 @@ func fade_to(alpha: float, seconds := 1.0) -> void:
 	var tw := create_tween()
 	tw.tween_property(fade, "color:a", alpha, seconds)
 	await tw.finished
+
+
+## Carton de texte sur fond noir (épilogue, fin d'acte). Le fondu doit déjà être au noir.
+func card(lines: Array, seconds := 5.0) -> void:
+	var l := Label.new()
+	l.text = "\n".join(lines)
+	l.set_anchors_preset(Control.PRESET_FULL_RECT)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.offset_left = 60
+	l.offset_right = -60
+	l.add_theme_color_override("font_color", Color(0.85, 0.82, 0.74))
+	l.add_theme_constant_override("line_spacing", 4)
+	l.modulate.a = 0.0
+	root.add_child(l)
+	var tw := create_tween()
+	tw.tween_property(l, "modulate:a", 1.0, 1.2)
+	tw.tween_interval(seconds)
+	tw.tween_property(l, "modulate:a", 0.0, 1.0)
+	await tw.finished
+	l.queue_free()

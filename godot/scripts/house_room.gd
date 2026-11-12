@@ -18,7 +18,6 @@ var _lights: Array[Light3D] = []
 
 func setup(id: String, r: Rect2, floor_y := 0.0, height := 2.6, name_shown := "") -> void:
 	room_id = id
-	name = id
 	rect = r
 	y0 = floor_y
 	h = height
