@@ -19,6 +19,16 @@ const ROOM_SCRIPTS := {
 	"escalier": "res://scripts/house/rooms/escalier.gd",
 }
 
+## v0.3 : seul le couloir est ouvert (fin de version devant la chambre des grands-parents).
+var teaser := true
+const TEASER_MSG := {
+	"P2": "Fermée à clé, de l'intérieur. Derrière, quelqu'un respire. Très lentement.",
+	"P3": "Coincée. Le bois a gonflé avec l'humidité.",
+	"P4": "Fermée. Sous la porte, une petite lumière bleue s'allume, puis s'éteint.",
+	"P5": "Fermée à clé.",
+	"P6": "Fermée. Derrière le verre, l'escalier descend dans le noir.",
+	"P7": "Fermée à clé. Sous la porte, une LED clignote : la box.",
+}
 var rooms := {}          # id -> HouseRoom
 var doors := {}          # id -> Door
 var player: Node3D
@@ -175,6 +185,11 @@ func _make_door(d: Dictionary, y0: float) -> Door:
 			"P2": "Fermée à clé, de l'intérieur. Derrière, quelqu'un respire.",
 			"P6": "Fermée. Derrière le verre, l'escalier descend dans le noir.",
 		}.get(d.id, "Fermée.")
+	if teaser and TEASER_MSG.has(d.id):
+		dr.locked = true
+		dr.key_id = ""
+		dr.stuck = 0
+		dr.locked_msg = TEASER_MSG[d.id]
 	add_child(dr)
 	dr.name = d.id
 	dr.width = d.w

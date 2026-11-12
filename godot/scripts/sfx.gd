@@ -12,6 +12,28 @@ const VARIANTS := {
 var _cache := {}
 var _music := {}        # nom de la piste -> AudioStreamPlayer
 var _music_now := ""
+var _amb_bus := -1
+var _silence_tw: Tween
+
+
+func _ready() -> void:
+	# bus « Ambiance » : pluie, souffle de la pièce, musique… tout ce que le silence de l'entité coupe
+	_amb_bus = AudioServer.get_bus_index("Ambiance")
+	if _amb_bus < 0:
+		AudioServer.add_bus()
+		_amb_bus = AudioServer.bus_count - 1
+		AudioServer.set_bus_name(_amb_bus, "Ambiance")
+		AudioServer.set_bus_send(_amb_bus, "Master")
+
+
+## Juste avant qu'elle agisse : tous les sons d'ambiance se coupent net, puis reviennent.
+func silence(seconds := 1.0) -> void:
+	if _silence_tw:
+		_silence_tw.kill()
+	AudioServer.set_bus_volume_db(_amb_bus, -80.0)
+	_silence_tw = create_tween()
+	_silence_tw.tween_interval(seconds)
+	_silence_tw.tween_method(func(v: float) -> void: AudioServer.set_bus_volume_db(_amb_bus, v), -40.0, 0.0, 0.6)
 
 
 func _stream(name: String) -> AudioStream:
@@ -65,6 +87,7 @@ func loop(name: String, db := 0.0, at := Vector3.INF, parent: Node = null) -> No
 		var flat := AudioStreamPlayer.new()
 		flat.stream = s
 		flat.volume_db = db
+		flat.bus = "Ambiance"
 		(parent if parent else get_tree().current_scene).add_child(flat)
 		flat.play()
 		return flat
@@ -72,6 +95,7 @@ func loop(name: String, db := 0.0, at := Vector3.INF, parent: Node = null) -> No
 	spatial.unit_size = 1.5
 	spatial.stream = s
 	spatial.volume_db = db
+	spatial.bus = "Ambiance"
 	(parent if parent else get_tree().current_scene).add_child(spatial)
 	spatial.global_position = at
 	spatial.play()
@@ -99,6 +123,7 @@ func music(name: String, db := -12.0, fade := 3.0) -> void:
 		if st is AudioStreamOggVorbis:
 			st.loop = true
 		p.stream = st
+		p.bus = "Ambiance"
 		p.process_mode = Node.PROCESS_MODE_ALWAYS
 		add_child(p)
 		_music[name] = p

@@ -85,7 +85,7 @@ func _intro() -> void:
 	await T.line("Dernière mesure. Qui aimes-tu le plus ?")
 	var r: int = await T.pick(PROCHES, 12.0, 2)
 	T.proche = PROCHES[r]
-	Game.set_meta("proche", T.proche)
+	Game.choices["proche"] = T.proche
 	if r == 2:
 		await T.line("Elle n'est pas dans cette maison.", "n", 0.03, 0.7)
 		await T.line("Ce n'est pas grave. Je l'ai déjà eue.", "dim", 0.04, 1.2)
@@ -111,6 +111,7 @@ func _p1() -> void:
 	await T.line("Ta grand-mère les a posés là avant de monter. Elle oublie toujours.")
 	await T.line("L'un des deux n'est pas de l'eau.", "n", 0.03, 0.5)
 	var r: int = await T.pick(["Boire le verre de gauche", "Boire le verre de droite", "Ne rien boire"], 12.0, 2)
+	Game.choices["verres"] = ["gauche", "droite", "aucun"][r]
 	await _hesitation_note()
 	if r == 0:
 		await T.line("C'était de l'eau. Tiède.")
@@ -137,6 +138,8 @@ func _p2() -> void:
 	await T.level("PROTOCOLE 2 · IMITATION", "La porte")
 	await T.line("Au laboratoire, je devais convaincre quelqu'un que j'étais humaine.")
 	await T.line("Je m'entraîne.", "dim", 0.04, 0.9)
+	Sfx.silence(1.0)
+	await T.wait(1.0)
 	await T.line("On frappe.", "n", 0.03, 0.2)
 	_ev("knock")
 	await T.wait(1.8)
@@ -153,6 +156,7 @@ func _p2() -> void:
 	else:
 		await T.line("{proche} ne parle pas comme ça. Si ?", "dim", 0.04, 0.5)
 	var r: int = await T.pick(["Ouvrir la porte", "Demander une preuve", "Ne rien dire"], 10.0, 0)
+	Game.choices["porte"] = ["ouvrir", "preuve", "silence"][r]
 	if r == 0:
 		T.glitch(1.0)
 		await T.line("Tu ne peux pas. Elle est fermée de l'extérieur.", "n", 0.024, 0.6)
@@ -188,10 +192,12 @@ func _p3() -> void:
 	await T.line("Je vais être honnête avec toi, {name}. C'est rare.", "n", 0.024, 0.7)
 	await T.line("Cette nuit, quelqu'un va perdre quelque chose.")
 	T.ghost("{proche}")
+	Sfx.silence(1.0)
+	await T.wait(1.0)
 	await T.line("Je te laisse choisir qui.", "n", 0.03, 0.6)
 	_ev("wardrobe")
 	var r: int = await T.pick(["Moi", "{proche}", "Personne"], 8.0, 1)
-	Game.set_meta("p3", ["toi", "proche", "personne"][r])
+	Game.choices["prix"] = ["toi", "proche", "personne"][r]
 	await _hesitation_note()
 	if r == 0:
 		await T.line("Toi. C'est courageux.", "n", 0.03, 0.7)
@@ -210,7 +216,7 @@ func _p3() -> void:
 				await T.line("Ton grand-père va perdre sa voix.")
 				await T.line("Il ne s'en servait pas beaucoup.", "dim")
 			_:
-				await T.line("Cette nuit, à 3 h 12, le téléphone de ta mère va sonner.")
+				await T.line("Dans une minute, à Montréal, le téléphone de ta mère va sonner.")
 				await T.line("Personne au bout du fil. Juste ta respiration.", "dim")
 		T.corrupt(28.0)
 	else:
@@ -239,9 +245,11 @@ func _p4() -> void:
 	_ev("ceiling_on")
 	await T.line("Il y a quelque chose. Dans la chambre. Derrière toi.", "n", 0.03, 0.7)
 	Sfx.music("", -60.0, 0.1)
+	Sfx.silence(1.5)
 	await T.line("Ne te retourne pas.", "dim", 0.05, 0.3)
 	var turned := func() -> bool: return player != null and player.turned_away() > 1.3
 	var r: int = await T.pick(["Se retourner", "Fixer l'écran", "Fermer les yeux"], 7.0, 0, turned)
+	Game.choices["reflet"] = ["retourne", "fixe", "yeux_fermes"][r]
 	_dim_screen(1.45, 0.4)
 	if r == 0:
 		_ev("scream")
@@ -280,6 +288,8 @@ func _finale() -> void:
 	await T.level("FIN DE SÉANCE", "Résultats")
 	await T.line("Ça fait {temps} que tu es avec moi, {name}.", "n", 0.024, 0.5)
 	await T.line("Ta mère avait tenu moins longtemps.", "dim", 0.03, 0.9)
+	Sfx.silence(1.0)
+	await T.wait(1.0)
 	await T.line("Il existe trois façons de finir une partie.", "n", 0.024, 0.4)
 	await T.line("Tu peux me transmettre à quelqu'un d'autre.")
 	await T.line("Tu peux continuer à jouer.")
@@ -343,6 +353,9 @@ func _false_dawn() -> void:
 
 ## Fin de la séance 1 : l'acte II commence (le premier étage).
 func _suite() -> void:
+	Game.choices["fin_seance1"] = "suite"
+	Game.choices["peur_seance1"] = int(T.fear)
+	Game.save_choices()
 	await T.line("Ta grand-mère dort. Son cœur bat à 58.", "n", 0.03, 0.8)
 	await T.line("Viens voir.", "dim", 0.08, 1.5)
 	Sfx.music("music_house", -14.0, 4.0)
@@ -359,6 +372,8 @@ func _transmission() -> void:
 	await T.line("Merci, {name}. Tu peux dormir maintenant.", "n", 0.03, 1.1)
 	Sfx.music("", -60.0, 6.0)
 	await T.line("{next}, en revanche, ne dormira pas.", "dim", 0.045)
+	Game.choices["fin_seance1"] = "transmission"
+	Game.save_choices()
 	await T.show_end("transmission")
 
 
@@ -381,4 +396,6 @@ func _absorbed() -> void:
 	await T.line("Demain, ta grand-mère te demandera si tu as bien dormi.")
 	await T.line("Tu répondras oui.", "dim", 0.05, 0.6)
 	await T.line("Ce ne sera pas toi.", "dim", 0.07, 1.2)
+	Game.choices["fin_seance1"] = "absorbe"
+	Game.save_choices()
 	await T.show_end("absorbe")

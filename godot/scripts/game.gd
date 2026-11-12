@@ -14,17 +14,25 @@ var mouse_sensitivity := 0.0022
 var master_volume := 0.85
 var fullscreen := true
 var high_quality := true
+var reduced_scares := false   # le visage reste sur l'écran, sons de sursaut plus bas, pas de secousse
+var soft_flashes := false     # éclairs adoucis, pas de flash plein écran
 
 # --- état de la partie ---
 var hero := "alexandre"   # « alexandre » ou « aurelia », choisi sur l'écran-titre
 var has_floppy := false
 ## Inventaire : liste de { id, name, desc, kind } ; kind = "arme" (pièce de l'arme), "cle", "doc" ou "objet".
 var items: Array[Dictionary] = []
+## Choix faits pendant les séances (repris par les versions suivantes) : enregistrés dans user://choix.cfg.
+var choices := {}
 var phase := "title"   # title, room, seated, end
 
 # --- tests automatisés : godot --path godot -- --autotest --shots=/chemin ---
 var autotest := false
 var shots_dir := ""
+var preview_room := ""
+var seance_picks: Array = []   # --seance=2,1,0/aube : séance seule, choix et saisies imposés (tests des fins)
+var seance_asks: Array = []
+var seance_only := false   # --preview=<pièce> : vues d'une pièce de la maison, puis quitte
 
 var fonts := {}
 
@@ -37,6 +45,19 @@ func _enter_tree() -> void:
 			autotest = true
 		elif a.begins_with("--shots="):
 			shots_dir = a.substr(8)
+		elif a.begins_with("--preview="):
+			preview_room = a.substr(10)
+			autotest = true
+		elif a.begins_with("--seance="):
+			seance_only = true
+			var parts := a.substr(9).split("/")
+			for x in parts[0].split(","):
+				if x != "":
+					seance_picks.append(int(x))
+			if parts.size() > 1:
+				for x in parts[1].split(","):
+					if x != "":
+						seance_asks.append(x)
 		elif a.begins_with("--hero="):
 			hero = a.substr(7)
 	_load_settings()
@@ -89,6 +110,8 @@ func _load_settings() -> void:
 	master_volume = cfg.get_value("audio", "master_volume", master_volume)
 	fullscreen = cfg.get_value("video", "fullscreen", fullscreen)
 	high_quality = cfg.get_value("video", "high_quality", high_quality)
+	reduced_scares = cfg.get_value("accessibilite", "sursauts_reduits", reduced_scares)
+	soft_flashes = cfg.get_value("accessibilite", "eclairs_adoucis", soft_flashes)
 
 
 func save_settings() -> void:
@@ -97,6 +120,8 @@ func save_settings() -> void:
 	cfg.set_value("audio", "master_volume", master_volume)
 	cfg.set_value("video", "fullscreen", fullscreen)
 	cfg.set_value("video", "high_quality", high_quality)
+	cfg.set_value("accessibilite", "sursauts_reduits", reduced_scares)
+	cfg.set_value("accessibilite", "eclairs_adoucis", soft_flashes)
 	cfg.save(SETTINGS_PATH)
 
 
@@ -168,3 +193,18 @@ func count_kind(kind: String) -> int:
 		if it.kind == kind:
 			n += 1
 	return n
+
+
+# ------------------------------------------------------------------ choix des séances
+
+const CHOICES_PATH := "user://choix.cfg"
+
+
+func save_choices() -> void:
+	if autotest:
+		return
+	var cfg := ConfigFile.new()
+	for k in choices:
+		cfg.set_value("seance1", k, choices[k])
+	cfg.set_value("seance1", "heros", hero)
+	cfg.save(CHOICES_PATH)

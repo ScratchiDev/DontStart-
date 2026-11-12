@@ -19,6 +19,7 @@ func build(r: Node3D) -> void:
 	_walls()
 	_floor()
 	_traces()
+	_journal()
 
 
 # ------------------------------------------------------------------ outils
@@ -116,10 +117,18 @@ func _desk() -> void:
 	man.add_child(mmi)
 	_look("Lire le manuel", Vector3(0.2, 0.06, 0.24), Vector3(1.72, top + 0.03, -2.08),
 		"« RUNTIME, manuel de l'utilisateur ». Toutes les pages sont blanches, sauf la dernière : ton prénom.")
-	# mug de café froid
+	# le chocolat de Mamie, froid, avec sa peau
 	var red := _m(Color(0.5, 0.12, 0.1), 0.35)
 	_mesh(_cyl(0.042, 0.095), Vector3(1.9, top + 0.0475, -2.5), red)
-	_mesh(_cyl(0.036, 0.004), Vector3(1.9, top + 0.08, -2.5), _m(Color(0.06, 0.035, 0.02), 0.1))
+	_mesh(_cyl(0.036, 0.004), Vector3(1.9, top + 0.08, -2.5), _m(Color(0.32, 0.2, 0.13), 0.9))
+	_look("Regarder le chocolat", Vector3(0.12, 0.14, 0.12), Vector3(1.9, top + 0.06, -2.5),
+		"Le chocolat de Mamie. Froid depuis longtemps, avec une peau dessus. Elle en fait toujours trop.")
+	# son mot, plié contre le clavier
+	_flat("note.png", Vector2(0.13, 0.16), Vector3(1.58, top + 0.002, -1.9), 0.3)
+	var hn: Interactable = room._interactable("Lire le mot de Mamie", Vector3(0.18, 0.05, 0.2), Vector3(1.58, top + 0.02, -1.9), self)
+	hn.used.connect(func(_i: Interactable) -> void:
+		get_tree().call_group("hud", "read_paper", Game.g("Bonne nuit mon grand…", "Bonne nuit ma grande…") +
+			"\nJe t'ai monté un chocolat, il sera froid, comme d'habitude…\nPapi a dit de débrancher l'ordinateur avant de dormir. Fais-le pour lui, d'accord ?\n\nMamie"))
 	var handle := TorusMesh.new()
 	handle.inner_radius = 0.018
 	handle.outer_radius = 0.026
@@ -134,7 +143,7 @@ func _desk() -> void:
 	# la feuille couverte de « 3:12 »
 	_flat("paper_312.png", Vector2(0.21, 0.28), Vector3(0.98, top + 0.002, -2.05), -0.45)
 	_look("Lire la feuille", Vector3(0.24, 0.04, 0.3), Vector3(0.98, top + 0.02, -2.05),
-		"« ne pas jouer », « 3:12 », encore et encore. C'est ton écriture. Tu ne te souviens pas de l'avoir écrite.")
+		"« ne pas jouer », « 3:12 », encore et encore. C'est l'écriture de ta mère, à seize ans. Elle ressemble à la tienne.")
 	# câble : du moniteur jusqu'à la prise, en passant par le sol
 	var socket := Vector3(2.0, 0.3, -2.6 + 0.024)
 	_b(Vector3(0.08, 0.12, 0.012), socket, _m(Color(0.75, 0.72, 0.66), 0.5))
@@ -257,11 +266,11 @@ func _walls() -> void:
 	_b(Vector3(0.74, 0.56, 0.02), Vector3(1.38, 1.68, back + 0.012), _m(Color(0.27, 0.18, 0.11), 0.7))
 	_hang("corkboard.png", Vector2(0.7, 0.525), Vector3(1.38, 1.68, back + 0.0225), Vector3(0, 0, 1))
 	_look("Regarder le tableau", Vector3(0.76, 0.58, 0.08), Vector3(1.38, 1.68, back + 0.04),
-		"Des photos, des rendez-vous… et « elle me regarde la nuit ». C'est ton écriture.")
+		"Des photos de 2016, des places de concert… et « elle me regarde la nuit ». L'écriture de ta mère.")
 	# calendrier sur le mur de la porte
 	_hang("calendar.png", Vector2(0.3, 0.42), Vector3(3.2 - 0.006, 1.5, -1.62), Vector3(-1, 0, 0))
 	_look("Regarder le calendrier", Vector3(0.06, 0.45, 0.34), Vector3(3.17, 1.5, -1.62),
-		"Novembre. Tous les jours barrés jusqu'au 12. Le 13 est entouré en rouge.")
+		"Octobre 2016. Tous les jours barrés jusqu'au 30. Le 31 est entouré en rouge, si fort que le papier est troué.")
 	# horloge arrêtée au-dessus de la commode
 	var clock_pos := Vector3(0.75, 1.95, 2.6 - 0.025)
 	_mesh(_cyl(0.165, 0.045, 24), clock_pos, _m(Color(0.12, 0.1, 0.09), 0.5), Vector3(PI / 2.0, 0, 0))
@@ -340,6 +349,33 @@ func _decal(file: String, center: Vector3, normal: Vector3, up: Vector3, size_u:
 	d.transform = Transform3D(Basis(x, y, z), center)
 	add_child(d)
 	return d
+
+
+## Le journal de Manon (octobre 2016), glissé sous le lit, au bout des empreintes.
+func _journal() -> void:
+	var at := Vector3(-2.02, 0.012, 1.42)
+	var j := Node3D.new()
+	j.position = at
+	j.rotation.y = 0.5
+	add_child(j)
+	_b(Vector3(0.15, 0.022, 0.21), Vector3.ZERO, _m(Color(0.16, 0.2, 0.34), 0.75), 0.0, j)
+	_b(Vector3(0.14, 0.018, 0.2), Vector3(0.006, 0.0, 0.0), _m(Color(0.86, 0.83, 0.74), 0.9), 0.0, j)
+	var it: Interactable = room._interactable("Ramasser le carnet", Vector3(0.3, 0.12, 0.32), at + Vector3(0, 0.05, 0), self, 4, 2.4)
+	it.used.connect(func(_i: Interactable) -> void:
+		j.visible = false
+		it.enabled = false
+		Game.add_item("journal_manon", "Journal de Maman (2016)", "Caché sous le lit. Les lettres qui brillent…", "doc")
+		get_tree().call_group("hud", "read_pages", JOURNAL))
+
+
+const JOURNAL := [
+	"27 octobre 2016\n\nTrouvé au grenier une boîte de disquettes dans les affaires du boulot de Papa. Une seule marche. RUNTIME. C'est un jeu, je crois.\nIl connaît mon prénom.",
+	"29 octobre\n\nIl pose des questions et il compte le temps que je mets à répondre. Si je mets trop longtemps, il choisit à ma place.\nIl choisit toujours mal.",
+	"30 octobre\n\nIl dit que demain soir c'est son anniversaire et qu'on jouera « pour de vrai ». Papa a vu l'écran. Il est devenu tout blanc. Il connaît ce programme. Il ne veut pas dire d'où.",
+	"1er novembre, le matin\n\nLes lettres qui brillent dans ses erreurs, c'était un mot. Je l'ai tapé. Il a écrit PARTIE SUSPENDUE.\nSuspendue, pas finie.\nJe n'arrive plus à dormir.",
+	"Si quelqu'un lit ça :\nne branche pas cet ordinateur.\n\n— M.",
+	"(au dos, un croquis)\nun sèche-cheveux, une antenne, une boussole, une bobine.\n« Son signal, c'est des ondes. Si on le coupe en morceaux, il ne tient plus. Papa saurait le construire. Il ne veut pas. »",
+]
 
 
 func _traces() -> void:

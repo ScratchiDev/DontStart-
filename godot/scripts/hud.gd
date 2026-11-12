@@ -17,6 +17,9 @@ var paper: Control
 var paper_text: Label
 var fade: ColorRect
 var paper_open := false
+var paper_foot: Label
+var _pages: Array = []
+var _page_i := 0
 var _hint_left := 0.0
 var inv: Control
 var inv_list: RichTextLabel
@@ -170,8 +173,10 @@ func _build_paper() -> Control:
 	paper_text.add_theme_constant_override("line_spacing", -7)
 	paper_text.position = Vector2(20, 18)
 	paper_text.size = Vector2(160, 220)
+	paper_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	sheet.add_child(paper_text)
 	var foot := _label(Color(0.7, 0.68, 0.6))
+	paper_foot = foot
 	foot.text = "E OU ÉCHAP POUR REPOSER"
 	foot.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
 	foot.position = Vector2(-80, -22)
@@ -280,8 +285,31 @@ func show_hand(v: bool) -> void:
 	hand.visible = v
 
 
+## Carnet de plusieurs pages : E pour tourner la page.
+func read_pages(pages: Array, font_size := 21) -> void:
+	_pages = pages
+	_page_i = 0
+	paper_text.add_theme_font_size_override("font_size", font_size)
+	read_paper(pages[0])
+	paper_foot.text = "E : PAGE SUIVANTE (1/%d)" % pages.size()
+
+
+func _next_page() -> void:
+	_page_i += 1
+	if _page_i >= _pages.size():
+		_pages = []
+		paper_text.add_theme_font_size_override("font_size", 26)
+		close_paper()
+		return
+	paper_text.text = _pages[_page_i]
+	Sfx.play("bookFlip1", -10.0)
+	paper_foot.text = ("E : PAGE SUIVANTE (%d/%d)" if _page_i < _pages.size() - 1 else "E OU ÉCHAP POUR REPOSER (%d/%d)") % [_page_i + 1, _pages.size()]
+
+
 func read_paper(text: String) -> void:
 	paper_text.text = text
+	if _pages.is_empty():
+		paper_foot.text = "E OU ÉCHAP POUR REPOSER"
 	paper.visible = true
 	paper_open = true
 	prompt.visible = false
@@ -292,6 +320,8 @@ func read_paper(text: String) -> void:
 
 
 func close_paper() -> void:
+	_pages = []
+	paper_text.add_theme_font_size_override("font_size", 26)
 	paper.visible = false
 	paper_open = false
 	if player:
@@ -303,7 +333,10 @@ func close_paper() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if paper_open and event.is_action_pressed("interact"):
 		get_viewport().set_input_as_handled()
-		close_paper()
+		if not _pages.is_empty():
+			_next_page()
+		else:
+			close_paper()
 	elif event.is_action_pressed("inventory") and Game.phase == "room" and not get_tree().paused:
 		get_viewport().set_input_as_handled()
 		toggle_inventory()

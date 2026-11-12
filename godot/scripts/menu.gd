@@ -92,8 +92,8 @@ func _button(t: String, cb: Callable) -> Button:
 func _build_title() -> Control:
 	var v := _vbox(44)
 	v.add_child(_text("DON'T PLAY", GREEN, 64, false))
-	v.add_child(_text("Les vacances chez tes grands-parents. Une maison restée dans les années 90, où chaque écran est connecté. Dans l'ancienne chambre de ta mère, une disquette sans étiquette."))
-	v.add_child(_text("Ne la mets pas dans l'ordinateur.", Color(0.62, 0.6, 0.54)))
+	v.add_child(_text("Toussaint 2040. Une semaine chez tes grands-parents. Mamie t'a fait dormir dans l'ancienne chambre de ta mère. Cet après-midi, tu as réparé son vieil ordinateur et tu l'as branché sur la box. Papi t'a dit de le débrancher avant de dormir."))
+	v.add_child(_text("Il est 3 h 12. L'ordinateur vient de s'allumer tout seul.", Color(0.62, 0.6, 0.54)))
 	var gap := Control.new()
 	gap.custom_minimum_size = Vector2(0, 8)
 	v.add_child(gap)
@@ -103,7 +103,7 @@ func _build_title() -> Control:
 	var foot := _text("ZQSD/WASD marcher · souris regarder · E agir · F lampe\nMaj courir · C s'accroupir · Échap menu", Color(0.45, 0.44, 0.4), 16, false)
 	foot.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	foot.position = Vector2(44, -64)
-	var warn := _text("Casque recommandé. Contient des sursauts et des effets clignotants.", Color(0.45, 0.44, 0.4), 16, false)
+	var warn := _text("Casque recommandé. Sursauts et effets lumineux clignotants : options « éclairs adoucis » et « sursauts réduits ».", Color(0.45, 0.44, 0.4), 16, false)
 	warn.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	warn.position = Vector2(44, -26)
 	var holder := Control.new()
@@ -178,6 +178,20 @@ func _build_options() -> Control:
 		Game.high_quality = on
 		Game.apply_settings())
 	v.add_child(hq)
+	var rs := CheckBox.new()
+	rs.text = "Sursauts réduits"
+	rs.button_pressed = Game.reduced_scares
+	rs.toggled.connect(func(on: bool) -> void:
+		Game.reduced_scares = on
+		Game.apply_settings())
+	v.add_child(rs)
+	var sf := CheckBox.new()
+	sf.text = "Éclairs adoucis (photosensibilité)"
+	sf.button_pressed = Game.soft_flashes
+	sf.toggled.connect(func(on: bool) -> void:
+		Game.soft_flashes = on
+		Game.apply_settings())
+	v.add_child(sf)
 	v.add_child(_button("Retour", func() -> void:
 		Game.save_settings()
 		if back_target == "title":

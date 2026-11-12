@@ -326,7 +326,11 @@ func strike() -> void:
 	lightning_struck.emit()
 	var sky := _sky()
 	var sky_base := sky.energy_multiplier if sky else 0.0
-	for e in [[42.0, 0.05], [0.0, 0.07], [60.0, 0.09], [10.0, 0.18], [0.0, 0.0]]:
+	# éclairs adoucis (photosensibilité) : une seule lueur douce, sans stroboscope
+	var pattern := [[42.0, 0.05], [0.0, 0.07], [60.0, 0.09], [10.0, 0.18], [0.0, 0.0]]
+	if Game.soft_flashes:
+		pattern = [[6.0, 0.12], [12.0, 0.25], [6.0, 0.25], [0.0, 0.0]]
+	for e in pattern:
 		bolt.light_energy = e[0]
 		if sky:
 			sky.energy_multiplier = sky_base + e[0] * 0.06

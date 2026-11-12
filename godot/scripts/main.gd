@@ -42,6 +42,9 @@ func _ready() -> void:
 	menu.start_requested.connect(start_game)
 	menu.resume_requested.connect(resume)
 	Sfx.loop("room_tone", -16.0)
+	if Game.preview_room != "":
+		_preview(Game.preview_room)
+		return
 	if Game.autotest:
 		_autotest()
 		return
@@ -109,6 +112,9 @@ func _build_house() -> void:
 	house.name = "House"
 	add_child(house)
 	house.build(room)
+	house.entered_room.connect(_on_entered_room)
+	if house.doors.has("P2"):
+		(house.doors["P2"] as Door).tried.connect(_on_grandma_door)
 	for id in house.rooms:
 		if id != "mere":
 			(house.rooms[id] as HouseRoom).bake_gi()
@@ -136,15 +142,44 @@ func _apply_quality() -> void:
 
 func start_game() -> void:
 	menu.hide_all()
-	Game.phase = "room"
+	Game.phase = "intro"
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	hud.fade.color.a = 1.0
+	player.can_move = false
+	player.can_look = false
+	await _opening()
+	Game.phase = "room"
 	player.can_move = true
 	player.can_look = true
 	hud.fade_to(0.0, 2.0)
 	Game.objective("Trouve la disquette")
 	await get_tree().create_timer(2.2).timeout
-	Game.hint("Tu l'as rangée quelque part en rentrant. Dans l'armoire, peut-être.", 5.0)
+	Game.hint("L'écran réclame une disquette. Cet après-midi, il y en avait une dans l'armoire. Tu n'avais pas osé y toucher.", 6.0)
+
+
+## Dans le noir, avant de rendre la main : derrière le mur, le ronflement de Papi s'arrête net.
+## Des pas dans le couloir. La clé tourne dans la serrure de la chambre. Les pas descendent.
+func _opening() -> void:
+	var t := func(sec: float) -> void: await get_tree().create_timer(sec, false).timeout
+	var snore: Node = Sfx.loop("snore", -8.0, Vector3(-0.6, 0.7, -2.9), self)
+	await t.call(5.5)
+	if snore:
+		snore.queue_free()
+	Sfx.silence(2.0)
+	await t.call(2.2)
+	for i in 6:
+		Sfx.play_at("footstep_wood_00%d" % (i % 5), Vector3(4.0, 0.05, -3.2 + i * 0.75), -4.0, 0.9)
+		await t.call(0.62)
+	var door_p: Vector3 = room.door_center()
+	await t.call(0.8)
+	Sfx.play_at("metalLatch", door_p, -2.0, 0.85)
+	await t.call(0.45)
+	Sfx.play_at("metalClick", door_p, -4.0, 0.6)
+	await t.call(1.6)
+	for i in 6:
+		Sfx.play_at("footstep_wood_00%d" % ((i + 2) % 5), Vector3(4.3 + i * 0.45, 0.05 - i * 0.22, 1.2 - i * 0.1), -6.0 - i * 3.0, 0.85)
+		await t.call(0.7)
+	await t.call(1.2)
 
 
 func _on_floppy_taken() -> void:
@@ -223,6 +258,46 @@ func _on_seance_end(id: String) -> void:
 		await get_tree().create_timer(4.0, false).timeout
 		Game.hint("[E] Te lever", 9999.0)
 	waiting_stand = true
+
+
+var _breath: Node
+var _v03_ending := false
+
+
+func _on_entered_room(r: HouseRoom) -> void:
+	if r.room_id == "couloir" and seance_result == "suite" and _breath == null:
+		Game.objective("Va voir ta grand-mère")
+		# derrière la porte des grands-parents, la respiration lente d'Henriette
+		_breath = Sfx.loop("breath_slow", -14.0, Vector3(2.6, 0.9, -3.6), self)
+		var c: Node = house.rooms.get("couloir")
+		if c and c.has_method("track"):
+			c.track(player)
+
+
+## Fin de la version 0.3 : devant la porte d'Henriette, la maison se réveille.
+func _on_grandma_door() -> void:
+	if _v03_ending or seance_result != "suite":
+		return
+	_v03_ending = true
+	player.can_move = false
+	var c: Node = house.rooms.get("couloir")
+	await get_tree().create_timer(2.5, false).timeout
+	Sfx.silence(2.0)
+	if c and c.has_method("flicker"):
+		c.flicker(2.0)
+	await get_tree().create_timer(1.5, false).timeout
+	if c and c.has_method("set_dim"):
+		c.set_dim(0.0)
+	Sfx.play_at("metalClick", room.screen_center, 0.0, 0.5, 4.0)
+	Game.hint("Dans la chambre de ta mère, l'ordinateur vient de se rallumer.", 4.0)
+	await get_tree().create_timer(3.5, false).timeout
+	await hud.fade_to(1.0, 2.0)
+	if _breath:
+		_breath.queue_free()
+	Sfx.music("", -60.0, 2.0)
+	await hud.card(["FIN DE LA VERSION 0.3", "", "Acte II · Essais réels", "La maison se réveille dans la prochaine version."], 5.0)
+	if not Game.autotest:
+		get_tree().reload_current_scene()
 
 
 func _stand_up() -> void:
@@ -314,6 +389,45 @@ func _view(pos: Vector3, yaw: float, pitch: float, name: String, wait := 0.8) ->
 	await _shot(name)
 
 
+## Vues d'une pièce pour la vérifier (godot -- --preview=bureau --shots=/chemin) : quatre coins
+## éclairés par une lampe de service, puis une vue « de nuit » à la lampe de poche, depuis la porte.
+func _preview(id: String) -> void:
+	hud.fade.color.a = 0.0
+	menu.hide_all()
+	Game.phase = "room"
+	player.can_move = false
+	player.can_look = false
+	var r: HouseRoom = house.rooms.get(id)
+	if r == null:
+		print("pièce inconnue : ", id, " · pièces : ", house.rooms.keys())
+		get_tree().quit()
+		return
+	var c := r.center()
+	var lamp := OmniLight3D.new()
+	lamp.light_energy = 1.1
+	lamp.omni_range = r.rect.size.length() + 1.0
+	lamp.shadow_enabled = true
+	add_child(lamp)
+	lamp.global_position = Vector3(c.x, r.y0 + r.h - 0.3, c.z)
+	var inset := 0.35
+	var corners := [
+		Vector2(r.rect.position.x + inset, r.rect.position.y + inset),
+		Vector2(r.rect.end.x - inset, r.rect.position.y + inset),
+		Vector2(r.rect.end.x - inset, r.rect.end.y - inset),
+		Vector2(r.rect.position.x + inset, r.rect.end.y - inset),
+	]
+	for i in corners.size():
+		var p: Vector2 = corners[i]
+		var to := Vector2(c.x, c.z) - p
+		var yaw := atan2(-to.x, -to.y)
+		await _view(Vector3(p.x, r.y0, p.y), yaw, -0.2, "%s_%d" % [id, i + 1], 1.2)
+	lamp.queue_free()
+	await _view(Vector3(c.x, r.y0, c.z), 0.0, -0.1, "%s_nuit_a" % id, 1.0)
+	await _view(Vector3(c.x, r.y0, c.z), PI, -0.1, "%s_nuit_b" % id, 1.0)
+	print("APERÇU OK ", id)
+	get_tree().quit()
+
+
 func _until(cond: Callable, timeout := 60.0) -> void:
 	var t := 0.0
 	while not cond.call() and t < timeout:
@@ -336,7 +450,32 @@ func _use_at(pos: Vector3, yaw: float, pitch: float, expected: String, shot := "
 		player.current.use()
 
 
+## Séance seule avec des choix imposés : godot -- --autotest --seance=2,1,0,1,0,2/a,b,c --shots=…
+func _autotest_seance() -> void:
+	print("SÉANCE début : choix ", Game.seance_picks, " saisies ", Game.seance_asks)
+	hud.fade.color.a = 0.0
+	menu.hide_all()
+	Game.phase = "room"
+	Game.has_floppy = true
+	player.global_position = Vector3(1.2, 0, -1.0)
+	player.set_look(0.0, -0.3)
+	_on_pc_used()
+	await room.terminal.boot_finished
+	room.terminal.turbo = true
+	room.terminal.autopicks = Game.seance_picks.duplicate()
+	room.terminal.autoasks = Game.seance_asks.duplicate()
+	await _until(func() -> bool: return seance_result != "", 240.0)
+	await get_tree().create_timer(2.0).timeout
+	await _shot("seance_fin_" + seance_result)
+	print("FIN : %s · peur %d · choix %s · fins trouvées %s" % [seance_result, int(room.terminal.fear), Game.choices, room.terminal.found_endings()])
+	print("AUTOTEST OK")
+	get_tree().quit()
+
+
 func _autotest() -> void:
+	if Game.seance_only:
+		await _autotest_seance()
+		return
 	print("AUTOTEST début")
 	hud.fade.color.a = 0.0
 	menu.show_title()
@@ -405,15 +544,13 @@ func _autotest() -> void:
 	await _view(Vector3(1.6, 0, 1.4), -PI / 2.0, -0.05, "23_porte_ouverte", 1.0)
 	await _view(Vector3(4.0, 0, 2.2), 0.0, -0.05, "24_couloir_vers_nord", 1.2)
 	await _view(Vector3(4.0, 0, -1.0), PI, -0.05, "25_couloir_vers_sud", 1.2)
-	await _use_at(Vector3(3.9, 0, -4.6), -PI / 2.0, -0.1, "Ouvrir la porte")
-	await get_tree().create_timer(1.6).timeout
-	await _view(Vector3(5.4, 0, -4.6), -PI / 2.0 - 0.3, -0.1, "26_salle_de_bain", 1.2)
-	await _use_at(Vector3(3.95, 0, 3.4), PI / 2.0, -0.1, "Ouvrir la porte")
-	await get_tree().create_timer(0.8).timeout
-	await _use_at(Vector3(3.95, 0, 3.4), PI / 2.0, -0.1, "Forcer la porte")
-	await get_tree().create_timer(1.2).timeout
-	await _view(Vector3(2.4, 0, 3.4), PI / 2.0 + 0.2, -0.05, "27_chambre_amis", 1.2)
-	await _use_at(Vector3(4.0, 0, 4.4), -PI / 2.0, -0.1, "Ouvrir la porte", "28_bureau_ferme")
+	await _view(Vector3(4.0, 0, -2.5), 0.0, -0.05, "26_couloir_nord", 1.2)
+	await _use_at(Vector3(4.1, 0, -3.6), PI / 2.0, -0.1, "Ouvrir la porte", "27_porte_grand_mere")
+	await get_tree().create_timer(6.0).timeout
+	await _shot("28_couloir_eteint")
+	await _until(func() -> bool: return hud.fade.color.a > 0.99, 20.0)
+	await get_tree().create_timer(1.5).timeout
+	await _shot("29_fin_v03")
 	print("pièce courante : ", house.current.room_id if house.current else "aucune")
 	print("AUTOTEST OK")
 	get_tree().quit()

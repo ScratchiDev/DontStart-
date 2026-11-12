@@ -104,6 +104,14 @@ func _build_window() -> void:
 	window_glass_mat.set_shader_parameter("glass_size", Vector2(fw, fh))
 	var glass := _quad(Vector2(fw, fh), Vector3(x - 0.03, fy, fz), window_glass_mat, PI / 2.0)
 	glass.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# la fenêtre a été vissée (par Albert, en 2016)
+	for sz in [WIN_Z0 + 0.05, WIN_Z1 - 0.05]:
+		for sy in [WIN_Y0 + 0.06, WIN_Y1 - 0.06]:
+			_box(Vector3(0.012, 0.014, 0.014), Vector3(x + 0.075, sy, sz), mats.metal)
+	var shut := _interactable("Ouvrir la fenêtre", Vector3(0.12, 0.3, fw), Vector3(x + 0.1, WIN_Y0 + 0.15, fz))
+	shut.used.connect(func(_i: Interactable) -> void:
+		Sfx.play_at("metalLatch", Vector3(x, WIN_Y0 + 0.2, fz), -6.0, 0.7)
+		Game.hint("Vissée. Quatre grosses vis dans le cadre, rouillées. Par Papi, sans doute. Il y a longtemps."))
 	var look := _interactable("Regarder dehors", Vector3(0.1, fh, fw), Vector3(x, fy, fz))
 	look.used.connect(func(_i: Interactable) -> void:
 		if outside.someone_there:
@@ -280,7 +288,7 @@ func _build_clock(top: Vector3) -> void:
 	blink.timeout.connect(func() -> void: lbl.text = "3 12" if lbl.text == "3:12" else "3:12")
 	add_child(blink)
 	var it := _interactable("Regarder le réveil", Vector3(0.12, 0.1, 0.22), top + Vector3(0, 0.05, 0))
-	it.used.connect(func(_i: Interactable) -> void: Game.hint("3:12. Il est 3:12 depuis que tu es entré."))
+	it.used.connect(func(_i: Interactable) -> void: Game.hint("3:12. Il clignote, comme s'il venait de se rallumer après une coupure."))
 
 
 func _build_photo(base: Vector3) -> void:
@@ -298,7 +306,7 @@ func _build_photo(base: Vector3) -> void:
 	frame.add_child(pic)
 	var it := _interactable("Regarder la photo", Vector3(0.3, 0.26, 0.12), base + Vector3(0, 0.12, 0))
 	it.used.connect(func(_i: Interactable) -> void:
-		Game.hint("Toi et ta mère, devant l'ancienne maison. Tu ne te souviens pas d'avoir rayé vos visages."))
+		Game.hint("Ta mère à seize ans, assise à ce bureau. Derrière elle, l'écran est allumé. Son visage est rayé au stylo."))
 
 
 func _build_floppy(pos: Vector3) -> void:
@@ -509,7 +517,7 @@ func _on_wardrobe(it: Interactable) -> void:
 	await tw.finished
 	Sfx.play_at("metalLatch", c, -12.0)
 	floppy_item.enabled = true
-	Game.hint("Une disquette. Posée sur l'étagère, comme si elle t'attendait.")
+	Game.hint("Une disquette. « NE PAS JOUER », de l'écriture de Papi. Elle est tiède.")
 
 
 func _on_floppy(_it: Interactable) -> void:
@@ -548,7 +556,7 @@ func _on_radio(it: Interactable) -> void:
 	Sfx.play_at("metalClick", it.global_position, -8.0)
 	Sfx.play_at("cloth", it.global_position, -14.0, 0.6)
 	Game.whisper("c'est toi. c'est toi. c'est toi.")
-	Game.hint("Un souffle. Puis, très bas, quelqu'un répète ton nom.")
+	Game.hint("Un souffle. Puis, très bas, quelqu'un répète ton prénom.")
 
 
 # ------------------------------------------------------------------ réactions pendant la séance
@@ -614,6 +622,15 @@ func ceiling_burst() -> void:
 ## Le seul vrai sursaut de l'acte I : le visage (celui du docteur Ferrand, copié par l'entité),
 ## à quelques centimètres, quand le joueur se retourne. Orbites vides, lumière par en dessous.
 func face_scare(p: Node) -> void:
+	if Game.reduced_scares:
+		# sursauts réduits : le visage reste sur l'écran, son plus bas, aucune secousse
+		Sfx.sting(-14.0)
+		terminal.watch_face(0.55, 0.4)
+		await get_tree().create_timer(1.4, false).timeout
+		terminal.watch_face(0.0, 0.8)
+		if not ceiling_dead:
+			await ceiling_burst()
+		return
 	var cam: Camera3D = p.camera
 	var face: Node3D = (load("res://assets/models/face/LeePerrySmith.glb") as PackedScene).instantiate()
 	var mat := StandardMaterial3D.new()
@@ -624,21 +641,21 @@ func face_scare(p: Node) -> void:
 		(mi as MeshInstance3D).material_override = mat
 	# orbites vides (repère du modèle scanné)
 	var black := _plain(Color(0.0, 0.0, 0.0), 1.0)
-	for ex in [-0.92, 0.92]:
+	for ex in [-0.70, 0.52]:
 		var eye := MeshInstance3D.new()
 		var sm := SphereMesh.new()
-		sm.radius = 0.5
-		sm.height = 0.7
+		sm.radius = 0.34
+		sm.height = 0.42
 		eye.mesh = sm
 		eye.material_override = black
-		eye.position = Vector3(ex, 1.95, 1.72)
+		eye.position = Vector3(ex, 1.68, 1.98)
 		face.add_child(eye)
 	var under := OmniLight3D.new()
 	under.light_color = Color(1.0, 0.82, 0.75)
 	under.omni_range = 12.0
 	under.light_energy = 0.0
 	face.add_child(under)
-	under.position = Vector3(0, -3.0, 4.0)
+	under.position = Vector3(0, -7.0, 7.0)
 	add_child(face)
 	face.scale = Vector3.ONE * 0.034
 	face.visible = false
@@ -651,6 +668,8 @@ func face_scare(p: Node) -> void:
 	face.global_position = cam.global_position + fwd * 0.5 + Vector3(0, -0.07, 0)
 	face.look_at(cam.global_position + Vector3(0, -0.07, 0), Vector3.UP, true)
 	face.visible = true
+	var screen_e := screen_light.light_energy
+	screen_light.light_energy = 0.03
 	Sfx.sting(0.0)
 	var post := get_tree().get_first_node_in_group("retro")
 	if post:
@@ -660,7 +679,7 @@ func face_scare(p: Node) -> void:
 	var t := 0.0
 	while t < 1.0:
 		face.global_position -= fwd * 0.006   # il avance
-		under.light_energy = 3.0 if rng.randf() < 0.65 else 0.4
+		under.light_energy = 0.9 if rng.randf() < 0.65 else 0.15
 		if not ceiling_dead:
 			ceiling_light.light_energy = 2.5 if rng.randf() < 0.5 else 0.2
 		head.position = base + Vector3(rng.randf_range(-1, 1), rng.randf_range(-1, 1), 0) * 0.012 * (1.0 - t)
@@ -668,6 +687,7 @@ func face_scare(p: Node) -> void:
 		t += 0.04
 	head.position = base
 	face.visible = false
+	screen_light.light_energy = screen_e
 	if post:
 		post.material.set_shader_parameter("corruption", 0.15)
 	if not ceiling_dead:
