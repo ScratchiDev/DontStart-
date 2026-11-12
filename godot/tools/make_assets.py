@@ -535,7 +535,145 @@ def thunder():
     write_wav('thunder.wav', out * 0.95)
 
 
+# ============================================================ v0.3 : la maison
+
+def _save_rgb(arr, name):
+    Image.fromarray((np.clip(arr, 0, 1) * 255).astype(np.uint8)).save(os.path.join(TEX, name))
+
+
+def wallpaper_floral():
+    """Chambre des grands-parents : petits bouquets passés sur fond vieux rose, en quinconce. 512 px = 0,6 m."""
+    n = 512
+    img = Image.new('RGB', (n, n), (196, 168, 158))
+    d = ImageDraw.Draw(img)
+    for row, y in enumerate(range(0, n, 128)):
+        for x in range(0, n, 128):
+            cx = x + (64 if row % 2 else 0) + 32
+            cy = y + 48
+            for dx in (-128, 0, 128):
+                bx = (cx + dx)
+                d.line([(bx, cy + 6), (bx - 6, cy + 30)], fill=(122, 128, 96), width=2)
+                d.line([(bx, cy + 6), (bx + 7, cy + 28)], fill=(122, 128, 96), width=2)
+                d.ellipse([bx - 16, cy + 14, bx - 6, cy + 22], fill=(128, 136, 100))
+                d.ellipse([bx + 6, cy + 16, bx + 16, cy + 24], fill=(128, 136, 100))
+                for k, (ox, oy, col) in enumerate([(0, 0, (168, 92, 96)), (-9, 5, (186, 122, 112)), (9, 4, (160, 84, 92))]):
+                    d.ellipse([bx + ox - 7, cy + oy - 7, bx + ox + 7, cy + oy + 7], fill=col)
+                    d.arc([bx + ox - 5, cy + oy - 5, bx + ox + 5, cy + oy + 5], 0, 300, fill=(120, 60, 66))
+    # fines rayures verticales en filet
+    for x in range(0, n, 32):
+        d.line([(x, 0), (x, n)], fill=(184, 156, 146))
+    arr = np.asarray(img).astype(np.float32) / 255.0
+    fade = fbm_tile(n, 2.6, 41)[..., None]
+    fibers = fbm_tile(n, 0.6, 42)[..., None]
+    arr = arr * (0.8 + 0.3 * fade) * (0.94 + 0.08 * fibers) * np.array([1.0, 0.97, 0.88])
+    _save_rgb(arr, 'wallpaper_floral.png')
+    h = 0.5 + 0.35 * (fibers[..., 0] - 0.5) + 0.2 * (np.asarray(img.convert('L')) < 150)
+    save_gray(h, os.path.join(TEX, 'wallpaper_floral_height.png'))
+
+
+def wallpaper_stripes():
+    """Couloir et bureau : larges rayures vert sauge et crème, filet brun, très jauni. 512 px = 0,6 m."""
+    n = 512
+    img = Image.new('RGB', (n, n), (186, 178, 142))
+    d = ImageDraw.Draw(img)
+    for x in range(0, n, 128):
+        d.rectangle([x, 0, x + 54, n], fill=(132, 140, 108))
+        d.line([(x + 60, 0), (x + 60, n)], fill=(108, 86, 62), width=2)
+        d.line([(x + 66, 0), (x + 66, n)], fill=(108, 86, 62), width=1)
+        for y in range(8, n, 32):
+            d.ellipse([x + 93, y, x + 99, y + 6], fill=(150, 120, 90))
+    arr = np.asarray(img).astype(np.float32) / 255.0
+    fade = fbm_tile(n, 2.6, 51)[..., None]
+    fibers = fbm_tile(n, 0.6, 52)[..., None]
+    drip = np.repeat(fbm_tile(n, 2.0, 53)[:1, :], n, axis=0)[..., None]   # coulures verticales
+    arr = arr * (0.8 + 0.3 * fade) * (0.94 + 0.08 * fibers) * (0.9 + 0.12 * drip) * np.array([1.0, 0.96, 0.84])
+    _save_rgb(arr, 'wallpaper_stripes.png')
+    h = 0.5 + 0.35 * (fibers[..., 0] - 0.5)
+    save_gray(h, os.path.join(TEX, 'wallpaper_stripes_height.png'))
+
+
+def tiles_wall():
+    """Salle de bains : carreaux de faïence 15 cm rose pâle, joints grisés, quelques carreaux fêlés. 512 px = 0,6 m."""
+    n, k = 512, 128
+    base = np.zeros((n, n, 3), np.float32)
+    height = np.ones((n, n), np.float32)
+    rs = np.random.RandomState(61)
+    col = np.array([0.86, 0.79, 0.76])
+    for i in range(4):
+        for j in range(4):
+            tone = 0.94 + 0.08 * rs.rand()
+            base[i * k:(i + 1) * k, j * k:(j + 1) * k] = col * tone
+    g = 5
+    for v in range(0, n, k):
+        base[v:v + g, :] = [0.52, 0.5, 0.46]
+        base[:, v:v + g] = [0.52, 0.5, 0.46]
+        height[v:v + g, :] = 0.2
+        height[:, v:v + g] = 0.2
+    img = Image.fromarray((np.clip(base, 0, 1) * 255).astype(np.uint8))
+    d = ImageDraw.Draw(img)
+    for _ in range(2):   # fêlures
+        x, y = rs.randint(10, n - 10), rs.randint(10, n - 10)
+        pts = [(x, y)]
+        for _ in range(6):
+            x += rs.randint(-14, 14)
+            y += rs.randint(4, 16)
+            pts.append((x, y))
+        d.line(pts, fill=(96, 86, 80), width=1)
+    arr = np.asarray(img).astype(np.float32) / 255.0
+    dirt = fbm_tile(n, 2.2, 62)[..., None]
+    arr = arr * (0.86 + 0.18 * dirt)
+    _save_rgb(arr, 'tiles_wall.png')
+    save_gray(height * (0.95 + 0.05 * dirt[..., 0]), os.path.join(TEX, 'tiles_wall_height.png'))
+
+
+def tiles_floor():
+    """Sol carrelé (salle de bains, cuisine) : damier beige et brun-rouge 20 cm, usé. 512 px = 0,8 m."""
+    n, k = 512, 128
+    base = np.zeros((n, n, 3), np.float32)
+    height = np.ones((n, n), np.float32)
+    rs = np.random.RandomState(71)
+    a = np.array([0.78, 0.7, 0.58])
+    b = np.array([0.5, 0.29, 0.22])
+    for i in range(4):
+        for j in range(4):
+            base[i * k:(i + 1) * k, j * k:(j + 1) * k] = (a if (i + j) % 2 == 0 else b) * (0.9 + 0.12 * rs.rand())
+    g = 4
+    for v in range(0, n, k):
+        base[v:v + g, :] = [0.34, 0.31, 0.28]
+        base[:, v:v + g] = [0.34, 0.31, 0.28]
+        height[v:v + g, :] = 0.25
+        height[:, v:v + g] = 0.25
+    wear = fbm_tile(n, 2.4, 72)[..., None]
+    speck = (fbm_tile(n, 0.4, 73) > 0.7)[..., None] * 0.08
+    arr = base * (0.8 + 0.3 * wear) - speck
+    _save_rgb(arr, 'tiles_floor.png')
+    save_gray(height * (0.94 + 0.06 * wear[..., 0]), os.path.join(TEX, 'tiles_floor_height.png'))
+
+
+def carpet():
+    """Moquette rase brun-rouille, tachée et tassée aux passages. 512 px = 1 m."""
+    n = 512
+    mottle = fbm_tile(n, 2.2, 81)
+    fiber = fbm_tile(n, 0.2, 82)
+    worn = fbm_tile(n, 3.0, 83)
+    base = np.array([0.42, 0.24, 0.17])
+    arr = base[None, None, :] * (0.72 + 0.4 * mottle[..., None]) * (0.85 + 0.3 * fiber[..., None])
+    arr = arr * (0.9 + 0.15 * worn[..., None])
+    _save_rgb(arr, 'carpet.png')
+    save_gray(0.5 + 0.5 * (fiber - 0.5) + 0.2 * (mottle - 0.5), os.path.join(TEX, 'carpet_height.png'))
+
+
+HOUSE = [wallpaper_floral, wallpaper_stripes, tiles_wall, tiles_floor, carpet]
+
+
 if __name__ == '__main__':
+    import sys
+    if len(sys.argv) > 1:   # ne régénérer que certaines ressources : make_assets.py house
+        if 'house' in sys.argv:
+            for f in HOUSE:
+                f()
+        print('ok')
+        raise SystemExit
     photo()
     poster_choisis()
     poster_spectres()
@@ -561,4 +699,6 @@ if __name__ == '__main__':
     neighbor_window()
     rain_loop()
     thunder()
+    for f in HOUSE:
+        f()
     print('ok')
