@@ -709,11 +709,206 @@ def entity_face():
 HOUSE = [wallpaper_floral, wallpaper_stripes, tiles_wall, tiles_floor, carpet, static_loop, entity_face]
 
 
+# ============================================================ v0.3 : musique (synthèse, boucles sans couture)
+# Tout est calculé dans le domaine fréquentiel ou avec des fréquences multiples de 1/durée :
+# la fin de chaque boucle raccorde exactement avec son début.
+
+RATE = 44100
+
+
+def _q(f, sec):
+    """Arrondit une fréquence à un multiple de 1/sec (boucle parfaite)."""
+    return round(f * sec) / sec
+
+
+def _band_noise(n, lo, hi, seed, tilt=0.0):
+    """Bruit filtré passe-bande (circulaire, donc bouclable)."""
+    rs = np.random.RandomState(seed)
+    spec = np.fft.rfft(rs.randn(n))
+    f = np.fft.rfftfreq(n, 1 / RATE)
+    shape = np.exp(-0.5 * (np.log(np.maximum(f, 1) / np.sqrt(lo * hi)) / (np.log(hi / lo) / 2.5)) ** 2)
+    shape *= np.maximum(f, 1) ** tilt
+    out = np.fft.irfft(spec * shape, n)
+    return out / (np.max(np.abs(out)) + 1e-9)
+
+
+def _reverb(x, seconds=3.5, seed=5, mix=0.45, loop=True):
+    """Réverbération par convolution avec une queue de bruit qui décroît. loop=True : convolution
+    circulaire (la queue revient au début, pour les boucles) ; sinon la queue est coupée à la fin."""
+    if not loop:
+        pad = int(RATE * seconds)
+        return _reverb(np.concatenate([x, np.zeros(pad)]), seconds, seed, mix, True)[:len(x)]
+    n = len(x)
+    rs = np.random.RandomState(seed)
+    m = int(RATE * seconds)
+    t = np.arange(m) / RATE
+    ir = rs.randn(m) * np.exp(-t * 6.9 / seconds)
+    ir = np.fft.irfft(np.fft.rfft(ir) * np.exp(-np.fft.rfftfreq(m, 1 / RATE) / 5000.0), m)   # queue plus sombre
+    ir_full = np.zeros(n)
+    ir_full[:min(m, n)] = ir[:min(m, n)]
+    wet = np.fft.irfft(np.fft.rfft(x) * np.fft.rfft(ir_full), n)
+    wet /= (np.max(np.abs(wet)) + 1e-9) / (np.max(np.abs(x)) + 1e-9)
+    return x * (1 - mix) + wet * mix
+
+
+def _ogg(name, left, right=None):
+    """Écrit un .ogg (Vorbis) via ffmpeg, stéréo si right est donné."""
+    import subprocess
+    import tempfile
+    st = np.stack([left, left if right is None else right], 1)
+    st = np.clip(st, -1, 1)
+    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp:
+        path = tmp.name
+    with wave.open(path, 'wb') as f:
+        f.setnchannels(2)
+        f.setsampwidth(2)
+        f.setframerate(RATE)
+        f.writeframes((st * 32767).astype(np.int16).tobytes())
+    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', path, '-c:a', 'libvorbis', '-q:a', '5',
+                    os.path.join(AUDIO, name)], check=True)
+    os.remove(path)
+
+
+def _partials(t, sec, f0, ratios, amps, detune=0.0, phase=0.0):
+    out = np.zeros_like(t)
+    for r, a in zip(ratios, amps):
+        out += a * np.sin(2 * np.pi * _q(f0 * r + detune, sec) * t + phase * r)
+    return out
+
+
+def music_house():
+    """La maison, la nuit : bourdon grave en ré qui bat lentement, souffle, harmonica de verre
+    dissonant qui passe, tintements métalliques lointains. 64 s, stéréo, boucle."""
+    sec = 64
+    n = RATE * sec
+    t = np.arange(n) / RATE
+    lfo = lambda k, ph=0.0: 0.5 + 0.5 * np.sin(2 * np.pi * k * t / sec + ph)   # k périodes par boucle
+    chans = []
+    for side, (dt, seed) in enumerate([(0.0, 101), (0.21, 102)]):
+        drone = (_partials(t, sec, 73.42, [1, 2, 3, 4, 6], [1, .5, .28, .14, .06], dt)
+                 + 0.8 * _partials(t, sec, 73.42 * 1.5, [1, 2, 3], [.5, .2, .08], -dt * 1.3))
+        drone *= 0.55 + 0.45 * lfo(3, side * 0.7)
+        sub = 0.5 * np.sin(2 * np.pi * _q(36.71, sec) * t) * lfo(2, 1.0)
+        breath = _band_noise(n, 180, 900, seed) * (0.15 + 0.35 * lfo(5, side)) * 0.5
+        # harmonica de verre : ré et mi bémol aigus, la seconde mineure qui grince
+        glass = (np.sin(2 * np.pi * _q(587.33, sec) * t + 0.4 * np.sin(2 * np.pi * _q(5.0, sec) * t))
+                 + 0.8 * np.sin(2 * np.pi * _q(622.25, sec) * t))
+        glass *= lfo(1, 2.2 + side * 0.4) ** 6 * 0.18
+        ping = np.zeros(n)
+        rs = np.random.RandomState(103 + side)
+        for start in (9.5, 27.0, 44.5, 58.0):
+            i0 = int((start + rs.rand() * 0.3) * RATE)
+            m = int(4.5 * RATE)
+            tt = np.arange(m) / RATE
+            p = sum(a * np.sin(2 * np.pi * f * tt) for f, a in [(1180, 1), (1873, .6), (2731, .4), (3990, .25)])
+            p *= np.exp(-tt / 1.1) * 0.12
+            idx = (i0 + np.arange(m)) % n
+            ping[idx] += p
+        mix = drone * 0.35 + sub * 0.4 + breath + glass + ping
+        chans.append(_reverb(mix, 4.0, 7 + side, 0.5))
+    peak = max(np.max(np.abs(c)) for c in chans)
+    _ogg('music_house.ogg', chans[0] / peak * 0.7, chans[1] / peak * 0.7)
+
+
+def music_tension():
+    """Quand l'entité est là : glissando de Shepard qui monte sans fin, battement de cœur,
+    trémolo grinçant. 32 s, stéréo, boucle."""
+    sec = 32
+    n = RATE * sec
+    t = np.arange(n) / RATE
+    chans = []
+    for side in range(2):
+        # Shepard : 8 octaves qui montent d'une octave par boucle, enveloppe en cloche sur log(f)
+        xf = 4 * RATE                                    # fondu enchaîné pour boucler sans clic
+        te = np.arange(n + xf) / RATE
+        shep = np.zeros(n + xf)
+        base = 30.0
+        for k in range(8):
+            pos = (k + te / sec) % 8                     # position en octaves
+            f = base * 2 ** pos
+            phase = 2 * np.pi * np.cumsum(f) / RATE
+            env = np.exp(-0.5 * ((pos - 4.0) / 1.3) ** 2)
+            shep += env * np.sin(phase + side * 0.3)
+        ramp = np.linspace(0, 1, xf)
+        head = shep[:xf] * np.sqrt(ramp) + shep[n:] * np.sqrt(1 - ramp)
+        shep = np.concatenate([head, shep[xf:n]])
+        shep /= np.max(np.abs(shep))
+        # cœur : deux coups (lub-dub) à 64 battements par minute environ (34 battements par boucle)
+        heart = np.zeros(n)
+        beats = 34
+        for b in range(beats):
+            for off, amp in ((0.0, 1.0), (0.28, 0.6)):
+                i0 = int((b * sec / beats + off) * RATE)
+                m = int(0.35 * RATE)
+                tt = np.arange(m) / RATE
+                thump = np.sin(2 * np.pi * (55 - 25 * tt / 0.35) * tt) * np.exp(-tt / 0.07) * amp
+                heart[(i0 + np.arange(m)) % n] += thump
+        # trémolo de cordes grinçantes (dent de scie filtrée) en ré, mi bémol
+        saw = np.zeros(n)
+        for f, a in ((293.66, 1.0), (311.13, 0.7), (440.0, 0.4)):
+            fq = _q(f + side * 0.4, sec)
+            for h in range(1, 9):
+                saw += a * np.sin(2 * np.pi * fq * h * t) / h
+        trem = 0.5 + 0.5 * np.sin(2 * np.pi * _q(9.0, sec) * t)
+        swell = 0.5 + 0.5 * np.sin(2 * np.pi * 2 * t / sec - np.pi / 2)
+        saw = saw / np.max(np.abs(saw)) * trem * swell
+        mix = shep * 0.45 + heart * 0.7 + saw * 0.22 + _band_noise(n, 60, 400, 120 + side) * 0.18
+        chans.append(_reverb(mix, 2.5, 21 + side, 0.35))
+    peak = max(np.max(np.abs(c)) for c in chans)
+    _ogg('music_tension.ogg', chans[0] / peak * 0.75, chans[1] / peak * 0.75)
+
+
+def sting():
+    """Coup de sursaut : boum grave + grappe de cris métalliques aigus + queue de réverbération. 4 s."""
+    sec = 4
+    n = RATE * sec
+    t = np.arange(n) / RATE
+    boom = np.sin(2 * np.pi * (90 * np.exp(-t * 3) + 28) * t) * np.exp(-t / 0.5)
+    hit = _band_noise(n, 100, 3000, 131) * np.exp(-t / 0.08)
+    scream = np.zeros(n)
+    rs = np.random.RandomState(132)
+    for f in (1650, 1747, 2210, 2333, 3120):
+        vib = 1 + 0.012 * np.sin(2 * np.pi * (6 + rs.rand() * 3) * t)
+        ph = 2 * np.pi * np.cumsum(f * vib) / RATE
+        saw = sum(np.sin(h * ph) / h for h in range(1, 6))
+        scream += saw
+    scream = scream / np.max(np.abs(scream)) * np.minimum(1, t / 0.015) * np.exp(-t / 0.7)
+    mix = boom * 0.9 + hit * 0.6 + scream * 0.45
+    mix[-int(0.3 * RATE):] *= np.linspace(1, 0, int(0.3 * RATE))
+    out = _reverb(mix, 2.5, 133, 0.35, loop=False)
+    out /= np.max(np.abs(out))
+    _ogg('sting.ogg', out * 0.95)
+
+
+def riser():
+    """Montée de tension (6 s) qui se coupe net : souffle qui enfle et grappe qui monte."""
+    sec = 6
+    n = RATE * sec
+    t = np.arange(n) / RATE
+    env = (t / sec) ** 2.2
+    noise = _band_noise(n, 400, 6000, 141) * env
+    cl = np.zeros(n)
+    for f in (220, 233, 311, 330):
+        ph = 2 * np.pi * np.cumsum(f * 2 ** (1.5 * t / sec)) / RATE
+        cl += np.sin(ph) + 0.4 * np.sin(2 * ph)
+    cl = cl / np.max(np.abs(cl)) * env
+    out = noise * 0.5 + cl * 0.6
+    out[-200:] *= np.linspace(1, 0, 200)
+    out /= np.max(np.abs(out))
+    _ogg('riser.ogg', out * 0.9)
+
+
+MUSIC = [music_house, music_tension, sting, riser]
+
+
 if __name__ == '__main__':
     import sys
     if len(sys.argv) > 1:   # ne régénérer que certaines ressources : make_assets.py house
         if 'house' in sys.argv:
             for f in HOUSE:
+                f()
+        if 'music' in sys.argv:
+            for f in MUSIC:
                 f()
         print('ok')
         raise SystemExit
@@ -743,5 +938,7 @@ if __name__ == '__main__':
     rain_loop()
     thunder()
     for f in HOUSE:
+        f()
+    for f in MUSIC:
         f()
     print('ok')

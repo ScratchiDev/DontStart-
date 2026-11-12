@@ -10,6 +10,8 @@ const VARIANTS := {
 }
 
 var _cache := {}
+var _music := {}        # nom de la piste -> AudioStreamPlayer
+var _music_now := ""
 
 
 func _stream(name: String) -> AudioStream:
@@ -57,6 +59,8 @@ func loop(name: String, db := 0.0, at := Vector3.INF, parent: Node = null) -> No
 		s.loop_mode = AudioStreamWAV.LOOP_FORWARD
 		s.loop_begin = 0
 		s.loop_end = int(s.get_length() * s.mix_rate)
+	elif s is AudioStreamOggVorbis:
+		s.loop = true
 	if at == Vector3.INF:
 		var flat := AudioStreamPlayer.new()
 		flat.stream = s
@@ -72,3 +76,38 @@ func loop(name: String, db := 0.0, at := Vector3.INF, parent: Node = null) -> No
 	spatial.global_position = at
 	spatial.play()
 	return spatial
+
+
+## Musique de fond, en fondu enchaîné : « music_house » (la maison la nuit), « music_tension »
+## (l'entité est là). Nom vide = silence. Continue de jouer dans les menus.
+func music(name: String, db := -12.0, fade := 3.0) -> void:
+	if name == _music_now:
+		if name != "" and _music.has(name):
+			create_tween().tween_property(_music[name], "volume_db", db, fade)
+		return
+	if _music_now != "" and _music.has(_music_now):
+		var old: AudioStreamPlayer = _music[_music_now]
+		var tw := create_tween()
+		tw.tween_property(old, "volume_db", -60.0, fade)
+		tw.tween_callback(old.stop)
+	_music_now = name
+	if name == "":
+		return
+	if not _music.has(name):
+		var p := AudioStreamPlayer.new()
+		var st := _stream(name)
+		if st is AudioStreamOggVorbis:
+			st.loop = true
+		p.stream = st
+		p.process_mode = Node.PROCESS_MODE_ALWAYS
+		add_child(p)
+		_music[name] = p
+	var cur: AudioStreamPlayer = _music[name]
+	cur.volume_db = -60.0
+	cur.play()
+	create_tween().tween_property(cur, "volume_db", db, fade)
+
+
+## Coup de sursaut (à utiliser avec parcimonie).
+func sting(db := -2.0) -> void:
+	play("sting", db, 1.0)
