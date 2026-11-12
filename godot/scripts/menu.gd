@@ -12,6 +12,7 @@ var root: Control
 var title_box: Control
 var pause_box: Control
 var options_box: Control
+var hero_box: Control
 var back_target := "title"
 
 
@@ -27,7 +28,8 @@ func _ready() -> void:
 	title_box = _build_title()
 	pause_box = _build_pause()
 	options_box = _build_options()
-	for b in [title_box, pause_box, options_box]:
+	hero_box = _build_hero()
+	for b in [title_box, pause_box, options_box, hero_box]:
 		root.add_child(b)
 	hide_all()
 
@@ -89,13 +91,13 @@ func _button(t: String, cb: Callable) -> Button:
 
 func _build_title() -> Control:
 	var v := _vbox(44)
-	v.add_child(_text("RUNTIME", GREEN, 72, false))
-	v.add_child(_text("Une disquette trouvée au fond d'un carton, dans un vide-grenier. Deux euros. Le vendeur n'a pas voulu qu'on lui rende la monnaie."))
-	v.add_child(_text("Il est 3 h 12. L'ordinateur de ta chambre vient de s'allumer tout seul.", Color(0.62, 0.6, 0.54)))
+	v.add_child(_text("DON'T PLAY", GREEN, 64, false))
+	v.add_child(_text("Les vacances chez tes grands-parents. Une maison restée dans les années 90, où chaque écran est connecté. Dans l'ancienne chambre de ta mère, une disquette sans étiquette."))
+	v.add_child(_text("Ne la mets pas dans l'ordinateur.", Color(0.62, 0.6, 0.54)))
 	var gap := Control.new()
 	gap.custom_minimum_size = Vector2(0, 8)
 	v.add_child(gap)
-	v.add_child(_button("Entrer dans la chambre", func() -> void: start_requested.emit()))
+	v.add_child(_button("Nouvelle partie", func() -> void: _show(hero_box)))
 	v.add_child(_button("Options", func() -> void: show_options("title")))
 	v.add_child(_button("Quitter", func() -> void: get_tree().quit()))
 	var foot := _text("ZQSD/WASD marcher · souris regarder · E agir · F lampe\nMaj courir · C s'accroupir · Échap menu", Color(0.45, 0.44, 0.4), 16, false)
@@ -111,6 +113,24 @@ func _build_title() -> Control:
 	holder.add_child(foot)
 	holder.add_child(warn)
 	return holder
+
+
+func _build_hero() -> Control:
+	var v := _vbox(44)
+	v.add_child(_text("QUI ES-TU ?", GREEN, 40, false))
+	v.add_child(_text("16 ans. Geek, fan de dinosaures et de tout ce qui vient des années 90. Deux semaines de vacances chez Henriette et Albert.", Color(0.62, 0.6, 0.54)))
+	var gap := Control.new()
+	gap.custom_minimum_size = Vector2(0, 6)
+	v.add_child(gap)
+	v.add_child(_button("Alexandre", func() -> void: _pick("alexandre")))
+	v.add_child(_button("Aurèlia", func() -> void: _pick("aurelia")))
+	v.add_child(_button("Retour", func() -> void: show_title()))
+	return v
+
+
+func _pick(h: String) -> void:
+	Game.hero = h
+	start_requested.emit()
 
 
 func _build_pause() -> Control:
@@ -173,7 +193,7 @@ func hide_all() -> void:
 
 func _show(box: Control) -> void:
 	root.visible = true
-	for b in [title_box, pause_box, options_box]:
+	for b in [title_box, pause_box, options_box, hero_box]:
 		b.visible = b == box
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 

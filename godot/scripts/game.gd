@@ -4,6 +4,8 @@ extends Node
 signal objective_changed(text: String)
 signal hint_requested(text: String, seconds: float)
 signal settings_changed
+signal inventory_changed
+signal item_added(id: String, label: String)
 
 const SETTINGS_PATH := "user://settings.cfg"
 
@@ -14,7 +16,10 @@ var fullscreen := true
 var high_quality := true
 
 # --- état de la partie ---
+var hero := "alexandre"   # « alexandre » ou « aurelia », choisi sur l'écran-titre
 var has_floppy := false
+## Inventaire : liste de { id, name, desc, kind } ; kind = "arme" (pièce de l'arme), "cle", "doc" ou "objet".
+var items: Array[Dictionary] = []
 var phase := "title"   # title, room, seated, end
 
 # --- tests automatisés : godot --path godot -- --autotest --shots=/chemin ---
@@ -32,6 +37,8 @@ func _enter_tree() -> void:
 			autotest = true
 		elif a.begins_with("--shots="):
 			shots_dir = a.substr(8)
+		elif a.begins_with("--hero="):
+			hero = a.substr(7)
 	_load_settings()
 	if autotest:
 		fullscreen = false
@@ -49,6 +56,7 @@ func _setup_input() -> void:
 	_keys("interact", [KEY_E])
 	_keys("flashlight", [KEY_F])
 	_keys("pause", [KEY_ESCAPE])
+	_keys("inventory", [KEY_TAB, KEY_I])
 	var click := InputEventMouseButton.new()
 	click.button_index = MOUSE_BUTTON_LEFT
 	InputMap.action_add_event("interact", click)
@@ -117,3 +125,46 @@ func whisper(text: String) -> void:
 	if voices.is_empty():
 		return
 	DisplayServer.tts_speak(text, voices[0], int(master_volume * 45.0), 0.3, 0.6)
+
+
+## Prénom du personnage joué.
+func hero_name() -> String:
+	return "Aurèlia" if hero == "aurelia" else "Alexandre"
+
+
+## Accord en genre : Game.g("assis", "assise").
+func g(masc: String, fem: String) -> String:
+	return fem if hero == "aurelia" else masc
+
+
+# ------------------------------------------------------------------ inventaire
+
+func add_item(id: String, label: String, desc := "", kind := "objet") -> void:
+	if has_item(id):
+		return
+	items.append({"id": id, "name": label, "desc": desc, "kind": kind})
+	item_added.emit(id, label)
+	inventory_changed.emit()
+
+
+func has_item(id: String) -> bool:
+	for it in items:
+		if it.id == id:
+			return true
+	return false
+
+
+func remove_item(id: String) -> void:
+	for i in items.size():
+		if items[i].id == id:
+			items.remove_at(i)
+			inventory_changed.emit()
+			return
+
+
+func count_kind(kind: String) -> int:
+	var n := 0
+	for it in items:
+		if it.kind == kind:
+			n += 1
+	return n

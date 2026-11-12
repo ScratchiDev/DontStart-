@@ -1,4 +1,4 @@
-; RUNTIME — jeu d'horreur rétro à la première personne (Godot 4.7).
+; Don't Play — jeu d'horreur rétro à la première personne (Godot 4.7).
 ; Le rendu 3D se fait en 640×360 puis est agrandi sans lissage : c'est le style rétro,
 ; et c'est aussi ce qui rend le jeu léger sur la plupart des PC.
 
@@ -6,9 +6,9 @@ config_version=5
 
 [application]
 
-config/name="RUNTIME"
+config/name="Don't Play"
 config/description="Une disquette trouvée dans un vide-grenier. Une chambre, la nuit. Un jeu qui choisit mal à ta place."
-config/version="0.2.0"
+config/version="0.3.0"
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.7", "Forward Plus")
 config/icon="res://icon.svg"

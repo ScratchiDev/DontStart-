@@ -14,6 +14,13 @@ var mats := {}
 var props := {}
 
 
+func _notification(what: int) -> void:
+	# libérer le cache partagé en quittant (sinon Godot signale des ressources encore utilisées)
+	if what == NOTIFICATION_PREDELETE and not _cache.is_empty():
+		_cache = {}
+		_grime_tex_s = null
+
+
 # ------------------------------------------------------------------ matériaux
 
 func _tex(file: String) -> Texture2D:

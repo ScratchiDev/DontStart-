@@ -1,4 +1,4 @@
-name: Construire RUNTIME pour Windows
+name: Construire Don't Play pour Windows
 
 # À chaque modification du jeu Godot sur main : export Windows, puis publication du .zip
 # dans la version « dev-latest » (Releases du dépôt), toujours au même lien de téléchargement.
@@ -54,27 +54,27 @@ jobs:
 
       - name: Exporter pour Windows
         run: |
-          out="$GITHUB_WORKSPACE/build/RUNTIME"
+          out="$GITHUB_WORKSPACE/build/DontPlay"
           mkdir -p "$out"
-          ~/godot/godot --headless --path godot --export-release "Windows Desktop" "$out/RUNTIME.exe"
-          test -f "$out/RUNTIME.exe"
+          ~/godot/godot --headless --path godot --export-release "Windows Desktop" "$out/DontPlay.exe"
+          test -f "$out/DontPlay.exe"
           cp CREDITS.md "$out/CREDITS.md"
           cp godot/LISEZMOI.txt "$out/LISEZMOI.txt"
-          cd "$GITHUB_WORKSPACE/build" && zip -qr RUNTIME-windows.zip RUNTIME
+          cd "$GITHUB_WORKSPACE/build" && zip -qr DontPlay-windows.zip DontPlay
           ls -la "$GITHUB_WORKSPACE/build"
 
       - name: Garder le build dans les artefacts du workflow
         uses: actions/upload-artifact@v4
         with:
-          name: RUNTIME-windows
-          path: build/RUNTIME
+          name: DontPlay-windows
+          path: build/DontPlay
 
       - name: Publier la version de développement (dev-latest)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete dev-latest --yes --cleanup-tag || true
-          gh release create dev-latest build/RUNTIME-windows.zip \
+          gh release create dev-latest build/DontPlay-windows.zip \
             --target "$GITHUB_SHA" --prerelease \
-            --title "RUNTIME - version de développement" \
-            --notes "Build automatique du commit ${GITHUB_SHA::7}. Télécharge RUNTIME-windows.zip, extrais-le, lance RUNTIME.exe. Voir LISEZMOI.txt dans le zip."
+            --title "Don't Play - version de développement" \
+            --notes "Build automatique du commit ${GITHUB_SHA::7}. Télécharge DontPlay-windows.zip, extrais-le, lance DontPlay.exe. Voir LISEZMOI.txt dans le zip."

@@ -18,6 +18,11 @@ var paper_text: Label
 var fade: ColorRect
 var paper_open := false
 var _hint_left := 0.0
+var inv: Control
+var inv_list: RichTextLabel
+var inv_open := false
+var toast: Label
+var _toast_tw: Tween
 
 
 func _ready() -> void:
@@ -79,6 +84,20 @@ func _ready() -> void:
 	paper.visible = false
 	root.add_child(paper)
 
+	inv = _build_inventory()
+	inv.visible = false
+	root.add_child(inv)
+
+	toast = _label(GREEN)
+	toast.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	toast.position = Vector2(-250, -84)
+	toast.size = Vector2(240, 18)
+	toast.add_theme_constant_override("outline_size", 4)
+	toast.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+	toast.modulate.a = 0.0
+	root.add_child(toast)
+
 	fade = ColorRect.new()
 	fade.color = Color.BLACK
 	fade.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -87,6 +106,8 @@ func _ready() -> void:
 
 	Game.objective_changed.connect(func(t: String) -> void: objective.text = t)
 	Game.hint_requested.connect(show_hint)
+	Game.inventory_changed.connect(_refresh_inventory)
+	Game.item_added.connect(_on_item_added)
 
 
 func _label(c: Color) -> Label:
@@ -158,6 +179,70 @@ func _build_paper() -> Control:
 	return wrap
 
 
+func _build_inventory() -> Control:
+	var panel := PanelContainer.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.0, 0.02, 0.01, 0.82)
+	sb.border_color = Color(GREEN, 0.5)
+	sb.set_border_width_all(1)
+	sb.set_content_margin_all(8)
+	panel.add_theme_stylebox_override("panel", sb)
+	panel.set_anchors_preset(Control.PRESET_CENTER_RIGHT)
+	panel.position = Vector2(-236, -120)
+	panel.size = Vector2(224, 240)
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	inv_list = RichTextLabel.new()
+	inv_list.bbcode_enabled = true
+	inv_list.fit_content = false
+	inv_list.scroll_active = false
+	inv_list.custom_minimum_size = Vector2(208, 224)
+	inv_list.add_theme_font_override("normal_font", Game.fonts.pixel)
+	inv_list.add_theme_font_size_override("normal_font_size", 16)
+	inv_list.add_theme_color_override("default_color", Color(0.8, 0.78, 0.7))
+	inv_list.add_theme_constant_override("line_separation", -3)
+	inv_list.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(inv_list)
+	_refresh_inventory.call_deferred()
+	return panel
+
+
+func _refresh_inventory() -> void:
+	var g := GREEN.to_html(false)
+	var dim := "6f7a68"
+	var t := "[color=#%s]INVENTAIRE[/color]   [color=#%s][Tab][/color]\n" % [g, dim]
+	if Game.items.is_empty():
+		t += "\n[color=#%s]Rien. Tes poches sont vides.[/color]" % dim
+	for kind in ["arme", "cle", "doc", "objet"]:
+		var first := true
+		for it in Game.items:
+			if it.kind != kind:
+				continue
+			if first:
+				var title: String = {"arme": "PIÈCES DE L'ARME", "cle": "CLÉS", "doc": "DOCUMENTS", "objet": "OBJETS"}[kind]
+				t += "\n[color=#%s]%s[/color]\n" % [g, title]
+				first = false
+			t += "· %s\n" % it.name
+			if it.desc != "":
+				t += "  [color=#%s]%s[/color]\n" % [dim, it.desc]
+	inv_list.text = t
+
+
+func toggle_inventory() -> void:
+	inv_open = not inv_open
+	inv.visible = inv_open
+	Sfx.play("cloth", -14.0, 1.2)
+
+
+func _on_item_added(_id: String, label: String) -> void:
+	toast.text = "+ " + label
+	if _toast_tw:
+		_toast_tw.kill()
+	toast.modulate.a = 1.0
+	_toast_tw = create_tween()
+	_toast_tw.tween_interval(2.6)
+	_toast_tw.tween_property(toast, "modulate:a", 0.0, 0.8)
+
+
 func set_prompt(it: Interactable) -> void:
 	if it and Game.phase == "room":
 		prompt.text = "[E] " + it.label
@@ -219,6 +304,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	if paper_open and event.is_action_pressed("interact"):
 		get_viewport().set_input_as_handled()
 		close_paper()
+	elif event.is_action_pressed("inventory") and Game.phase == "room" and not get_tree().paused:
+		get_viewport().set_input_as_handled()
+		toggle_inventory()
 
 
 func fade_to(alpha: float, seconds := 1.0) -> void:
