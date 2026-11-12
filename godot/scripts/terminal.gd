@@ -198,8 +198,8 @@ func _apply_colors() -> void:
 
 func _show_idle() -> void:
 	lines.clear()
-	_add_line("RUNTIME BIOS v0.9", "dim", true)
-	_add_line("(C) 1984", "dim", true)
+	_add_line("BIOS v4.51", "dim", true)
+	_add_line("(C) 1996", "dim", true)
 	_add_line("", "dim", true)
 	_add_line("LECTEUR A: VIDE", "dim", true)
 	_add_line("", "dim", true)
@@ -227,9 +227,9 @@ func boot() -> void:
 	mode = "boot"
 	lines.clear()
 	_render()
-	await line("RUNTIME BIOS v0.9 · (C) 1984", "dim", 0.006, 0.08)
+	await line("BIOS v4.51 · (C) 1996", "dim", 0.006, 0.08)
 	await line("PROPRIÉTÉ CERAF · INVENTAIRE N° 0312", "dim", 0.006, 0.08)
-	await line("MÉMOIRE VIVE ........ 640 Ko OK", "dim", 0.006, 0.08)
+	await line("MÉMOIRE VIVE ........ 32768 Ko OK", "dim", 0.006, 0.08)
 	await line("LECTEUR A: .......... DISQUETTE DÉTECTÉE", "dim", 0.006, 0.08)
 	await line("SECTEURS DÉFECTUEUX .. 0", "dim", 0.006, 0.6)
 	lines[-1].segs = [["SECTEURS DÉFECTUEUX .. 1", false]]

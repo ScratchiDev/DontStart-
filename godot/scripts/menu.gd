@@ -118,7 +118,7 @@ func _build_title() -> Control:
 func _build_hero() -> Control:
 	var v := _vbox(44)
 	v.add_child(_text("QUI ES-TU ?", GREEN, 40, false))
-	v.add_child(_text("16 ans. Geek, fan de dinosaures et de tout ce qui vient des années 90. Deux semaines de vacances chez Henriette et Albert.", Color(0.62, 0.6, 0.54)))
+	v.add_child(_text("16 ans. Geek, fan de dinosaures et de tout ce qui vient des années 90. Une semaine de vacances chez Henriette et Albert, pour la Toussaint.", Color(0.62, 0.6, 0.54)))
 	var gap := Control.new()
 	gap.custom_minimum_size = Vector2(0, 6)
 	v.add_child(gap)

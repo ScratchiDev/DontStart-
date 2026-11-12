@@ -628,6 +628,7 @@ func ceiling_burst() -> void:
 ## Le seul vrai sursaut de l'acte I : le visage (celui du docteur Ferrand, copié par l'entité),
 ## à quelques centimètres, quand le joueur se retourne. Orbites vides, lumière par en dessous.
 func face_scare(p: Node) -> void:
+	Game.face_scares += 1
 	if Game.reduced_scares:
 		# sursauts réduits : le visage reste sur l'écran, son plus bas, aucune secousse
 		Sfx.sting(-14.0)

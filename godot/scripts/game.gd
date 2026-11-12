@@ -25,6 +25,7 @@ var has_floppy := false
 var items: Array[Dictionary] = []
 ## Choix faits pendant les séances (repris par les versions suivantes) : enregistrés dans user://choix.cfg.
 var choices := {}
+var face_scares := 0     # sursauts « visage » joués (au plus un par acte)
 var phase := "title"   # title, room, seated, end
 
 # --- tests automatisés : godot --path godot -- --autotest --shots=/chemin ---

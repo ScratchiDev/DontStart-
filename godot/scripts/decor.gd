@@ -375,6 +375,7 @@ const JOURNAL := [
 	"1er novembre, le matin\n\nLes lettres qui brillent dans ses erreurs, c'était un mot. Je l'ai tapé. Il a écrit PARTIE SUSPENDUE.\nSuspendue, pas finie.\nJe n'arrive plus à dormir.",
 	"Si quelqu'un lit ça :\nne branche pas cet ordinateur.\n\n— M.",
 	"(au dos, un croquis)\nun sèche-cheveux, une antenne, une boussole, une bobine.\n« Son signal, c'est des ondes. Si on le coupe en morceaux, il ne tient plus. Papa saurait le construire. Il ne veut pas. »",
+	"(collée sur la couverture : la grille de morse de Papa)\nA ·—     N —·\nB —···   O ———\nC —·—·   P ·——·\nD —··     Q ——·—\nE ·         R ·—·\nF ··—·   S ···\nG ——·    T —\nH ····    U ··—\nI ··        V ···—\nJ ·———   W ·——\nK —·—    X —··—\nL ·—··    Y —·——\nM ——     Z ——··\nS.O.S. = ··· ——— ···",
 ]
 
 
