@@ -542,7 +542,6 @@ func _runner() -> void:
 	var fr := StandardMaterial3D.new()
 	fr.albedo_texture = _fringe_texture()
 	fr.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
-	fr.cull_mode = BaseMaterial3D.CULL_DISABLED
 	fr.roughness = 1.0
 	for s in [-1.0, 1.0]:
 		var fp := PlaneMesh.new()
@@ -734,9 +733,8 @@ func _ceiling_lights() -> void:
 		_mesh(_cyl(0.018, 0.02, 0.05), top + Vector3(0, -0.26, 0), _m(Color(0.5, 0.4, 0.2), 0.4, 0.7))
 		# tulipe en verre ambré, des années 70, et dedans l'ampoule du fournisseur d'énergie
 		var shade := _cyl(0.03, 0.115, 0.14, 20)
-		shade.cap_bottom = false
+		# (pas de CULL_DISABLED : avec llvmpipe, cette variante de shader bloque le rendu)
 		var sm := _plain(Color(0.55, 0.36, 0.18), 0.35)
-		sm.cull_mode = BaseMaterial3D.CULL_DISABLED
 		sm.emission_enabled = true
 		sm.emission = Color(1.0, 0.6, 0.3)
 		sm.emission_energy_multiplier = 0.35
@@ -745,7 +743,7 @@ func _ceiling_lights() -> void:
 		_mesh(_cyl(0.02, 0.02, 0.03, 12), top + Vector3(0, -0.3, 0), _new_white)
 		var bm := _glow(Color(1.0, 0.78, 0.5), BULB_GLOW)
 		bulb_mats.append(bm)
-		_no_gi(_mesh(_sphere(0.03), top + Vector3(0, -0.34, 0), bm))
+		_no_gi(_mesh(_sphere(0.032), top + Vector3(0, -0.37, 0), bm))
 		var l := OmniLight3D.new()
 		l.name = "Ampoule"
 		l.light_color = Color(1.0, 0.74, 0.46)
