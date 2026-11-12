@@ -76,8 +76,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete dev-latest --yes --cleanup-tag || true
-          gh release create dev-latest build/DontPlay-windows.zip \
-            --target "$GITHUB_SHA" --prerelease \
-            --title "Don't Play - version de développement" \
-            --notes "Build automatique du commit ${GITHUB_SHA::7}. Télécharge DontPlay-windows.zip, extrais-le, lance DontPlay.exe. Voir LISEZMOI.txt dans le zip."
+          # GitHub répond parfois 500 pendant l'envoi : on réessaie jusqu'à 4 fois
+          for i in 1 2 3 4; do
+            gh release delete dev-latest --yes --cleanup-tag || true
+            if gh release create dev-latest build/DontPlay-windows.zip \
+              --target "$GITHUB_SHA" --prerelease \
+              --title "Don't Play - version de développement" \
+              --notes "Build automatique du commit ${GITHUB_SHA::7}. Télécharge DontPlay-windows.zip, extrais-le, lance DontPlay.exe. Voir LISEZMOI.txt dans le zip."; then
+              exit 0
+            fi
+            echo "Échec de la publication, nouvel essai dans $((i * 15)) s"
+            sleep $((i * 15))
+          done
+          exit 1
