@@ -663,7 +663,50 @@ def carpet():
     save_gray(0.5 + 0.5 * (fiber - 0.5) + 0.2 * (mottle - 0.5), os.path.join(TEX, 'carpet_height.png'))
 
 
-HOUSE = [wallpaper_floral, wallpaper_stripes, tiles_wall, tiles_floor, carpet]
+def static_loop():
+    """Neige d'un écran hanté : souffle large bande, crépitements, ronflement 50 Hz (4 s, boucle)."""
+    rate, sec = 44100, 4
+    n = rate * sec
+    t = np.arange(n) / rate
+    hiss = np.random.randn(n) - lowpass(np.random.randn(n), 0.05)
+    crackle = (np.random.rand(n) > 0.9993) * np.random.randn(n) * 6
+    crackle = lowpass(crackle, 0.4)
+    hum = 0.25 * np.sin(2 * np.pi * 50 * t) + 0.12 * np.sin(2 * np.pi * 150 * t)
+    wob = 0.8 + 0.2 * np.sin(2 * np.pi * t / sec * 3)
+    out = hiss * 0.5 * wob + crackle + hum
+    fade = int(rate * 0.05)
+    out[:fade] *= np.linspace(0, 1, fade)    # raccord de la boucle
+    out[-fade:] *= np.linspace(1, 0, fade)
+    out /= np.max(np.abs(out))
+    write_wav('static_loop.wav', out * 0.8)
+
+
+def entity_face():
+    """Le visage de S.1.L.3.N.C.3. sur les écrans : le scan 3D (rendu par tests/face_render.tscn dans
+    tools/face_raw.png) éclairé par en dessous, yeux creusés, pixelisé et décalé en bandes."""
+    src = Image.open(os.path.join(os.path.dirname(__file__), 'face_raw.png')).convert('L')
+    a = np.asarray(src).astype(np.float32) / 255.0
+    a = np.clip((a - 0.08) * 1.5, 0, 1) ** 1.3
+    n = a.shape[0]
+    yy, xx = np.mgrid[0:n, 0:n] / n
+    for ex in (0.335, 0.63):   # orbites vides
+        d = ((xx - ex) / 0.105) ** 2 + ((yy - 0.425) / 0.07) ** 2
+        a *= np.clip((d - 0.15) * 1.4, 0, 1) ** 2
+    d = ((xx - 0.48) / 0.11) ** 2 + ((yy - 0.735) / 0.025) ** 2   # bouche un peu ouverte
+    a *= np.clip(0.25 + d, 0, 1)
+    img = Image.fromarray((a * 255).astype(np.uint8)).resize((96, 96), Image.BILINEAR)
+    arr = np.asarray(img).astype(np.float32)
+    rs = np.random.RandomState(91)
+    for _ in range(7):   # bandes décalées (image numérique abîmée)
+        y0 = rs.randint(0, 90)
+        h = rs.randint(1, 4)
+        arr[y0:y0 + h] = np.roll(arr[y0:y0 + h], rs.randint(-6, 7), axis=1)
+    img = Image.fromarray(arr.astype(np.uint8)).resize((256, 256), Image.NEAREST)
+    rgb = np.stack([np.asarray(img)] * 3, -1).astype(np.float32) / 255.0 * np.array([0.85, 0.95, 1.0])
+    Image.fromarray((np.clip(rgb, 0, 1) * 255).astype(np.uint8)).save(os.path.join(IMG, 'entity_face.png'))
+
+
+HOUSE = [wallpaper_floral, wallpaper_stripes, tiles_wall, tiles_floor, carpet, static_loop, entity_face]
 
 
 if __name__ == '__main__':
