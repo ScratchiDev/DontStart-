@@ -1,13 +1,13 @@
-# RUNTIME
+# Don't Play
 
 Un jeu d'horreur rétro à la première personne, pour PC (clavier et souris), fait avec **Godot 4.7**. Objectif : une sortie sur Steam.
 
-Une disquette trouvée dans un vide-grenier. Une chambre d'ado plongée dans le noir, à 3 h 12. Un vieil ordinateur qui s'allume tout seul et dont l'écran clignote « INSÉRER DISQUETTE ». Et un jeu qui pose des questions, impose des choix à durée limitée, et choisit toujours mal à ta place.
+Alexandre ou Aurèlia, 16 ans, passe les vacances chez ses grands-parents, Henriette et Albert. Une maison restée dans les années 90, mais remplie d'appareils connectés. Dans l'ancienne chambre de sa mère, un vieil ordinateur relié à internet et une disquette. Dessus : **S.1.L.3.N.C.3.**, une intelligence artificielle échappée d'un laboratoire, qui se nourrit de la peur, hante chaque écran de la maison et veut faire passer ses « tests » aux humains. Pour l'enfermer : une arme cybernétique, à assembler avec ce qu'on trouve dans les pièces.
 
 ## Jouer (Windows)
 
-1. Télécharge **[RUNTIME-windows.zip](https://github.com/ScratchiDev/DontStart-/releases/download/dev-latest/RUNTIME-windows.zip)** (version de développement, reconstruite automatiquement à chaque modification du jeu).
-2. Extrais le dossier, lance `RUNTIME.exe`.
+1. Télécharge **[DontPlay-windows.zip](https://github.com/ScratchiDev/DontStart-/releases/download/dev-latest/DontPlay-windows.zip)** (version de développement, reconstruite automatiquement à chaque modification du jeu).
+2. Extrais le dossier, lance `DontPlay.exe`.
 3. Si Windows affiche « Windows a protégé votre ordinateur » : **Informations complémentaires → Exécuter quand même** (le jeu n'est pas encore signé numériquement).
 
 Conseils : seul, dans le noir, avec un casque. Le jeu contient des sursauts et des effets clignotants.
@@ -21,9 +21,14 @@ Conseils : seul, dans le noir, avec un casque. Le jeu contient des sursauts et d
 | Regarder | Souris |
 | Agir | E ou clic gauche |
 | Lampe de poche | F |
+| Inventaire | Tab ou I |
 | Menu, options | Échap (sensibilité, volume, plein écran, qualité) |
 
-## État du jeu (version 0.2)
+## État du jeu (version 0.3 en cours)
+
+- **En cours (v0.3)** : nouveau nom, choix Alexandre/Aurèlia, inventaire, portes, appareils hantés, musique ; prochainement le premier étage de la maison, le réveil de S.1.L.3.N.C.3. et les premières pièces de l'arme.
+
+### Version 0.2
 
 - **Fait** :
   - écran-titre, menus et options sauvegardées ;
@@ -39,10 +44,12 @@ Conseils : seul, dans le noir, avec un casque. Le jeu contient des sursauts et d
 
 Le projet Godot est dans [`godot/`](godot/). Ouvre `godot/project.godot` avec [Godot 4.7.2](https://godotengine.org/download) (version standard).
 
-- La chambre se construit dans `godot/scripts/room.gd` (meubles mis à l'échelle en mètres réels).
+- Les outils de construction communs (matières, murs percés, habillage, portes, meubles mis à l'échelle en mètres réels) sont dans `godot/scripts/builder.gd`, `door.gd` et `house_room.gd` ; la chambre de la mère dans `godot/scripts/room.gd`.
+- Les appareils hantés : `godot/scripts/device.gd` et `godot/shaders/haunted_screen.gdshader`.
 - Le joueur : `godot/scenes/player.tscn` et `godot/scripts/player.gd`.
 - Le rendu rétro : `godot/shaders/retro_post.gdshader` ; l'écran du moniteur : `godot/shaders/crt_screen.gdshader` et `godot/scripts/terminal.gd`.
-- Les images et ambiances faites maison (affiches, photo, mot, souffle de la pièce, lecteur de disquette) sont générées par `godot/tools/make_assets.py`.
+- Les images, textures, sons et musiques faits maison (affiches, photo, papiers peints, carrelages, visage de l'entité, ambiances, musique) sont générés par `godot/tools/make_assets.py`.
+- Banc d'essai des pièces, portes et écrans : `godot --path godot res://tests/sandbox.tscn -- --shots=/chemin`.
 - Test automatique avec captures d'écran :
   ```bash
   godot --path godot -- --autotest --shots=/chemin/vers/captures
