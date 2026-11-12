@@ -1,6 +1,11 @@
 Don't Play - version de développement
 =========================================
 
+Version 0.3.0 : l'acte I (20 à 30 minutes)
+------------------------------------------
+La chambre de ta mère, la disquette, la première séance avec S.1.L.3.N.C.3.
+(choix aux touches 1, 2, 3, mot à taper au clavier), trois fins, et le couloir.
+
 Lancer le jeu
 -------------
 1. Extrais tout le dossier du .zip (clic droit > Extraire tout).

@@ -103,7 +103,7 @@ func _build_title() -> Control:
 	var foot := _text("ZQSD/WASD marcher · souris regarder · E agir · F lampe\nMaj courir · C s'accroupir · Échap menu", Color(0.45, 0.44, 0.4), 16, false)
 	foot.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	foot.position = Vector2(44, -64)
-	var warn := _text("Casque recommandé. Sursauts et effets lumineux clignotants : options « éclairs adoucis » et « sursauts réduits ».", Color(0.45, 0.44, 0.4), 16, false)
+	var warn := _text("Casque recommandé. Sursauts et éclairs clignotants : voir Options.", Color(0.45, 0.44, 0.4), 16, false)
 	warn.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	warn.position = Vector2(44, -26)
 	var holder := Control.new()

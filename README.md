@@ -24,21 +24,15 @@ Conseils : seul, dans le noir, avec un casque. Le jeu contient des sursauts et d
 | Inventaire | Tab ou I |
 | Menu, options | Échap (sensibilité, volume, plein écran, qualité) |
 
-## État du jeu (version 0.3 en cours)
+## État du jeu (version 0.3.0 : l'acte I)
 
-- **En cours (v0.3)** : nouveau nom, choix Alexandre/Aurèlia, inventaire, portes, appareils hantés, musique ; prochainement le premier étage de la maison, le réveil de S.1.L.3.N.C.3. et les premières pièces de l'arme.
-
-### Version 0.2
-
-- **Fait** :
-  - écran-titre, menus et options sauvegardées ;
-  - la chambre en 3D au premier étage : papier peint années 80, lambris, moulures, meubles salis par le temps, vraie porte à panneaux, couette froissée, et tout le désordre d'une chambre habitée (livres, cassettes VHS, disquettes, manuel, mug, crayons, câble, tableau en liège, calendrier, horloge arrêtée, linge, chaussures, sac) ;
-  - des traces : taches d'humidité au plafond, moisissure, griffures et mots grattés au-dessus du lit, empreintes de pieds nus de la porte jusque sous le lit ;
-  - dehors : jardin, clôture, rue mouillée, lampadaire orange, maison d'en face avec une fenêtre allumée (et quelqu'un derrière), arbres nus dans le vent, pluie, gouttes qui glissent sur la vitre, éclairs qui illuminent la pièce, tonnerre ;
-  - lumière : lampe de poche, lampadaire et éclairs qui projettent l'ombre des croisillons dans la pièce, lueur de l'écran, éclairage indirect (la lumière rebondit sur les murs), brouillard volumétrique, rendu rétro 640×360 avec tramage ;
-  - déplacements et interactions (armoire, disquette, ordinateur, mot, photo, tableau, calendrier, horloge, manuel, réveil, porte, interrupteur, radio, fenêtre) ; s'asseoir devant l'ordinateur, insérer la disquette, démarrage de l'écran ;
-  - export Windows automatique.
-- **Prochaine version** : le jeu-terminal complet sur l'écran du moniteur (les 4 niveaux, les choix à durée limitée, la corruption, les 4 fins), la musique et les sons de tension, les événements dans la chambre pendant la partie, l'entité et les screamers.
+- **Jouable (20 à 30 min)** :
+  - écran-titre, choix Alexandre ou Aurèlia, options (sensibilité, volume, qualité, sursauts réduits, éclairs adoucis, chuchotements) ;
+  - **acte I « Lecteur A: »** : l'ouverture dans le noir, la chambre de ta mère et ses traces (mot de Mamie, chocolat froid, journal de 2016 sous le lit, calendrier, photo rayée, fenêtre vissée), la disquette, puis la **séance 1** avec S.1.L.3.N.C.3. sur le vieil ordinateur : calibration et quatre protocoles à choix minutés (touches 1, 2, 3), la jauge PEUR MESURÉE, les lettres qui brillent, la chambre qui réagit, un seul vrai sursaut ;
+  - **trois issues** : TRANSMISSION, ABSORBÉ, ou continuer (avec la fausse fin du mot secret) ; les fins découvertes sont gardées ;
+  - la clé glissée sous la porte, puis le **couloir du 1er étage** (caméra qui te suit, ampoules connectées, thermostat bloqué sur 3:12) jusqu'à la porte de ta grand-mère.
+- **Prochaine étape (0.3.1 et 0.3.2)** : l'étage complet (salle de bain, chambre d'amis, bureau), les appareils hantés, les premières pièces de l'arme, l'essai réel du miroir, la sauvegarde, puis la séance 2.
+- **Conception** : [docs/GDD.md](docs/GDD.md) (document de conception) et [docs/v0.3.md](docs/v0.3.md) (spécification de la version 0.3).
 
 ## Développer
 
@@ -50,11 +44,13 @@ Le projet Godot est dans [`godot/`](godot/). Ouvre `godot/project.godot` avec [G
 - Le rendu rétro : `godot/shaders/retro_post.gdshader` ; l'écran du moniteur : `godot/shaders/crt_screen.gdshader` et `godot/scripts/terminal.gd`.
 - Les images, textures, sons et musiques faits maison (affiches, photo, papiers peints, carrelages, visage de l'entité, ambiances, musique) sont générés par `godot/tools/make_assets.py`.
 - Banc d'essai des pièces, portes et écrans : `godot --path godot res://tests/sandbox.tscn -- --shots=/chemin`.
-- Test automatique avec captures d'écran :
+- Tests automatiques avec captures d'écran :
   ```bash
-  godot --path godot -- --autotest --shots=/chemin/vers/captures
+  godot --path godot -- --autotest --shots=/chemin/vers/captures            # parcours complet de l'acte I
+  godot --path godot -- --autotest --seance=2,1,0,1,0,2/xx,yy,zz --shots=…  # séance seule, choix imposés (fins)
+  godot --path godot -- --preview=couloir --shots=…                          # vues d'une pièce de la maison
   ```
-  Il joue le parcours (armoire → disquette → photo → ordinateur) en visant chaque objet comme un joueur et affiche `AUTOTEST OK` à la fin.
+  Le parcours vise chaque objet comme un joueur, joue la séance avec des réponses fixées et affiche `AUTOTEST OK` à la fin. `python3 godot/tools/check_texts.py` vérifie les textes.
 - L'export Windows est fait par `.github/workflows/godot-windows.yml` à chaque push sur `main` qui touche `godot/`.
 
 ## Prototype web
