@@ -7,8 +7,44 @@ extends Node3D
 const LAYER_WORLD := 1
 const LAYER_INTERACT := 4   # couche 3 : visable mais ne bloque pas le joueur
 
+## Couches de RENDU (visibilité, numéros 1 à 20, à ne pas confondre avec les couches de collision) :
+## 11 = « flux uniquement » : vu seulement par les caméras de flux qui l'acceptent (le miroir),
+##      jamais par le joueur (sa caméra n'a pas cette couche) ;
+## 12 = « caché des caméras » : vu par le joueur, jamais par les caméras de flux.
+const LAYER_FEED_ONLY := 11
+const LAYER_HIDDEN_FROM_FEEDS := 12
+
 static var _cache := {}
 static var _grime_tex_s: Texture2D
+
+
+## Bit d'une couche de rendu (1 à 20) dans un masque (layers, cull_mask).
+static func layer_bit(n: int) -> int:
+	return 1 << (n - 1)
+
+
+## Pose les couches de rendu d'un nœud et de tous ses descendants visuels (maillages, lumières,
+## décalques…). « layers » : un masque (int) ou une liste de numéros de couche, par exemple
+## Builder.set_vis_layers(silhouette, [Builder.LAYER_FEED_ONLY]).
+static func set_vis_layers(node: Node, layers: Variant) -> void:
+	var mask := 0
+	if layers is Array or layers is PackedInt32Array:
+		for n in layers:
+			mask |= layer_bit(int(n))
+	else:
+		mask = int(layers)
+	if node is VisualInstance3D:
+		(node as VisualInstance3D).layers = mask
+	for c in node.get_children():
+		set_vis_layers(c, mask)
+
+
+## Range un objet de décor dans le groupe « analogique » (vieille télé, radio, radiateur : elle ne peut
+## pas les prendre) ou « connecte » (les appareils Connected s'y mettent tout seuls). Prépare le Bac à sable.
+static func tag(node: Node, group: String) -> Node:
+	if group == "analogique" or group == "connecte":
+		node.add_to_group(group)
+	return node
 
 var mats := {}
 var props := {}

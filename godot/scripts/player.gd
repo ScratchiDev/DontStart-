@@ -31,10 +31,13 @@ var flash_on := true
 var flash_base := 5.0
 var current: Interactable = null
 var _flash_before_sit := true
-var rug_rect := Rect2(-1.1, -0.25, 2.4, 1.5)   # x, z, largeur, profondeur : le tapis étouffe les pas
+var rug_rect := Rect2(-1.1, -0.25, 2.4, 1.5)   # x, z, largeur, profondeur : le tapis étouffe les pas (sans maison)
+## Qui connaît le sol (House : floor_kind_at(pos) -> "parquet", "moquette", "carrelage" ou "tapis").
+var floor_provider: Object
 
 var _wood: Array[AudioStream] = []
 var _carpet: Array[AudioStream] = []
+var _tile: Array[AudioStream] = []
 
 
 func _ready() -> void:
@@ -42,7 +45,11 @@ func _ready() -> void:
 		_wood.append(load("res://assets/audio/footstep_wood_00%d.ogg" % i))
 	for i in 3:
 		_carpet.append(load("res://assets/audio/footstep_carpet_00%d.ogg" % i))
+	for i in 5:
+		_tile.append(load("res://assets/audio/footstep0%d.ogg" % i))
 	flash_base = flashlight.light_energy
+	# la couche 11 (« flux uniquement ») n'est vue que par les caméras de flux, jamais par le joueur
+	camera.set_cull_mask_value(Builder.LAYER_FEED_ONLY, false)
 
 
 func set_look(new_yaw: float, new_pitch := 0.0) -> void:
@@ -117,14 +124,48 @@ func _physics_process(delta: float) -> void:
 	_update_ray()
 
 
-func _footstep(speed: float) -> void:
+## Le sol sous les pieds : demandé à la maison ; sans maison, le tapis de la chambre.
+func floor_kind() -> String:
 	var p := global_position
-	var on_rug := rug_rect.has_point(Vector2(p.x, p.z))
-	var list := _carpet if on_rug else _wood
+	if floor_provider and floor_provider.has_method("floor_kind_at"):
+		return floor_provider.floor_kind_at(p)
+	return "tapis" if rug_rect.has_point(Vector2(p.x, p.z)) else "parquet"
+
+
+func _footstep(speed: float) -> void:
+	var kind := floor_kind()
+	var list := _wood
+	var db := -9.0
+	var pitch := randf_range(0.88, 1.05)
+	match kind:
+		"moquette", "tapis":
+			list = _carpet
+			db = -13.0
+		"carrelage":
+			list = _tile
+			db = -12.0
+			pitch = randf_range(1.05, 1.2)
 	steps.stream = list[randi() % list.size()]
-	steps.pitch_scale = randf_range(0.88, 1.05)
-	steps.volume_db = (-13.0 if on_rug else -9.0) + (2.0 if speed > 2.5 else 0.0)
+	steps.pitch_scale = pitch
+	steps.volume_db = db + (2.0 if speed > 2.5 else 0.0)
 	steps.play()
+
+
+## Angle (en degrés) entre la direction du regard et la direction vers le point p.
+func aim_angle_to(p: Vector3) -> float:
+	var from := camera.global_position
+	var to := p - from
+	if to.length_squared() < 0.000001:
+		return 0.0
+	var fwd := -camera.global_transform.basis.z
+	return rad_to_deg(fwd.angle_to(to))
+
+
+## Le joueur regarde-t-il le point p, à moins de max_deg degrés du centre et à moins de max_dist mètres ?
+func looking_at_point(p: Vector3, max_deg: float, max_dist := INF) -> bool:
+	if camera.global_position.distance_to(p) > max_dist:
+		return false
+	return aim_angle_to(p) <= max_deg
 
 
 func _update_ray() -> void:

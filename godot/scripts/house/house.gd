@@ -93,6 +93,7 @@ func _make_room(id: String, d: Dictionary, y0: float, h: float) -> HouseRoom:
 		r = HouseRoom.new()
 	var rc: Array = d.rect
 	r.setup(id, Rect2(rc[0], rc[2], rc[1] - rc[0], rc[3] - rc[2]), y0, h, d.get("title", id))
+	r.floor_kind = d.get("floor", "parquet")
 	add_child(r)
 	r._make_materials()
 	var x0: float = rc[0]
@@ -265,6 +266,20 @@ func finish(p: Node3D) -> void:
 	for id in rooms:
 		var r: HouseRoom = rooms[id]
 		r.collect_lights()
+	if "floor_provider" in p:
+		p.set("floor_provider", self)
+
+
+## Nature du sol au point p (bruits de pas) : "parquet", "moquette", "carrelage" ou "tapis".
+func floor_kind_at(p: Vector3) -> String:
+	var pos := p + Vector3(0, 0.5, 0)
+	if current and current.contains(pos, 0.05):
+		return current.floor_kind_at(p)
+	for id in rooms:
+		var r: HouseRoom = rooms[id]
+		if r.contains(pos, 0.05):
+			return r.floor_kind_at(p)
+	return "parquet"
 
 
 func _process(delta: float) -> void:

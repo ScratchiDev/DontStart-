@@ -14,6 +14,11 @@ var neighbors: Array[HouseRoom] = []
 var gi: VoxelGI
 var active := true
 var _lights: Array[Light3D] = []
+## Sol de la pièce (bruits de pas) : "parquet", "moquette" ou "carrelage" (HouseData), et ses tapis.
+var floor_kind := "parquet"
+var rugs: Array[Rect2] = []      # tapis (x, z, largeur, profondeur) : les pas y sont étouffés
+var _rugs_scanned := -1
+var _rugs_auto: Array[Rect2] = []
 
 
 func setup(id: String, r: Rect2, floor_y := 0.0, height := 2.6, name_shown := "") -> void:
@@ -72,3 +77,40 @@ func set_active(on: bool) -> void:
 			l.visible = on
 	if gi:
 		gi.visible = on and Game.high_quality
+
+
+## Ajoute un tapis (rectangle au sol, repère du jeu : x, z, largeur en x, profondeur en z).
+func add_rug(r: Rect2) -> void:
+	rugs.append(r)
+
+
+## Nature du sol au point p : "tapis" sur un tapis, sinon floor_kind. Les tapis Kenney (« rug… ») et les
+## nœuds « Tapis… » posés par le script de la pièce sont reconnus tout seuls.
+func floor_kind_at(p: Vector3) -> String:
+	var q := Vector2(p.x, p.z)
+	for r in rugs:
+		if r.has_point(q):
+			return "tapis"
+	if _rugs_scanned != get_child_count():
+		_scan_rugs()
+	for r in _rugs_auto:
+		if r.has_point(q):
+			return "tapis"
+	return floor_kind
+
+
+func _scan_rugs() -> void:
+	_rugs_scanned = get_child_count()
+	_rugs_auto.clear()
+	for c in get_children():
+		var n := c as Node3D
+		if n == null:
+			continue
+		var nm := String(n.name).to_lower()
+		if not (nm.begins_with("rug") or nm.begins_with("tapis")):
+			continue
+		var box := _aabb_of(n, self)
+		if box.size.x <= 0.0 or box.size.y > 0.08:
+			continue   # pas un tapis à plat
+		var g := global_transform * box.position
+		_rugs_auto.append(Rect2(g.x, g.z, box.size.x, box.size.z))

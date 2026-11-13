@@ -21,10 +21,19 @@ var creaks_done := 0
 var seance: Node
 var seance_result := ""
 var house: House
+var haunt: Haunt
 
 
 func _ready() -> void:
 	retro.add_to_group("retro")
+	# l'entité dans la maison : seul point d'entrée de ses actions (créé avant la maison, pour que
+	# les appareils posés par les pièces s'enregistrent auprès de lui)
+	haunt = Haunt.new()
+	haunt.name = "Haunt"
+	haunt.add_to_group("haunt")
+	add_child(haunt)
+	# la couche 11 (« flux uniquement ») n'est jamais vue par le joueur
+	player.camera.set_cull_mask_value(Builder.LAYER_FEED_ONLY, false)
 	_build_environment()
 	_build_house()
 	_build_gi()
