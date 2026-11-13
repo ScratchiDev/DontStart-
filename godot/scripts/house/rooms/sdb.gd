@@ -444,6 +444,13 @@ func _mirror() -> void:
 	mirror.build()
 	mirror.p4_path = P4_PATH.duplicate()
 	mirror.p4_curtain_pos = Vector3(6.6, 2.2, CURTAIN_Z)
+	# la sortie par P4 (house_data.gd), un pas dans le couloir : le joueur qui file vers elle pendant la
+	# barre a fui (le point est au-delà du seuil : en le franchissant, il va toujours vers elle)
+	for d in HouseData.F1_DOORS:
+		if str(d.id) == "P4":
+			mirror.p4_exit = Vector3(float(d.at) - 0.6, 0.0, float(d.c))
+	var rr: Array = HouseData.F1_ROOMS["sdb"].rect
+	mirror.p4_room_rect = Rect2(float(rr[0]), float(rr[2]), float(rr[1]) - float(rr[0]), float(rr[3]) - float(rr[2]))
 	mirror.p4_event.connect(_on_p4_event)
 	# son câble, neuf : monte jusque sous la corniche, file vers la porte et disparaît dans un trou
 	# percé au plafond, avant la zone de la porte

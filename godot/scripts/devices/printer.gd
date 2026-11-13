@@ -83,7 +83,8 @@ func out_pos() -> Vector3:
 ## Imprime une page : la feuille sort, puis devient ramassable. id = objet ajouté à l'inventaire
 ## (sorte « doc ») ; texture = ce qui est imprimé ; label = nom de l'objet (sinon celui de PAGES).
 ## desc, legend : description dans l'inventaire et texte affiché sous l'image à la lecture.
-func print_page(id: String, texture: Texture2D, label := "", desc := "", legend := "") -> void:
+## instant : la feuille est posée tout de suite, sans bruit (chargement d'une sauvegarde).
+func print_page(id: String, texture: Texture2D, label := "", desc := "", legend := "", instant := false) -> void:
 	var known: Dictionary = PAGES.get(id, {})
 	var clock := Game.house_clock()
 	var page := {
@@ -91,6 +92,7 @@ func print_page(id: String, texture: Texture2D, label := "", desc := "", legend 
 		"name": (label if label != "" else str(known.get("name", id))).replace("03:2x", clock),
 		"desc": (desc if desc != "" else str(known.get("desc", ""))).replace("03:2x", clock),
 		"legend": (legend if legend != "" else str(known.get("legend", ""))).replace("03:2x", clock),
+		"instant": instant,
 	}
 	_queue.append(page)
 	if printing:
@@ -161,6 +163,11 @@ func _print_one(p: Dictionary) -> void:
 		mi.position.z = slot + SHEET.y * k / 2.0
 		m.uv1_scale = Vector3(1.0, k, 1.0)
 		m.uv1_offset = Vector3(0.0, 1.0 - k, 0.0)
+	if bool(p.get("instant", false)):
+		show_len.call(SHEET.y)
+		holder.position.y = land_y
+		_sheet_ready(p, holder, slot, true)
+		return
 	show_len.call(0.0)
 	led(Color(0.2, 1.0, 0.3))
 	Sfx.play_at("printer", global_position + Vector3(0, body_size.y, 0), -6.0, 1.0, 2.0)
@@ -184,7 +191,11 @@ func _print_one(p: Dictionary) -> void:
 	if not is_inside_tree():
 		return
 	led(Color(0.2, 1.0, 0.3))
-	# ramassable
+	_sheet_ready(p, holder, slot, false)
+
+
+## La feuille posée devient ramassable (« Prendre la feuille »). quiet : sans événement (chargement).
+func _sheet_ready(p: Dictionary, holder: Node3D, slot: float, quiet: bool) -> void:
 	var it := Interactable.new()
 	it.label = "Prendre la feuille"
 	it.reach = 2.2
@@ -201,6 +212,8 @@ func _print_one(p: Dictionary) -> void:
 	sheets.append(entry)
 	printed.append(p.id)
 	it.used.connect(func(_i: Interactable) -> void: take(p.id))
+	if quiet:
+		return
 	page_printed.emit(p.id)
 	var h := get_tree().get_first_node_in_group("haunt")
 	if h and h.has_method("story_event"):

@@ -744,11 +744,10 @@ func examine_tv() -> void:
 	_log("tele")
 
 
+## La télé a-t-elle neigé toute seule (tv_snow) ? Seul le drapeau posé au moment où elle neige compte :
+## le babyphone parle avant (B1, ou un indice), la phrase « Tout à l'heure, elle a neigé » serait fausse.
 func _tv_has_snowed() -> bool:
-	if Game.flag("tele_a_neige") or Game.flag("babyphone_parle"):
-		return true
-	var hn := _haunt()
-	return hn != null and not hn.said("babyphone").is_empty()
+	return bool(Game.flag("tele_a_neige", false))
 
 
 ## Le vieux téléviseur neige tout seul pendant « seconds » secondes (elle le dérange : elle ne peut

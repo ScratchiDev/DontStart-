@@ -5,6 +5,7 @@ extends HouseRoom
 
 signal floppy_taken
 signal pc_used
+signal key_taken        # la clé et le mot d'Albert sont ramassés (début de l'acte II, point de passage C1)
 
 const W := 6.4
 const D := 5.2
@@ -37,10 +38,13 @@ var moon: SpotLight3D
 var door_leaf: Node3D
 var door_node: Door
 var chair: Node3D
+var pc_it: Interactable            # « Insérer la disquette »
+var wardrobe_it: Interactable      # « Ouvrir l'armoire »
 var rng := RandomNumberGenerator.new()
 var window_glass_mat: ShaderMaterial
 var outside: Node3D
 var decor: Node3D
+var pc_dev: Connected               # l'ordinateur, vu par l'entité comme un écran de la maison (« pc_manon »)
 
 
 func _ready() -> void:
@@ -171,7 +175,8 @@ func _build_furniture() -> void:
 
 	# armoire (coin du fond à gauche) : la disquette est dedans
 	var wardrobe := prop("bookcaseClosedDoors", Vector3(-2.55, 0, -2.3), 0.0, Vector3(1.0, 2.05, 0.55), true, {}, "Ouvrir l'armoire")
-	wardrobe.get_meta("interactable").used.connect(_on_wardrobe)
+	wardrobe_it = wardrobe.get_meta("interactable")
+	wardrobe_it.used.connect(_on_wardrobe)
 	for n in wardrobe.find_children("door*", "Node3D", true, false):
 		wardrobe_doors.append(n as Node3D)
 	_box(Vector3(0.86, 0.02, 0.45), Vector3(-2.55, 1.02, -2.3), mats.wood_dark)
@@ -383,6 +388,7 @@ func _build_pc() -> void:
 	var screen := _quad(Vector2(0.38, 0.29), screen_center, screen_mat)
 	screen.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var it := _interactable("Insérer la disquette", Vector3(1.0, 0.8, 0.8), Vector3(x, base + 0.3, z + 0.2))
+	pc_it = it
 	it.used.connect(func(_i: Interactable) -> void:
 		if Game.has_floppy:
 			it.enabled = false
@@ -392,6 +398,37 @@ func _build_pc() -> void:
 	_collider(Vector3(0.52, 0.56, 0.6), Vector3(x, base + 0.28, z), self)
 	var hum: Node = Sfx.loop("crt_hum", -30.0, screen_center, self)
 	hum.set("max_distance", 6.0)
+	# pour l'entité, un écran parmi les appareils de la maison (indice de l'étape « sortir »)
+	var pc := ManonPc.new()
+	pc.name = "PcManon"
+	pc.device_id = "pc_manon"
+	pc.room_id = "mere"
+	pc.term = terminal
+	add_child(pc)
+	pc.position = screen_center
+	pc.build()
+	pc_dev = pc
+
+
+## L'ordinateur de ta mère vu comme un appareil de la maison (« pc_manon ») : il n'est pas connecté,
+## mais elle y a un écran (« Dans la chambre de ta mère, je n'ai qu'un écran. »). Ce qu'elle y dit
+## (l'indice de l'étape « sortir ») s'écrit sur le terminal, sous les derniers mots de la séance.
+class ManonPc extends Connected:
+	var term: Node
+
+	func build() -> void:
+		display_name = "Ordinateur"
+		can_speak = true
+		built = true
+
+	func speak(text: String, _seconds: float) -> void:
+		if term and str(term.get("mode")) == "done":
+			_type(text)
+
+	func _type(text: String) -> void:
+		await term.line(text, "n", 0.03, 0.2)
+		if is_instance_valid(term):
+			term.set("narrating", false)
 
 
 func insert_floppy() -> void:
@@ -725,4 +762,30 @@ func key_under_door() -> void:
 		Game.add_item("cle_chambre", "Clé de la chambre", "Glissée sous la porte par Papi.", "cle")
 		Game.add_item("mot_albert", "Mot de Papi", "« N'ouvre à personne. Même pas à moi. »", "doc")
 		get_tree().get_first_node_in_group("hud").read_paper("Ferme à clé de l'intérieur.\nN'ouvre à personne.\nMême pas à moi.\n\n— A.")
-		Game.objective("Sors de la chambre"))
+		key_taken.emit())
+
+
+# ------------------------------------------------------------------ sauvegarde
+
+## La chambre telle qu'elle est après la séance 1 (chargement d'une sauvegarde de l'acte II) : armoire
+## ouverte, disquette dans le lecteur (voyant allumé), plafonnier éclaté, chaise à sa place.
+## La porte P1 et l'écran sont remis par Acte1.restore().
+func restore_after_seance() -> void:
+	wardrobe_open = true
+	if wardrobe_it:
+		wardrobe_it.label = "Fouiller l'armoire"
+	for d in wardrobe_doors:
+		var sign_ := -1.0 if String(d.name).to_lower().contains("left") else 1.0
+		d.rotation.y = sign_ * 1.85
+	floppy.visible = false
+	floppy_item.enabled = false
+	if pc_it:
+		pc_it.enabled = false
+	led_mat.albedo_color = Color(1, 0.7, 0.18)
+	led_mat.emission_enabled = true
+	led_mat.emission = Color(1, 0.65, 0.15)
+	led_mat.emission_energy_multiplier = 3.0
+	ceiling_on = false
+	ceiling_dead = true
+	ceiling_light.light_energy = 0.0
+	chair.visible = true

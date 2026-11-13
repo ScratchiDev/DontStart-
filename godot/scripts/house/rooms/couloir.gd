@@ -8,6 +8,7 @@ extends HouseRoom
 ## Portes : mur x = 3.25 en z −3.6 (P2), 1.4 (P1), 3.4 (P3) ; mur x = 4.75 en z −4.6 (P4), −1.2 (P5),
 ## 1.35 (P6, vitrée, s'ouvre dans le couloir), 4.4 (P7). Fenêtre F8 au bout sud (mur z = 6.35).
 ## Fonctions publiques : flicker(secondes), set_dim(k), chain_lights(), track(cible), look_at_player_once(),
+## set_cam_led(on) (la LED rouge de la caméra dôme, réglée par le scénario),
 ## set_switch(on, quiet, keep_level) (l'interrupteur : coupe ou rend le courant aux trois ampoules),
 ## unplug_nestor(quiet) (avec le tournevis), photo() (await : image de CAM 1, prête à imprimer), restore().
 ## Propriétés : nestor (Nestor, « nestor »), feed_cam (FeedCam « CAM 1 COULOIR », sur la tête de la
@@ -28,7 +29,8 @@ const BULB_GLOW := 2.6
 const CAM_POS := Vector3(4.0, 2.6, -7.1)   # assez loin du mur pour ne pas mordre sur la corniche
 const RADIATOR_POS := Vector3(4.62, 0.45, -2.9)   # centre du radiateur (§ 5.2) : les S.O.S. d'Albert
 const STARE_SEC := 3.0           # fixer l'objectif de la caméra dôme 3 s…
-const STARE_DEG := 10.0          # (à moins de 10° du centre du regard)
+const STARE_DEG := 6.0           # (à moins de 6° du centre du regard…
+const STARE_DIST := 6.0          # … et à moins de 6 m : regarder le fond du couloir ne suffit pas)
 const LED_OFF_SEC := 5.0         # … et sa LED s'éteint 5 s
 const TXT_CAMERA := "Une caméra. LED rouge. Elle tourne quand tu bouges."
 const TXT_CAMERA_LED := "Elle a éteint sa lumière. Elle sait que tu sais."
@@ -65,6 +67,7 @@ var switch_on := true            # l'interrupteur mural des trois ampoules
 var switch_rocker: Node3D
 var switch_it: Interactable
 var feed_cam: FeedCam
+var cam_ir: SpotLight3D           # l'infrarouge de CAM 1 : allumé seulement quand son image est regardée
 var smoke_led: StandardMaterial3D
 var phone_led: StandardMaterial3D
 var _cable_mat: StandardMaterial3D
@@ -833,6 +836,14 @@ func _apply_bulb(i: int, k: float) -> void:
 func _apply_all() -> void:
 	for i in bulbs.size():
 		_apply_bulb(i, dim)
+	_update_switch_label()
+
+
+## Le libellé de l'interrupteur suit ce qu'on voit : couloir noir (coupé, ou ampoules baissées à 0
+## par elle), « Allumer la lumière » ; sinon « Éteindre la lumière ».
+func _update_switch_label() -> void:
+	if switch_it:
+		switch_it.label = "Éteindre la lumière" if switch_on and dim >= 0.05 else "Allumer la lumière"
 
 
 ## Les ampoules connectées vacillent pendant « seconds » secondes, puis reviennent à leur niveau
@@ -977,6 +988,24 @@ func look_at_player_once() -> void:
 	_cam_once = true
 
 
+## Le joueur suivi n'est filmé que dans le couloir : ailleurs, la caméra revient au repos (vers le
+## sud, le long du couloir), au lieu de fixer un mur derrière lequel il se trouve.
+func _target_here(target: Node3D) -> bool:
+	if house == null or target != house.player:
+		return true
+	return house.current == self
+
+
+## La caméra vise-t-elle sa cible (à moins de max_deg degrés) ? (photo du couloir : on attend qu'elle
+## ait trouvé le joueur.)
+func cam_on_target(max_deg := 8.0) -> bool:
+	if cam_pivot == null or cam_target == null or not is_instance_valid(cam_target):
+		return false
+	var want := _aim_of(cam_target)
+	return rad_to_deg(absf(wrapf(want.y - cam_pivot.rotation.y, -PI, PI))) <= max_deg \
+		and rad_to_deg(absf(want.x - cam_pivot.rotation.x)) <= max_deg
+
+
 func _aim_of(target: Node3D) -> Vector2:
 	var tp := target.global_position
 	if target is CharacterBody3D:
@@ -990,9 +1019,11 @@ func _aim_of(target: Node3D) -> Vector2:
 func _process(delta: float) -> void:
 	if cam_pivot == null:
 		return
+	if cam_ir and feed_cam and cam_ir.visible != feed_cam.active:
+		cam_ir.visible = feed_cam.active
 	_update_cam_led(delta)
 	var want := _cam_rest
-	if cam_target and is_instance_valid(cam_target):
+	if cam_target and is_instance_valid(cam_target) and _target_here(cam_target):
 		want = _aim_of(cam_target)
 	var dyaw := wrapf(want.y - cam_pivot.rotation.y, -PI, PI)
 	var dpitch := want.x - cam_pivot.rotation.x
@@ -1024,17 +1055,29 @@ func _update_cam_led(delta: float) -> void:
 			_set_cam_led(true)
 		return
 	var p: Node3D = house.player if house else null
-	var watching := p != null and house.current == self and p.has_method("looking_at_point") \
-		and bool(p.call("looking_at_point", cam_pivot.global_position, STARE_DEG, 9.0))
+	var watching := cam_led_on and p != null and house.current == self and p.has_method("looking_at_point") \
+		and bool(p.call("looking_at_point", cam_pivot.global_position, STARE_DEG, STARE_DIST))
 	_stare_t = _stare_t + delta if watching else 0.0
 	if _stare_t >= STARE_SEC:
 		_stare_t = 0.0
 		_led_off_t = LED_OFF_SEC
 		_set_cam_led(false)
-		Game.hint(TXT_CAMERA_LED, 4.0)
 		var hn := Haunt.of(get_tree())
+		# la pensée, une seule fois (sinon elle revient à chaque regard et couvre H-P2a ou H-SOS), et
+		# jamais par-dessus une scène écrite ; ensuite, la LED s'éteint sans rien dire
+		if not bool(Game.flag("camera_led_vue", false)) and (hn == null or not hn.is_busy()):
+			Game.set_flag("camera_led_vue", true)
+			Game.hint(TXT_CAMERA_LED, 4.0)
 		if hn:
 			hn.story_event("camera_led_eteinte")
+
+
+## LED rouge de la caméra dôme, réglée par le scénario : éteinte tant que la maison dort (début de
+## l'acte II), allumée quand la caméra s'éveille (première entrée dans le couloir).
+func set_cam_led(on: bool) -> void:
+	_led_off_t = 0.0
+	_stare_t = 0.0
+	_set_cam_led(on)
 
 
 func _set_cam_led(on: bool) -> void:
@@ -1074,8 +1117,8 @@ func _thermostat() -> void:
 	thermostat.light.shadow_enabled = false
 	for mi in thermostat.find_children("*", "MeshInstance3D", false, false):
 		_no_gi(mi as MeshInstance3D)
-	# son câble monte se cacher derrière la corniche
-	_cable([Vector3(XE - 0.004, 1.565, -0.1), Vector3(XE - 0.004, 2.5, -0.1)], Vector3.LEFT)
+	# (alimenté par le mur : un fil de 5,6 mm, ou même une goulotte, montant au plafond s'affichait en
+	# trait irisé, sans anticrénelage et avec l'aberration chromatique, sur toutes les vues du couloir)
 	_look("Regarder le thermostat", Vector3(0.1, 0.18, 0.18), c + Vector3(-0.03, 0, 0),
 		"Le thermostat du fournisseur d'énergie. Il devrait afficher la température. Il affiche 3:12.")
 
@@ -1207,8 +1250,14 @@ func _switch() -> void:
 	_box(Vector3(0.034, 0.042, 0.008), Vector3(0, 0, 0.003), _m(Color(0.7, 0.67, 0.58), 0.45), false, switch_rocker)
 	switch_rocker.rotation.x = -0.16 if switch_on else 0.16
 	switch_it = _interactable("Éteindre la lumière", Vector3(0.12, 0.14, 0.14), Vector3(XW + 0.05, SWITCH_POS.y, SWITCH_POS.z), self, LAYER_INTERACT, 2.0)
+	_update_switch_label()
 	switch_it.used.connect(func(_i: Interactable) -> void:
-		set_switch(not switch_on)
+		# ampoules éteintes par elle, interrupteur sur marche : le geste est « allumer » (on bascule,
+		# coupure puis remise, et les ampoules connectées repartent à pleine puissance)
+		if switch_on and dim < 0.05:
+			set_switch(true)
+		else:
+			set_switch(not switch_on)
 		var hn := Haunt.of(get_tree())
 		if hn:
 			hn.story_event("lumiere", {"room": "couloir", "on": switch_on}))
@@ -1223,8 +1272,7 @@ func set_switch(on: bool, quiet := false, keep_level := false) -> void:
 	Game.set_flag("interrupteur_couloir", on)
 	if switch_rocker:
 		switch_rocker.rotation.x = -0.16 if on else 0.16
-	if switch_it:
-		switch_it.label = "Éteindre la lumière" if on else "Allumer la lumière"
+	_update_switch_label()
 	for n in find_children("*", "", true, false):
 		if n is SmartBulb:
 			(n as SmartBulb).set_powered(on)
@@ -1267,6 +1315,9 @@ func _network_cable() -> void:
 		add_child(t)
 	var it := _interactable("Regarder le câble", Vector3(0.16, 0.1, 1.0), Vector3(xw + 0.02, 0.05, 2.4), self, LAYER_INTERACT, 2.0)
 	it.used.connect(func(_i: Interactable) -> void: Game.hint(TXT_CABLE, 5.0))
+	# (là où il traverse le couloir et passe sous P7, « Ton câble passe sous la porte » : on le vise aussi)
+	var it2 := _interactable("Regarder le câble", Vector3(1.1, 0.08, 0.16), Vector3((xw + 4.69) / 2.0, 0.04, z), self, LAYER_INTERACT, 2.0)
+	it2.used.connect(func(_i: Interactable) -> void: Game.hint(TXT_CABLE, 5.0))
 
 
 # ------------------------------------------------------------------ CAM 1, dans la caméra dôme
@@ -1280,17 +1331,64 @@ func _feed_cam() -> void:
 	feed_cam.name = "CamFlux1"
 	feed_cam.title = "CAM 1 COULOIR"
 	feed_cam.fov = 80.0
-	feed_cam.ir = 1.2
+	feed_cam.ir = 3.5      # le couloir est noir (ampoules éteintes) : l'infrarouge de la caméra le révèle
 	cam_pivot.add_child(feed_cam)
 	feed_cam.position = Vector3(0, 0, -0.055)
 	feed_cam.build()
+	# son éclairage infrarouge (comme CAM 2 et CAM 3) : sans lui, le couloir éteint est noir à l'écran.
+	# Il ne s'allume que lorsque la console montre l'image (le joueur est alors dans le bureau) ;
+	# une photo prise par la caméra (couloir.photo()) se fait sans lui : le rond de la lampe, seul.
+	cam_ir = SpotLight3D.new()
+	cam_ir.name = "InfrarougeCam1"
+	cam_ir.light_color = Color(0.85, 0.88, 1.0)
+	cam_ir.light_energy = 4.0
+	cam_ir.spot_range = 13.0
+	cam_ir.spot_angle = 28.0
+	cam_ir.spot_attenuation = 0.35
+	cam_ir.shadow_enabled = false
+	cam_ir.visible = false
+	cam_ir.set_meta("always_on", true)
+	cam_pivot.add_child(cam_ir)
+	cam_ir.position = Vector3(0, -0.02, -0.06)
 
 
-## Une image de CAM 1, telle que l'imprimante la sort (await couloir.photo()).
+## Une image de CAM 1, telle que l'imprimante la sort (await couloir.photo()). Elle est exposée sur
+## elle-même, comme par un appareil automatique : brute, la photo du couloir éteint sortait noire
+## (moyenne 6/255), sans même le rond de la lampe.
 func photo() -> Image:
 	if feed_cam == null:
 		return null
-	return await feed_cam.capture_still("CAM 1")
+	var raw: Image = await feed_cam.capture()
+	return FeedCam.cctv_image(auto_expose(raw), "CAM 1")
+
+
+## Exposition automatique : le point le plus clair (le rond de la lampe, 99,5e centile) est porté à
+## 0,85, puis les ombres sont relevées (gamma 0,55) pour que le couloir vide se devine autour.
+static func auto_expose(src: Image) -> Image:
+	if src == null or src.is_empty():
+		return src
+	var img := src.duplicate() as Image
+	if img.is_compressed():
+		img.decompress()
+	img.convert(Image.FORMAT_RGBA8)
+	var w := img.get_width()
+	var h := img.get_height()
+	var lum := PackedFloat32Array()
+	lum.resize(w * h)
+	for y in h:
+		for x in w:
+			var c := img.get_pixel(x, y)
+			lum[y * w + x] = c.r * 0.299 + c.g * 0.587 + c.b * 0.114
+	var sorted := lum.duplicate()
+	sorted.sort()
+	var hi := maxf(sorted[int((sorted.size() - 1) * 0.995)], 0.004)
+	var gain := clampf(0.85 / hi, 1.0, 24.0)
+	for y in h:
+		for x in w:
+			var c := img.get_pixel(x, y)
+			img.set_pixel(x, y, Color(pow(clampf(c.r * gain, 0.0, 1.0), 0.55), pow(clampf(c.g * gain, 0.0, 1.0), 0.55),
+				pow(clampf(c.b * gain, 0.0, 1.0), 0.55), 1.0))
+	return img
 
 
 # ------------------------------------------------------------------ sauvegarde

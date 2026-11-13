@@ -4,9 +4,14 @@ extends Builder
 ## et aux fenêtres, puis chaque pièce (sol, plafond, papier peint, lambris, plinthes, corniche),
 ## les portes (avec leurs serrures) et les fenêtres. La chambre de la mère (room.gd) existe déjà ;
 ## les autres pièces sont des HouseRoom, meublées par leur script dans scripts/house/rooms/.
-## Gère aussi quelles pièces sont « actives » (lumières, éclairage indirect) selon la position du joueur.
+## Gère aussi quelles pièces sont « actives » (lumières, éclairage indirect, caméras de flux) selon la
+## position du joueur, relaie les portes essayées vers le scénario (door_tried), garde l'état des portes
+## dans Game.flags (« porte_P3 » = « libre » ou « ouverte ») et le réapplique au chargement (restore_all).
 
 signal entered_room(room: HouseRoom)
+## Une porte verrouillée ou coincée a été essayée, ou l'on a frappé à P2 (Door.knocks donne le nombre).
+signal door_tried(id: String)
+signal door_opened(id: String)
 
 const D := preload("res://scripts/house/house_data.gd")
 const ROOM_SCRIPTS := {
@@ -19,18 +24,22 @@ const ROOM_SCRIPTS := {
 	"escalier": "res://scripts/house/rooms/escalier.gd",
 }
 
-## v0.3 : seul le couloir est ouvert (fin de version devant la chambre des grands-parents).
-var teaser := true
-const TEASER_MSG := {
-	"P2": "Fermée à clé, de l'intérieur. Derrière, quelqu'un respire. Très lentement.",
-	"P3": "Coincée. Le bois a gonflé avec l'humidité.",
-	"P4": "Fermée. Sous la porte, une petite lumière bleue s'allume, puis s'éteint.",
-	"P5": "Fermée à clé.",
-	"P6": "Fermée. Derrière le verre, l'escalier descend dans le noir.",
-	"P7": "Fermée à clé. Sous la porte, une LED clignote : la box.",
+## Les portes en v0.3 (docs/v0.3.md, § 5.1) : serrure, libellé, messages. Prime sur le « lock » de
+## HouseData. lock : "" (aucune), "stuck" (coincée, « stuck » appuis), "key:<objet>", "locked" (fermée de
+## l'intérieur, sans clé dans cette version). P1 est la porte de la chambre de la mère (room.gd).
+const H_P2A := "Tu frappes. Rien. Derrière, une respiration lente. Ses cachets."
+const H_P2B := "Fermée à clé, de l'intérieur. La clé est dans la serrure, de l'autre côté."
+const DOORS_V03 := {
+	"P1": {"lock": "key:cle_chambre", "msg": "Fermée. De l'extérieur."},
+	"P2": {"lock": "locked", "label_locked": "Frapper à la porte", "knock_msgs": [H_P2A, H_P2B]},
+	"P3": {"lock": "stuck", "stuck": 2, "msg": "Coincée. Le bois a gonflé avec l'humidité. Encore un coup d'épaule."},
+	"P4": {"lock": "", "ajar": 20.0},
+	"P5": {"lock": "key:cle_lingerie", "msg": "Fermée à clé. La lingerie. Papi range ses clés sur un tableau, quelque part."},
+	"P6": {"lock": "key:cle_escalier", "msg": "Fermée à clé. Derrière le verre, l'escalier descend dans le noir. Papi est passé par là."},
+	"P7": {"lock": "key:cle_bureau", "msg": "Fermée à clé. Le bureau de Papi. Ton câble passe sous la porte."},
 }
 var rooms := {}          # id -> HouseRoom
-var doors := {}          # id -> Door
+var doors := {}          # id -> Door (P1, celle de la chambre de la mère, comprise)
 var player: Node3D
 var current: HouseRoom
 var _t := 0.0
@@ -62,11 +71,18 @@ func build(mother: HouseRoom) -> void:
 			continue
 		var r := _make_room(id, d, y0, h)
 		rooms[id] = r
-	# les portes
+	# les portes (P1, celle de la chambre de la mère, est construite par room.gd)
 	for d in D.F1_DOORS:
 		if d.get("existe", false):
 			continue
 		doors[d.id] = _make_door(d, y0)
+	var p1: Variant = mother.get("door_node")
+	if p1 is Door:
+		doors["P1"] = p1
+		(p1 as Door).door_id = "P1"
+		_body_follows_leaf(p1)
+	for id in doors:
+		_watch_door(id, doors[id])
 	# les fenêtres
 	for d in D.F1_WINDOWS:
 		if d.get("existe", false):
@@ -81,6 +97,8 @@ func build(mother: HouseRoom) -> void:
 	for id in rooms:
 		var r: HouseRoom = rooms[id]
 		if r.has_method("furnish"):
+			# (nombre d'enfants de la coque : les suivants sont les meubles, voir Autotest.furniture_boxes, B1)
+			r.set_meta("coque", r.get_child_count())
 			r.furnish(self)
 
 
@@ -169,28 +187,10 @@ func _make_door(d: Dictionary, y0: float) -> Door:
 	# axe local +Z de la porte (mur le long de z) = -x du monde
 	var sw := 1.0 if swing_x < d.at else -1.0
 	var dr := Door.new()
+	dr.door_id = d.id
 	dr.width = d.w
 	dr.glass = d.get("glass", false)
-	var lock: String = d.get("lock", "")
-	if lock.begins_with("key:"):
-		dr.locked = true
-		dr.key_id = lock.substr(4)
-		dr.locked_msg = _key_hint(dr.key_id)
-	elif lock == "stuck":
-		dr.stuck = 2
-		dr.locked_msg = "Coincée. Le bois a gonflé avec l'humidité. Encore un coup d'épaule."
-		dr.label_open = "Ouvrir la porte"
-	elif lock == "never" or lock.begins_with("event:"):
-		dr.locked = true
-		dr.locked_msg = {
-			"P2": "Fermée à clé, de l'intérieur. Derrière, quelqu'un respire.",
-			"P6": "Fermée. Derrière le verre, l'escalier descend dans le noir.",
-		}.get(d.id, "Fermée.")
-	if teaser and TEASER_MSG.has(d.id):
-		dr.locked = true
-		dr.key_id = ""
-		dr.stuck = 0
-		dr.locked_msg = TEASER_MSG[d.id]
+	_set_lock(dr, DOORS_V03.get(d.id, {"lock": d.get("lock", "")}))
 	add_child(dr)
 	dr.name = d.id
 	dr.width = d.w
@@ -200,17 +200,77 @@ func _make_door(d: Dictionary, y0: float) -> Door:
 	dr.position = Vector3(d.at, y0, d.c)
 	dr.rotation.y = -PI / 2.0
 	dr.build(self)
+	_body_follows_leaf(dr)
+	var ajar: float = DOORS_V03.get(d.id, {}).get("ajar", 0.0)
+	if ajar > 0.0:
+		dr.set_ajar(ajar)
 	# seuil
 	_box(Vector3(D.WALL + 0.02, 0.012, d.w + 0.04), Vector3(d.at, y0 + 0.006, d.c), mats.wood_dark)
 	return dr
 
 
-func _key_hint(key: String) -> String:
-	return {
-		"cle_bureau": "Fermée à clé. Le bureau de Papi. Mamie cache des doubles partout.",
-		"cle_lingerie": "Fermée à clé. Papi range ses clés sur un tableau, quelque part.",
-		"cle_chambre": "Fermée. De l'extérieur.",
-	}.get(key, "Fermée à clé.")
+## Le corps physique du battant (AnimatableBody3D) suit le battant quand il tourne. Avec
+## sync_to_physics (le réglage par défaut), il n'écoute que ses propres déplacements, pas ceux de son
+## parent : la porte ouverte (ou P4 entrouverte) gardait un mur invisible à sa place fermée, que le
+## joueur ne pouvait pas traverser et que le rayon visait à la place de la porte.
+func _body_follows_leaf(dr: Door) -> void:
+	if dr.leaf == null:
+		return
+	for n in dr.leaf.find_children("*", "AnimatableBody3D", true, false):
+		var b := n as AnimatableBody3D
+		b.sync_to_physics = false
+		PhysicsServer3D.body_set_state(b.get_rid(), PhysicsServer3D.BODY_STATE_TRANSFORM, b.global_transform)
+
+
+## Serrure, libellé et messages d'une porte (une entrée de DOORS_V03).
+func _set_lock(dr: Door, st: Dictionary) -> void:
+	var lock: String = st.get("lock", "")
+	dr.locked = false
+	dr.key_id = ""
+	dr.stuck = 0
+	if lock.begins_with("key:"):
+		dr.locked = true
+		dr.key_id = lock.substr(4)
+	elif lock == "stuck":
+		dr.stuck = int(st.get("stuck", 2))
+	elif lock == "locked" or lock == "never" or lock.begins_with("event:"):
+		dr.locked = true
+	dr.locked_msg = st.get("msg", "Fermée à clé.")
+	dr.label_locked = st.get("label_locked", "")
+	dr.knock_msgs = st.get("knock_msgs", [])
+	dr.refresh_label()
+
+
+## Relaie les portes vers le scénario et garde leur état dans Game.flags (« porte_<id> »).
+func _watch_door(id: String, dr: Door) -> void:
+	dr.door_id = id
+	dr.tried.connect(func() -> void: door_tried.emit(id))
+	dr.knocked.connect(func() -> void: door_tried.emit(id))
+	dr.opened.connect(func() -> void:
+		Game.set_flag("porte_" + id, "ouverte")
+		door_opened.emit(id))
+	dr.closed.connect(func() -> void: Game.set_flag("porte_" + id, "libre"))
+	dr.unlocked.connect(func() -> void:
+		if not dr.is_open:
+			Game.set_flag("porte_" + id, "libre"))
+
+
+## Après la construction (nouvelle partie) et après un chargement : chaque pièce réapplique les
+## drapeaux de Game.flags (restore()), et les portes leur état (« libre » = déverrouillée et fermée,
+## « ouverte »). La chambre de la mère est restaurée par Acte1.restore().
+func restore_all() -> void:
+	for id in doors:
+		var st: Variant = Game.flag("porte_" + id, "")
+		var dr: Door = doors[id]
+		if st == "ouverte" or st == "libre":
+			dr.unlock()
+			dr.set_open_now(st == "ouverte")
+	for id in rooms:
+		var r: HouseRoom = rooms[id]
+		if id != "mere" and r.has_method("restore"):
+			r.call("restore")
+	if current:
+		_update_feeds(current.room_id)
 
 
 func _make_window(d: Dictionary, y0: float) -> void:
@@ -303,4 +363,25 @@ func _process(delta: float) -> void:
 	for id in rooms:
 		var r: HouseRoom = rooms[id]
 		r.set_active(r == current or current.neighbors.has(r))
+	_update_feeds(current.room_id)
 	entered_room.emit(current)
+
+
+## Caméras de flux (B16) : une caméra ne se met à jour que si le joueur est dans une pièce qui regarde
+## son image (FeedCam.viewer_rooms : le bureau pour CAM 1 à CAM 3, la console ; la salle de bain pour
+## le miroir) ; partout ailleurs, render_target_update_mode = DISABLED. (Haunt.room_changed fait de même.)
+func _update_feeds(room_id: String) -> void:
+	for n in get_tree().get_nodes_in_group("feed_cam"):
+		var cam := n as FeedCam
+		if cam:
+			cam.set_room(room_id)
+
+
+## Noms des caméras de flux qui se mettent à jour en ce moment (autotest, B16).
+func rendering_feeds() -> Array:
+	var out: Array = []
+	for n in get_tree().get_nodes_in_group("feed_cam"):
+		var cam := n as FeedCam
+		if cam and cam.is_rendering():
+			out.append(cam.title)
+	return out

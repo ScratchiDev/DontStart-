@@ -62,7 +62,7 @@ func build() -> void:
 
 func _label(fs: int, c := Color(0.85, 0.9, 0.86)) -> Label:
 	var l := Label.new()
-	l.add_theme_font_override("font", Game.fonts.pixel)
+	l.add_theme_font_override("font", Game.fonts.pixel_small if fs <= 10 else Game.fonts.pixel)
 	l.add_theme_font_size_override("font_size", fs)
 	l.add_theme_color_override("font_color", c)
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE

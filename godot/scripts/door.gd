@@ -2,12 +2,22 @@ class_name Door
 extends Node3D
 ## Porte à panneaux qui pivote sur ses gonds. Le nœud est au centre de l'ouverture, au sol, sur le
 ## plan médian du mur ; son axe X local longe le mur ; elle s'ouvre du côté +Z local × swing.
-## Construite par un Builder (pour partager ses matières). Peut être verrouillée.
+## Construite par un Builder (pour partager ses matières). Peut être verrouillée (avec ou sans clé),
+## coincée (« Forcer la porte »), entrouverte (set_ajar), ou fermée de l'autre côté : avec label_locked
+## (« Frapper à la porte »), on frappe au lieu d'essayer la poignée (signal knocked, messages knock_msgs).
+## Le libellé suit l'état (ouverte, verrouillée sans la clé, coincée) et l'inventaire.
 
 signal opened
 signal closed
-signal tried          # quelqu'un a essayé d'ouvrir alors qu'elle est verrouillée
+signal tried          # quelqu'un a essayé d'ouvrir alors qu'elle est verrouillée ou coincée
+signal knocked        # on a frappé (porte verrouillée sans clé, avec label_locked) ; knocks = nombre de fois
+signal unlocked       # déverrouillée (clé, porte forcée, ou unlock())
 
+## Jeu sous le battant : 2 cm du sol, 8 mm au-dessus du seuil (12 mm) ; le câble réseau d'Alexandre
+## passe sous P7 sans être écrasé (autotest B1 : rien de plus haut ne doit être dans la zone du battant).
+const LEAF_GAP := 0.02
+
+var door_id := ""                 # « P1 » à « P7 » (posé par la maison)
 var width := 0.86
 var height := 2.04
 var wall_t := 0.1
@@ -22,10 +32,19 @@ var stuck := 0                    # porte coincée : nombre d'appuis encore néc
 var glass := false                # porte vitrée (verre cathédrale) : on devine ce qu'il y a derrière
 var label_open := "Ouvrir la porte"
 var label_close := "Fermer la porte"
+var label_forced := "Forcer la porte"
+## Libellé quand elle est verrouillée et qu'on n'a pas sa clé (« Frapper à la porte ») ; vide = label_open.
+## Non vide : utiliser la porte frappe trois coups (knock) au lieu d'essayer la poignée.
+var label_locked := ""
+var knock_msgs: Array = []        # message après chaque série de coups (le dernier se répète ; vide = rien)
+var knocks := 0                   # nombre de fois qu'on a frappé
+var ajar_deg := 0.0               # entrouverte de tant de degrés (0 = fermée), voir set_ajar
 var is_open := false
 var leaf: Node3D
 var it: Interactable
 var _tw: Tween
+var _forcing := false             # on a déjà donné un coup d'épaule : le libellé devient « Forcer la porte »
+var _knocking := false
 
 
 func build(b: Builder) -> void:
@@ -52,7 +71,7 @@ func build(b: Builder) -> void:
 	var cx := dir * w / 2.0
 	if glass:
 		# battant à petits bois : bas plein, haut vitré (verre cathédrale dépoli)
-		b._box(Vector3(w - 0.008, 1.06, t), Vector3(cx, 0.536, 0), b.mats.door, false, leaf)
+		b._box(Vector3(w - 0.008, 1.066 - LEAF_GAP, t), Vector3(cx, (1.066 + LEAF_GAP) / 2.0, 0), b.mats.door, false, leaf)
 		b._box(Vector3(w - 0.008, 0.1, t), Vector3(cx, h - 0.05, 0), b.mats.door, false, leaf)
 		b._box(Vector3(0.1, h - 1.16, t), Vector3(dir * 0.05, 1.07 + (h - 1.16) / 2.0, 0), b.mats.door, false, leaf)
 		b._box(Vector3(0.1, h - 1.16, t), Vector3(dir * (w - 0.058), 1.07 + (h - 1.16) / 2.0, 0), b.mats.door, false, leaf)
@@ -60,7 +79,7 @@ func build(b: Builder) -> void:
 		var pane := b._box(Vector3(w - 0.2, h - 1.16, 0.006), Vector3(cx, 1.07 + (h - 1.16) / 2.0, 0), b.mats.frosted, false, leaf)
 		pane.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	else:
-		b._box(Vector3(w - 0.008, h - 0.012, t), Vector3(cx, h / 2.0 + 0.006, 0), b.mats.door, false, leaf)
+		b._box(Vector3(w - 0.008, h - LEAF_GAP, t), Vector3(cx, (h + LEAF_GAP) / 2.0, 0), b.mats.door, false, leaf)
 	for face_side in [-1.0, 1.0]:
 		var face: float = face_side * (t / 2.0 + 0.005)
 		for py in [0.62, 1.58]:
@@ -84,6 +103,8 @@ func build(b: Builder) -> void:
 	leaf.add_child(body)
 	it = b._interactable(label_open, Vector3(w, h, t + 0.14), Vector3(cx, h / 2.0, 0), leaf)
 	it.used.connect(_on_used)
+	Game.inventory_changed.connect(refresh_label)
+	refresh_label()
 
 
 func _knob(b: Builder, at: Vector3, face_side: float) -> void:
@@ -112,16 +133,38 @@ func _target_angle() -> float:
 	return -swing * open_angle if hinge_left else swing * open_angle
 
 
+func _has_key() -> bool:
+	return key_id != "" and Game.has_item(key_id)
+
+
+## Libellé de l'interaction selon l'état : « Fermer la porte », « Frapper à la porte » (verrouillée sans
+## la clé), « Forcer la porte » (coincée, après un premier coup d'épaule) ou « Ouvrir la porte ».
+func refresh_label() -> void:
+	if it == null:
+		return
+	if is_open:
+		it.label = label_close
+	elif locked and label_locked != "" and not _has_key():
+		it.label = label_locked
+	elif not locked and stuck > 0 and _forcing:
+		it.label = label_forced
+	else:
+		it.label = label_open
+
+
 func _on_used(_it: Interactable) -> void:
 	if is_open:
 		close()
 		return
-	if locked and key_id != "" and Game.has_item(key_id):
-		locked = false
+	if locked and _has_key():
+		unlock()
 		Sfx.play_at("metalLatch", global_position + Vector3(0, 1.0, 0), -2.0, 0.85)
 		Game.hint(key_msg)
 		await get_tree().create_timer(0.4, false).timeout
 	if locked:
+		if label_locked != "":
+			knock()
+			return
 		rattle()
 		Game.hint(locked_msg)
 		tried.emit()
@@ -130,20 +173,52 @@ func _on_used(_it: Interactable) -> void:
 		rattle()
 		Sfx.play_at("thud", global_position + Vector3(0, 1.0, 0), -6.0, 0.9)
 		if stuck > 0:
+			_forcing = true
+			refresh_label()
 			Game.hint(locked_msg)
-			it.label = "Forcer la porte"
 			tried.emit()
 		else:
+			unlock()
 			open(0.5)
 	else:
 		open()
+
+
+## Déverrouille la porte (et la décoince) : elle s'ouvre ensuite normalement.
+func unlock() -> void:
+	var was := locked or stuck > 0
+	locked = false
+	stuck = 0
+	_forcing = false
+	refresh_label()
+	if was:
+		unlocked.emit()
+
+
+## Trois coups contre la porte, puis le message suivant de knock_msgs (le dernier se répète).
+func knock() -> void:
+	if _knocking:
+		return
+	_knocking = true
+	knocks += 1
+	var p := global_position + Vector3(0, 1.25, 0)
+	for k in 3:
+		Sfx.play_at("thud", p, -3.0, 1.2 + 0.05 * k, 3.0)
+		await get_tree().create_timer(0.42, false).timeout
+	if not is_inside_tree():
+		return
+	_knocking = false
+	if not knock_msgs.is_empty():
+		Game.hint(str(knock_msgs[mini(knocks - 1, knock_msgs.size() - 1)]), 5.0)
+	knocked.emit()
 
 
 func open(seconds := 1.1) -> void:
 	if is_open:
 		return
 	is_open = true
-	it.label = label_close
+	ajar_deg = 0.0
+	refresh_label()
 	Sfx.play_at("doorOpen_1", global_position + Vector3(0, 1.0, 0), -4.0)
 	Sfx.play_at("creak", global_position + Vector3(0, 1.2, 0), -14.0, 0.8)
 	_turn(_target_angle(), seconds)
@@ -154,7 +229,8 @@ func close(seconds := 0.8) -> void:
 	if not is_open:
 		return
 	is_open = false
-	it.label = label_open
+	ajar_deg = 0.0
+	refresh_label()
 	_turn(0.0, seconds)
 	get_tree().create_timer(seconds * 0.9).timeout.connect(func() -> void:
 		Sfx.play_at("doorClose_1", global_position + Vector3(0, 1.0, 0), -4.0))
@@ -164,11 +240,46 @@ func close(seconds := 0.8) -> void:
 ## Claque la porte (événement de peur).
 func slam() -> void:
 	is_open = false
-	it.label = label_open
+	ajar_deg = 0.0
+	refresh_label()
 	_turn(0.0, 0.18)
 	get_tree().create_timer(0.16).timeout.connect(func() -> void:
 		Sfx.play_at("thud", global_position + Vector3(0, 1.0, 0), 2.0, 0.8))
 	closed.emit()
+
+
+## Entrouverte de « angle_deg » degrés, du côté où elle s'ouvre (P4 : 20°). Elle reste « fermée »
+## pour le jeu (libellé « Ouvrir la porte ») ; l'utiliser l'ouvre en grand.
+func set_ajar(angle_deg: float, seconds := 0.0) -> void:
+	is_open = false
+	ajar_deg = angle_deg
+	refresh_label()
+	var a := _target_angle() * deg_to_rad(angle_deg) / open_angle
+	if seconds <= 0.0:
+		if _tw:
+			_tw.kill()
+		leaf.rotation.y = a
+	else:
+		_turn(a, seconds)
+
+
+## Ouverte ou fermée tout de suite, sans bruit (restauration d'une sauvegarde). Émet opened / closed.
+func set_open_now(on: bool) -> void:
+	if _tw:
+		_tw.kill()
+	is_open = on
+	ajar_deg = 0.0
+	leaf.rotation.y = _target_angle() if on else 0.0
+	refresh_label()
+	if on:
+		opened.emit()
+	else:
+		closed.emit()
+
+
+## Angle d'ouverture actuel du battant, en degrés (0 = fermée).
+func leaf_angle_deg() -> float:
+	return absf(rad_to_deg(leaf.rotation.y)) if leaf else 0.0
 
 
 func rattle() -> void:

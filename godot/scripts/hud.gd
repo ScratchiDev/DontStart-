@@ -1,7 +1,8 @@
 extends CanvasLayer
 ## Interface en jeu : point de visée, invite [E], objectif (deux lignes), messages, sous-titres,
 ## disquette en main, mot ou image à lire en plein écran, écran en grand (console), inventaire,
-## fondu au noir. Tout est en 640×360, police pixel VT323.
+## fondu au noir. Tout est en 640×360, police pixel VT323 aux seules tailles nettes : 20 px (texte) et
+## 10 px (détails) ; en 12 à 16 px, le « M » de cette police se lit « N ».
 
 signal subtitle_shown(who: String, text: String)
 signal screen_closed
@@ -16,6 +17,10 @@ const SUB_COLORS := {
 }
 const ENTITY_NAMES := ["elle", "nestor", "console", "babyphone", "miroir", "imprimante", "télé", "enceinte"]
 const PROCHE_NAMES := ["mamie", "papi", "henriette", "albert", "manon", "maman"]
+const FONT := 20          # taille du texte du HUD (nette)
+const FONT_SMALL := 10    # descriptions de l'inventaire (nette)
+const INV_COL_W := 248    # largeur d'une colonne de l'inventaire
+const INV_MAX_H := 300    # au-delà (en pixels estimés), l'inventaire passe sur deux colonnes
 ## Les quatre pièces de l'arme (croquis de Manon), dans l'ordre de l'inventaire.
 const WEAPON_LABELS := {"seche_cheveux": "Sèche-cheveux", "antenne": "Antenne", "boussole": "Boussole", "bobine": "Bobine"}
 
@@ -35,7 +40,9 @@ var _pages: Array = []
 var _page_i := 0
 var _hint_left := 0.0
 var inv: Control
-var inv_list: RichTextLabel
+var inv_head: RichTextLabel
+var inv_list: RichTextLabel         # première colonne
+var inv_list2: RichTextLabel        # seconde colonne (inventaire bien rempli)
 var inv_open := false
 var toast: Label
 var _toast_tw: Tween
@@ -47,12 +54,18 @@ var current_subtitle := ""          # texte affiché en ce moment ("" = rien)
 var _sub_queue: Array = []
 var _sub_left := 0.0
 # image dans le lecteur de papiers, écran en grand
+var _paper_fs := 26                 # taille de l'écriture manuscrite (rapetisse si la page déborde)
+const PAPER_TEXT_H := 220.0         # hauteur disponible pour l'écriture sur la feuille
 var paper_image: TextureRect
 var paper_legend: Label
 var _paper_lines: Array[Control] = []
 var screen_view: Control
 var screen_rect: TextureRect
+var screen_bezel: ColorRect
+var screen_foot: Label
 var screen_open := false
+var screen_locked := false          # séquence ABSORBÉ : l'écran ne se ferme ni par E ni par Échap
+var _screen_foot_tw: Tween
 
 
 func _ready() -> void:
@@ -62,7 +75,7 @@ func _ready() -> void:
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var th := Theme.new()
 	th.default_font = Game.fonts.pixel
-	th.default_font_size = 16
+	th.default_font_size = FONT
 	root.theme = th
 	add_child(root)
 
@@ -78,8 +91,8 @@ func _ready() -> void:
 	prompt.set_anchors_preset(Control.PRESET_CENTER)
 	prompt.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	prompt.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	prompt.position = Vector2(-160, 26)
-	prompt.size = Vector2(320, 18)
+	prompt.position = Vector2(-200, 24)
+	prompt.size = Vector2(400, 20)
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0, 0, 0, 0.6)
 	sb.content_margin_left = 6
@@ -89,18 +102,21 @@ func _ready() -> void:
 	root.add_child(prompt)
 
 	objective = _label(Color(0.62, 0.66, 0.6, 0.85))
-	objective.position = Vector2(10, 6)
+	objective.position = Vector2(10, 4)
+	objective.add_theme_constant_override("outline_size", 4)
+	objective.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.7))
 	root.add_child(objective)
 	objective_sub = _label(Color(0.5, 0.54, 0.48, 0.8))
-	objective_sub.add_theme_font_size_override("font_size", 14)
-	objective_sub.position = Vector2(12, 21)
+	objective_sub.position = Vector2(10, 22)
+	objective_sub.add_theme_constant_override("outline_size", 4)
+	objective_sub.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.7))
 	root.add_child(objective_sub)
 
 	hint_lbl = _label(Color(0.85, 0.82, 0.74))
 	hint_lbl.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	hint_lbl.offset_left = 72
-	hint_lbl.offset_right = -72
-	hint_lbl.offset_top = -52
+	hint_lbl.offset_left = 40
+	hint_lbl.offset_right = -40
+	hint_lbl.offset_top = -72      # trois lignes de 20 px
 	hint_lbl.offset_bottom = -10
 	hint_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint_lbl.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
@@ -116,16 +132,16 @@ func _ready() -> void:
 	sub_lbl.scroll_active = false
 	sub_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	sub_lbl.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	sub_lbl.offset_left = 60
-	sub_lbl.offset_right = -60
-	sub_lbl.offset_top = -48
-	sub_lbl.offset_bottom = -10
+	sub_lbl.offset_left = 50
+	sub_lbl.offset_right = -50
+	sub_lbl.offset_top = -52
+	sub_lbl.offset_bottom = -12
 	sub_lbl.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	sub_lbl.add_theme_font_override("normal_font", Game.fonts.pixel)
-	sub_lbl.add_theme_font_size_override("normal_font_size", 16)
+	sub_lbl.add_theme_font_size_override("normal_font_size", FONT)
 	sub_lbl.add_theme_constant_override("outline_size", 4)
 	sub_lbl.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.92))
-	sub_lbl.add_theme_constant_override("line_separation", -2)
+	sub_lbl.add_theme_constant_override("line_separation", 0)
 	sub_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	sub_lbl.visible = false
 	root.add_child(sub_lbl)
@@ -146,11 +162,12 @@ func _ready() -> void:
 	inv.visible = false
 	root.add_child(inv)
 
+	# « + objet » : en haut à droite (l'objectif est en haut à gauche, les sous-titres et les pensées en bas)
 	toast = _label(GREEN)
-	toast.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	toast.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	toast.position = Vector2(-250, -84)
-	toast.size = Vector2(240, 18)
+	toast.position = Vector2(-330, 4)
+	toast.size = Vector2(320, 20)
 	toast.add_theme_constant_override("outline_size", 4)
 	toast.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
 	toast.modulate.a = 0.0
@@ -244,15 +261,17 @@ func _build_paper() -> Control:
 	paper_foot = foot
 	foot.text = "E OU ÉCHAP POUR REPOSER"
 	foot.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-	foot.position = Vector2(-80, -22)
+	foot.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	foot.position = Vector2(-200, -20)
+	foot.size = Vector2(400, 20)
 	wrap.add_child(foot)
 	paper_legend = _label(Color(0.85, 0.82, 0.74))
 	paper_legend.set_anchors_preset(Control.PRESET_CENTER)
-	paper_legend.position = Vector2(-280, 121)
-	paper_legend.size = Vector2(560, 34)
+	paper_legend.position = Vector2(-290, 120)
+	paper_legend.size = Vector2(580, 40)
 	paper_legend.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	paper_legend.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	paper_legend.add_theme_constant_override("line_spacing", -3)
+	paper_legend.add_theme_constant_override("line_spacing", 0)
 	paper_legend.add_theme_constant_override("outline_size", 4)
 	paper_legend.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
 	paper_legend.visible = false
@@ -260,97 +279,214 @@ func _build_paper() -> Control:
 	return wrap
 
 
-## Un écran montré en grand (la console du bureau) : E ou Échap pour fermer.
+## Un écran montré en grand (la console du bureau ; l'écran de la séquence ABSORBÉ) : E ou Échap pour
+## fermer. Placement dans _layout_screen() : les pixels de l'écran restent nets.
 func _build_screen_view() -> Control:
 	var wrap := ColorRect.new()
 	wrap.color = Color(0, 0, 0, 0.88)
 	wrap.set_anchors_preset(Control.PRESET_FULL_RECT)
-	var bezel := ColorRect.new()
-	bezel.color = Color(0.07, 0.07, 0.08)
-	bezel.set_anchors_preset(Control.PRESET_CENTER)
-	bezel.size = Vector2(588, 334)
-	bezel.position = Vector2(-294, -175)
-	wrap.add_child(bezel)
+	screen_bezel = ColorRect.new()
+	screen_bezel.color = Color(0.07, 0.07, 0.08)
+	wrap.add_child(screen_bezel)
 	screen_rect = TextureRect.new()
 	screen_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	screen_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	screen_rect.position = Vector2(6, 6)
-	screen_rect.size = Vector2(576, 322)
-	bezel.add_child(screen_rect)
-	var foot := _label(Color(0.7, 0.68, 0.6))
-	foot.text = "E OU ÉCHAP POUR FERMER"
-	foot.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-	foot.position = Vector2(-80, -20)
-	wrap.add_child(foot)
+	screen_rect.stretch_mode = TextureRect.STRETCH_SCALE
+	wrap.add_child(screen_rect)
+	screen_foot = _label(Color(0.7, 0.68, 0.6))
+	screen_foot.text = "E OU ÉCHAP POUR FERMER"
+	screen_foot.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	screen_foot.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	screen_foot.position = Vector2(-110, -20)
+	screen_foot.size = Vector2(220, 20)
+	var fsb := StyleBoxFlat.new()
+	fsb.bg_color = Color(0, 0, 0, 0.8)
+	screen_foot.add_theme_stylebox_override("normal", fsb)
+	wrap.add_child(screen_foot)
 	return wrap
 
 
+## Taille et place de l'écran montré en grand. Un agrandissement non entier, sans lissage (le projet
+## filtre « au plus proche »), fait sauter des colonnes de pixels : « CAM 1 » se lisait « CAM L ».
+## Quand l'image tient au moins deux fois dans la vue, elle est agrandie d'un facteur entier (la
+## console, 320 × 180, passe à × 2 : toute la vue) ; sinon elle remplit le cadre, lissée.
+func _layout_screen() -> void:
+	var tex := screen_rect.texture
+	if tex == null:
+		return
+	var view := root.size if root.size.x > 1.0 else Vector2(640, 360)
+	var ts := tex.get_size()
+	if ts.x < 1.0 or ts.y < 1.0:
+		return
+	var k := floorf(minf(view.x / ts.x, view.y / ts.y))
+	var sz: Vector2
+	if k >= 2.0:
+		sz = ts * k
+		screen_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		screen_bezel.visible = false
+	else:
+		var fit := minf(576.0 / ts.x, 322.0 / ts.y)
+		sz = (ts * fit).floor()
+		screen_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST if is_equal_approx(fit, roundf(fit)) \
+			else CanvasItem.TEXTURE_FILTER_LINEAR
+		screen_bezel.visible = true
+	screen_rect.size = sz
+	screen_rect.position = ((view - sz) / 2.0).floor()
+	screen_bezel.size = sz + Vector2(12, 12)
+	screen_bezel.position = screen_rect.position - Vector2(6, 6)
+	# le pied « E OU ÉCHAP POUR FERMER » : sur un écran qui couvre le bas de la vue, il s'efface
+	# au bout de 3 s (il cacherait le bandeau du bas de la console)
+	if _screen_foot_tw:
+		_screen_foot_tw.kill()
+	screen_foot.modulate.a = 1.0
+	if screen_rect.position.y + sz.y > view.y - 24.0:
+		_screen_foot_tw = create_tween()
+		_screen_foot_tw.tween_interval(3.0)
+		_screen_foot_tw.tween_property(screen_foot, "modulate:a", 0.0, 0.8)
+
+
+## Inventaire : un panneau à droite, sur une colonne, ou sur deux quand il est bien rempli (il doit
+## tenir dans les 360 px de haut, en 20 px).
 func _build_inventory() -> Control:
 	var panel := PanelContainer.new()
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.0, 0.02, 0.01, 0.82)
+	sb.bg_color = Color(0.0, 0.02, 0.01, 0.94)
 	sb.border_color = Color(GREEN, 0.5)
 	sb.set_border_width_all(1)
 	sb.set_content_margin_all(8)
 	panel.add_theme_stylebox_override("panel", sb)
-	panel.set_anchors_preset(Control.PRESET_CENTER_RIGHT)
-	panel.position = Vector2(-244, -160)
-	panel.size = Vector2(232, 40)
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	inv_list = RichTextLabel.new()
-	inv_list.bbcode_enabled = true
-	inv_list.fit_content = true
-	inv_list.scroll_active = false
-	inv_list.custom_minimum_size = Vector2(216, 0)
-	inv_list.add_theme_font_override("normal_font", Game.fonts.pixel)
-	inv_list.add_theme_font_size_override("normal_font_size", 15)
-	inv_list.add_theme_color_override("default_color", Color(0.8, 0.78, 0.7))
-	inv_list.add_theme_constant_override("line_separation", -4)
-	inv_list.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_child(inv_list)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 2)
+	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(v)
+	inv_head = _inv_text()
+	v.add_child(inv_head)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 16)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	v.add_child(row)
+	inv_list = _inv_text()
+	row.add_child(inv_list)
+	inv_list2 = _inv_text()
+	row.add_child(inv_list2)
 	_refresh_inventory.call_deferred()
 	return panel
 
 
+func _inv_text() -> RichTextLabel:
+	var r := RichTextLabel.new()
+	r.bbcode_enabled = true
+	r.fit_content = true
+	r.scroll_active = false
+	r.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	r.custom_minimum_size = Vector2(INV_COL_W, 0)
+	r.add_theme_font_override("normal_font", Game.fonts.pixel)
+	r.add_theme_font_size_override("normal_font_size", FONT)
+	r.add_theme_color_override("default_color", Color(0.8, 0.78, 0.7))
+	r.add_theme_constant_override("line_separation", -2)
+	r.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return r
+
+
+## Description d'un objet, en 10 px, sous son nom ; renvoie aussi sa hauteur estimée (px).
+func _desc_line(desc: String, dim: String) -> Array:
+	var chars_per_line := INV_COL_W / 4 - 2
+	var n := maxi(1, ceili(float(desc.length() + 2) / chars_per_line))
+	return ["[font_size=%d][color=#%s]  %s\n[/color][/font_size]" % [FONT_SMALL, dim, _esc(desc)], n * FONT_SMALL + 2]
+
+
 func _refresh_inventory() -> void:
 	var g := GREEN.to_html(false)
-	var dim := "6f7a68"
+	var dim := "a3ab9a"      # descriptions (10 px) : assez claires pour se lire
 	var grey := "4a4f48"
-	var t := "[color=#%s]INVENTAIRE[/color]   [color=#%s][lb]Tab[rb][/color]\n" % [g, dim]
+	inv_head.text = "[color=#%s]INVENTAIRE[/color]   [color=#%s][lb]Tab[rb][/color]" % [g, dim]
+	var sections: Array = []      # [texte BBCode, hauteur estimée en px]
 	if Game.items.is_empty():
-		t += "\n[color=#%s]Rien. Tes poches sont vides.[/color]" % dim
+		sections.append(["[color=#%s]Rien. Tes poches sont vides.[/color]" % dim, FONT])
 	var titles := {"arme": "PIÈCES DE L'ARME", "outil": "OUTILS", "cle": "CLÉS", "doc": "DOCUMENTS", "objet": "OBJETS"}
 	for kind in Game.KINDS:
+		var t := ""
+		var hh := 0
 		if kind == "arme":
 			if weapon_section_visible():
-				t += "\n[color=#%s]%s[/color]\n" % [g, titles[kind]]
+				t += "[color=#%s]%s[/color]\n" % [g, titles[kind]]
 				t += "Croquis de Maman : %d/4\n" % weapon_count()
+				hh += 2 * FONT
 				for id in Game.WEAPON_PARTS:
 					var it := _item(id)
 					if it.is_empty():
 						t += "[color=#%s]· %s[/color]\n" % [grey, WEAPON_LABELS[id]]
+						hh += FONT
 					else:
 						t += "· %s\n" % _esc(it.name)
+						hh += FONT
 						if it.desc != "":
-							t += "[font_size=13][color=#%s]  %s[/color][/font_size]\n" % [dim, _esc(it.desc)]
+							var dl := _desc_line(it.desc, dim)
+							t += dl[0]
+							hh += dl[1]
 			# autres objets de sorte « arme » (aucun en v0.3)
 			for it in Game.items:
 				if it.kind == "arme" and not Game.WEAPON_PARTS.has(it.id):
 					t += "· %s\n" % _esc(it.name)
-			continue
-		var first := true
-		for it in Game.items:
-			if it.kind != kind:
-				continue
-			if first:
-				t += "\n[color=#%s]%s[/color]\n" % [g, titles.get(kind, kind.to_upper())]
-				first = false
-			t += "· %s\n" % _esc(it.name)
-			if it.desc != "":
-				t += "[font_size=13][color=#%s]  %s[/color][/font_size]\n" % [dim, _esc(it.desc)]
-	inv_list.text = t.strip_edges(false, true)
+					hh += FONT
+		else:
+			for it in Game.items:
+				if it.kind != kind:
+					continue
+				if t == "":
+					t += "[color=#%s]%s[/color]\n" % [g, titles.get(kind, kind.to_upper())]
+					hh += FONT
+				t += "· %s\n" % _esc(it.name)
+				hh += FONT
+				if it.desc != "":
+					var dl := _desc_line(it.desc, dim)
+					t += dl[0]
+					hh += dl[1]
+		if t != "":
+			sections.append([t, hh])
+	# une colonne si ça tient, sinon deux (les sections dans l'ordre, la coupure au plus près du milieu)
+	var total := 0
+	for sc in sections:
+		total += int(sc[1]) + FONT_SMALL
+	var col1 := ""
+	var col2 := ""
+	var h1 := 0
+	for sc in sections:
+		var into_first: bool = total <= INV_MAX_H or col1 == "" or (col2 == "" and h1 + int(sc[1]) / 2 <= total / 2)
+		var gap := "[font_size=%d]\n[/font_size]" % FONT_SMALL     # 10 px entre deux sections
+		if into_first:
+			col1 += (gap if col1 != "" else "") + str(sc[0])
+			h1 += int(sc[1]) + FONT_SMALL
+		else:
+			col2 += (gap if col2 != "" else "") + str(sc[0])
+	inv_list.text = _trim_end(col1)
+	inv_list2.text = _trim_end(col2)
+	inv_list2.visible = col2 != ""
 	if inv:
-		inv.reset_size.call_deferred()
+		_place_inventory.call_deferred()
+
+
+## Retire le dernier saut de ligne d'une colonne (il est parfois dans les balises de la description).
+static func _trim_end(t: String) -> String:
+	if t.ends_with("\n"):
+		return t.left(-1)
+	var tail := "\n[/color][/font_size]"
+	if t.ends_with(tail):
+		return t.left(-tail.length()) + "[/color][/font_size]"
+	return t
+
+
+## Le panneau, collé au bord droit, centré en hauteur.
+func _place_inventory() -> void:
+	if inv == null:
+		return
+	inv.reset_size()
+	var area: Vector2 = root.size if root.size.x > 0.0 else Vector2(640, 360)
+	# sous l'objectif (deux lignes en haut à gauche) quand la place le permet
+	var y := maxf(48.0, (area.y - inv.size.y) / 2.0)
+	if y + inv.size.y > area.y - 4.0:
+		y = maxf(4.0, area.y - 4.0 - inv.size.y)
+	inv.position = Vector2(area.x - inv.size.x - 10.0, y)
 
 
 func _item(id: String) -> Dictionary:
@@ -397,6 +533,7 @@ func toggle_inventory() -> void:
 	inv_open = not inv_open
 	inv.visible = inv_open
 	if inv_open:
+		_place_inventory.call_deferred()
 		# l'inventaire ouvert dit déjà ce qu'on vient de ramasser : pas de bandeau par-dessus
 		if _toast_tw:
 			_toast_tw.kill()
@@ -450,10 +587,13 @@ func _process(delta: float) -> void:
 		if _sub_left <= 0.0:
 			_next_subtitle()
 	if sub_lbl.visible:
-		# au-dessus de la pensée du héros quand elle est affichée
+		# au-dessus de la pensée du héros quand elle est affichée (1 à 3 lignes de 20 px)
 		var above := hint_lbl.modulate.a > 0.05 and hint_lbl.text != ""
-		sub_lbl.offset_bottom = -58.0 if above else -12.0
-		sub_lbl.offset_top = sub_lbl.offset_bottom - 38.0
+		var hint_h := 0.0
+		if above:
+			hint_h = clampi(hint_lbl.get_line_count(), 1, 3) * float(FONT) + 6.0
+		sub_lbl.offset_bottom = -12.0 - hint_h
+		sub_lbl.offset_top = sub_lbl.offset_bottom - 2.0 * FONT
 
 
 # ------------------------------------------------------------------ sous-titres
@@ -549,7 +689,7 @@ func show_hand(v: bool) -> void:
 func read_pages(pages: Array, font_size := 21) -> void:
 	_pages = pages
 	_page_i = 0
-	paper_text.add_theme_font_size_override("font_size", font_size)
+	_paper_fs = font_size
 	read_paper(pages[0])
 	paper_foot.text = "E : PAGE SUIVANTE (1/%d)" % pages.size()
 
@@ -558,17 +698,21 @@ func _next_page() -> void:
 	_page_i += 1
 	if _page_i >= _pages.size():
 		_pages = []
-		paper_text.add_theme_font_size_override("font_size", 26)
+		_paper_fs = 26
 		close_paper()
 		return
 	paper_text.text = _pages[_page_i]
+	_fit_paper_text()
 	Sfx.play("bookFlip1", -10.0)
 	paper_foot.text = ("E : PAGE SUIVANTE (%d/%d)" if _page_i < _pages.size() - 1 else "E OU ÉCHAP POUR REPOSER (%d/%d)") % [_page_i + 1, _pages.size()]
 
 
 func read_paper(text: String) -> void:
 	_paper_mode_image(false)
+	if _pages.is_empty():
+		_paper_fs = 26
 	paper_text.text = text
+	_fit_paper_text()
 	if _pages.is_empty():
 		paper_foot.text = "E OU ÉCHAP POUR REPOSER"
 	paper.visible = true
@@ -590,6 +734,18 @@ func read_image(texture: Texture2D, legend := "") -> void:
 	paper_legend.visible = legend != ""
 
 
+## L'écriture garde sa taille (_paper_fs) si la page tient sur la feuille, sinon elle rapetisse.
+func _fit_paper_text() -> void:
+	var f: Font = paper_text.get_theme_font("font")
+	var ls := paper_text.get_theme_constant("line_spacing")
+	var fs := _paper_fs
+	while true:
+		paper_text.add_theme_font_size_override("font_size", fs)
+		if fs <= 14 or paper_text.get_line_count() * (f.get_height(fs) + ls) <= PAPER_TEXT_H:
+			break
+		fs -= 1
+
+
 func _paper_mode_image(on: bool) -> void:
 	paper_image.visible = on
 	paper_text.visible = not on
@@ -601,6 +757,7 @@ func _paper_mode_image(on: bool) -> void:
 
 func close_paper() -> void:
 	_pages = []
+	_paper_fs = 26
 	paper_text.add_theme_font_size_override("font_size", 26)
 	_paper_mode_image(false)
 	paper.visible = false
@@ -612,11 +769,16 @@ func close_paper() -> void:
 
 
 ## Montre un écran en grand (la console et ses caméras) ; E ou Échap pour fermer.
-func show_screen(texture: Texture2D) -> void:
+## closable = false (séquence ABSORBÉ hors séance) : pas de pied, E et Échap ne font rien ; seul le
+## scénario le referme (close_screen).
+func show_screen(texture: Texture2D, closable := true) -> void:
 	screen_rect.texture = texture
+	screen_locked = not closable
+	screen_foot.visible = closable
 	screen_view.visible = true
 	screen_open = true
 	prompt.visible = false
+	_layout_screen()
 	if player:
 		player.can_move = false
 		player.can_look = false
@@ -628,6 +790,7 @@ func close_screen() -> void:
 		return
 	screen_view.visible = false
 	screen_open = false
+	screen_locked = false
 	screen_rect.texture = null
 	if player:
 		player.can_move = true
@@ -638,7 +801,8 @@ func close_screen() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if screen_open and (event.is_action_pressed("interact") or event.is_action_pressed("pause")):
 		get_viewport().set_input_as_handled()
-		close_screen()
+		if not screen_locked:
+			close_screen()
 		return
 	if paper_open and event.is_action_pressed("interact"):
 		get_viewport().set_input_as_handled()

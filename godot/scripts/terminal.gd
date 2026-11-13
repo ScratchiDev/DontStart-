@@ -6,6 +6,8 @@ extends Control
 ## extinction du tube, plantage. Le contenu des séances est écrit dans seance1.gd.
 ##
 ## Les touches arrivent par key_input(), appelé par main.gd quand le joueur est assis.
+## La jauge PEUR MESURÉE est celle de la partie (Game.peur) : « fear » la lit, set_fear() et corrupt()
+## y écrivent, et l'écran se met à jour quand elle change ailleurs (acte II).
 ## Quand la jauge atteint 100 %, aborted passe à true : toutes les primitives rendent la main
 ## immédiatement et la séance enchaîne sur la fin ABSORBÉ.
 
@@ -42,7 +44,12 @@ var crash_lbl: Label
 var screen_mat: ShaderMaterial      # matière du tube (posée par room.gd)
 
 var mode := "idle"                  # idle, boot, seance, done
-var fear := 0.0
+## PEUR MESURÉE (0..100) : un reflet de Game.peur (bornée par le plancher de l'acte, Game.peur_floor).
+var fear: float:
+	get:
+		return Game.peur
+	set(v):
+		Game.set_peur(clampf(v, 0.0, 100.0))
 var aborted := false
 var fast := false
 var narrating := false
@@ -105,6 +112,7 @@ func _ready() -> void:
 	_build_status()
 	_build_crash()
 	_show_idle()
+	Game.peur_changed.connect(_on_game_peur)
 
 
 func _build_status() -> void:
@@ -542,8 +550,10 @@ func crash(s: String) -> void:
 func corrupt(n: float) -> void:
 	if aborted:
 		return
-	fear = clampf(fear + n, 0.0, 100.0)
-	_update_fear()
+	var before := Game.peur
+	Game.add_peur(n)          # Game.peur_changed → _update_fear()
+	if is_equal_approx(before, Game.peur):
+		_update_fear()
 	if n > 0.0:
 		glitch(minf(1.0, n / 22.0))
 	if fear >= 100.0:
@@ -551,7 +561,14 @@ func corrupt(n: float) -> void:
 
 
 func set_fear(v: float) -> void:
-	fear = clampf(v, 0.0, 100.0)
+	var before := Game.peur
+	Game.set_peur(clampf(v, 0.0, 100.0))
+	if is_equal_approx(before, Game.peur):
+		_update_fear()
+
+
+## La jauge a changé dans la partie (séance ou maison) : la barre et le phosphore suivent.
+func _on_game_peur(_v: float) -> void:
 	_update_fear()
 
 
@@ -757,6 +774,23 @@ func key_input(e: InputEventKey) -> bool:
 
 func wants_keys() -> bool:
 	return mode == "seance"
+
+
+## Écran figé sur quelques lignes, sans les taper (après une séance, au chargement d'une sauvegarde).
+## lines : [[texte, sorte], …] ou des textes (sorte « n »).
+func show_static(rows: Array, with_status := true) -> void:
+	mode = "done"
+	aborted = false
+	narrating = false
+	lines.clear()
+	for r in rows:
+		if r is Array:
+			_add_line(fill(str(r[0])), str(r[1]) if (r as Array).size() > 1 else "n", true)
+		else:
+			_add_line(fill(str(r)), "n", true)
+	status.visible = with_status
+	timer_box.visible = false
+	_update_fear()
 
 
 # ------------------------------------------------------------------ fins

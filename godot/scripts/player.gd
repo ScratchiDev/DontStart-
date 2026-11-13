@@ -29,6 +29,9 @@ var step_phase := 0.0
 var eye := EYE
 var flash_on := true
 var flash_base := 5.0
+var flash_near := 1.0     # baisse de la lampe quand une surface est tout près (sinon tout blanchit)
+const FLASH_NEAR_FULL := 2.4     # pleine puissance au-delà de 2,4 m ; plus près, l'éclairement reste
+const FLASH_NEAR_MIN := 0.08     # celui d'un mur à 2,4 m (compensation en d²), sans descendre sous 8 %
 var current: Interactable = null
 var _flash_before_sit := true
 var rug_rect := Rect2(-1.1, -0.25, 2.4, 1.5)   # x, z, largeur, profondeur : le tapis étouffe les pas (sans maison)
@@ -91,7 +94,8 @@ func _physics_process(delta: float) -> void:
 		var f := 1.0 + sin(Time.get_ticks_msec() * 0.023) * sin(Time.get_ticks_msec() * 0.0071) * 0.05
 		if randf() < 0.0025:
 			f = 0.15
-		flashlight.light_energy = flash_base * f
+		flash_near = move_toward(flash_near, _flash_near_target(), delta * 4.0)
+		flashlight.light_energy = flash_base * f * flash_near
 	if seated:
 		velocity = Vector3.ZERO
 		_update_ray()
@@ -122,6 +126,23 @@ func _physics_process(delta: float) -> void:
 	head.position.x = cos(bob) * 0.015 * minf(horizontal, 2.5) / 2.0
 	camera.rotation.z = sin(bob) * 0.006
 	_update_ray()
+
+
+## Puissance de la lampe selon la distance de ce qu'elle éclaire (rayon dans l'axe du regard) : une
+## porte, une faïence brillante à 50 cm ne doivent pas virer au blanc (le reflet et le bloom).
+func _flash_near_target() -> float:
+	var space := get_world_3d().direct_space_state
+	if space == null:
+		return 1.0
+	var from := camera.global_position
+	var to := from - camera.global_transform.basis.z * FLASH_NEAR_FULL
+	# (les objets sans collision « monde », comme la télé sur son meuble, ont leur boîte d'interaction)
+	var q := PhysicsRayQueryParameters3D.create(from, to, Builder.LAYER_WORLD | Builder.LAYER_INTERACT, [get_rid()])
+	var hit := space.intersect_ray(q)
+	if hit.is_empty():
+		return 1.0
+	var d := from.distance_to(hit.position) / FLASH_NEAR_FULL
+	return clampf(d * d, FLASH_NEAR_MIN, 1.0)
 
 
 ## Le sol sous les pieds : demandé à la maison ; sans maison, le tapis de la chambre.

@@ -59,13 +59,13 @@ func build() -> void:
 	screen.res = RES
 	screen.curvature = 0.0
 	screen.glow_color = Color(0.75, 0.85, 1.0)
-	screen.glow_energy = 0.45
-	screen.glow_range = 2.6
+	screen.glow_energy = 0.18      # (à 0,45, la dalle brûlait la faïence brillante tout autour)
+	screen.glow_range = 2.2
 	add_child(screen)
 	screen.position = Vector3(0, 0, 0.0125)
 	screen.build()
 	screen.say("")
-	screen.mat.set_shader_parameter("brightness", 1.05)
+	screen.mat.set_shader_parameter("brightness", 1.3)    # (le flux sombre doit rester lisible)
 	screen.mat.set_shader_parameter("tint", Color(0.95, 0.97, 1.0))
 	screen.mat.set_shader_parameter("idle", Color(0.0, 0.0, 0.0))
 	screen.light.shadow_enabled = false
@@ -88,7 +88,7 @@ func build() -> void:
 	feed.mono = false
 	feed.flip_h = true
 	feed.ir = 0.5
-	feed.exposure = 1.6
+	feed.exposure = 2.6      # (à 1,6, la salle de bain à 20 % était noire : la silhouette sombre s'y perdait)
 	feed.shadows = true
 	feed.cull_mask = FeedCam.mask_with_feed_only()
 	feed.wanted = false
@@ -134,7 +134,7 @@ func _build_ui() -> void:
 	m.set_shader_parameter("grain", 0.06)
 	m.set_shader_parameter("scan", 0.12)
 	m.set_shader_parameter("fps", 15.0)
-	m.set_shader_parameter("gain", 1.2)
+	m.set_shader_parameter("gain", FEED_GAIN)
 	m.set_shader_parameter("contrast", 1.0)
 	m.set_shader_parameter("res", Vector2(RES))
 	feed_rect.material = m
@@ -277,6 +277,7 @@ func show_feed(on: bool) -> void:
 	if h and h.room_id != "":
 		feed.set_room(h.room_id)
 	feed.set_wanted(on)
+	screen.mat.set_shader_parameter("brightness", FEED_BRIGHTNESS if on else 1.3)
 	if on and feed.viewer_rooms.is_empty():
 		feed.set_active(true)    # sans pièce déclarée (banc d'essai), la caméra tourne dès qu'on la montre
 	header_lbl.text = "MODE MIROIR" if on else ("TÉLÉASSISTANCE" if is_on else "")
@@ -342,7 +343,14 @@ const P4_DIST := 2.5            # … à moins de 2,5 m (de l'œil au centre du 
 const P4_AWAY_TOL := 0.8        # regard ailleurs toléré, cumulé (au-delà, la barre attend le regard)
 const P4_TURN_DEG := 100.0      # « retourne » : regard à plus de 100° du miroir…
 const P4_TURN_TIME := 0.3       # … pendant plus de 0,3 s
+const P4_FLEE_SPEED := 0.6      # mais le dos tourné de qui file vers la porte (m/s vers la sortie)…
+const P4_FLEE_GRACE := 1.6      # … laisse ce délai pour sortir (« fui ») avant de compter « retourne »
+const FEED_BRIGHTNESS := 2.3    # dalle en mode miroir (1,3 sinon) : vu de devant, sous l'applique et la
+                                # lampe, le flux paraissait noir et la silhouette s'y perdait
+const FEED_GAIN := 1.9          # gain de l'image du flux (1,2 avant) : le fond de la salle de bain
+                                # s'éclaircit, la silhouette (sombre, non éclairée) s'en détache
 const P4_PEUR := {"fixe": 10.0, "retourne": 16.0, "fui": 12.0}
+const P4_TEXT_CLEAR := 3.0      # pendant la barre, M8 s'efface à t = 3 s (la silhouette vient à 5 s)
 const P4_HOLDS := {"M2": 2.5, "M3": 3.0, "M4": 2.0, "M5": 2.5, "M6": 2.5, "M7": 3.5, "M8": 1.5}
 const SILHOUETTE_TEX := "res://assets/images/silhouette_feed.png"
 
@@ -355,6 +363,8 @@ var p4_silhouette: Node3D               # silhouette du flux ; si null, run_p4()
 ## à t = 15 s, elle est à la place du joueur (issue « fixe »).
 var p4_path: Array = [Vector3(6.6, 0, -6.9), Vector3(6.7, 0, -6.2), Vector3(6.85, 0, -5.6), Vector3(7.0, 0, -5.1)]
 var p4_curtain_pos := Vector3.INF       # d'où viennent les anneaux du rideau (défaut : au-dessus du 1er point)
+var p4_exit := Vector3.INF              # la porte de la pièce (P4), au sol : sert à reconnaître une fuite
+var p4_room_rect := Rect2()             # la pièce du miroir au sol (x, z) : hors d'elle, le joueur est sorti
 var p4_running := false                 # la séquence (ou sa suite en tâche de fond) tourne encore
 var p4_issue := ""                      # "fixe", "retourne" ou "fui", dès que l'issue est connue
 var p4_time := 0.0                      # temps de barre écoulé (s)
@@ -386,7 +396,9 @@ func run_p4() -> String:
 		h.silence(1.0)
 	else:
 		Sfx.silence(1.0)
-	var ok := await _p4_hold(0.5)
+	# (0,3 s : le miroir s'allume moins de 1 s après le sèche-cheveux, B11, même quand le rendu est lent ;
+	# le silence, lui, dure sa seconde entière)
+	var ok := await _p4_hold(0.3)
 	if p4_lamp:
 		p4_lamp.set_level(0.2, 0.5)
 	power_on(0.4)
@@ -543,8 +555,36 @@ func _p4_gaze_dist() -> float:
 	return p.global_position.distance_to(global_position) if p else 0.0
 
 
+## Vitesse (m/s) à laquelle le joueur s'approche de la sortie (p4_exit) ; sans sortie connue, vitesse
+## à laquelle il s'éloigne du miroir.
+func _p4_flee_speed() -> float:
+	var p := _p4_player()
+	if p == null or not (p is CharacterBody3D):
+		return 0.0
+	var v := (p as CharacterBody3D).velocity
+	var to: Vector3 = (p4_exit if p4_exit != Vector3.INF else global_position) - p.global_position
+	var d := Vector2(to.x, to.z)
+	if (p4_exit != Vector3.INF and d.length() < 0.35) or _p4_outside(p):
+		return 99.0      # (déjà sur la sortie, ou passé : il sort)
+	if d.length() < 0.01:
+		return 0.0
+	var s := Vector2(v.x, v.z).dot(d.normalized())
+	return s if p4_exit != Vector3.INF else -s
+
+
+## Le joueur est-il nettement hors de la pièce du miroir (p4_room_rect, plus 0,35 m : le seuil franchi,
+## pas dans l'embrasure, où un point de passage le replacerait contre le battant) ? Haunt ne note le
+## changement de pièce qu'à l'image suivante : sur une image longue (rendu lent), le joueur peut avoir
+## franchi le seuil sans que la pièce suivie ait changé.
+func _p4_outside(p: Node3D) -> bool:
+	return p != null and p4_room_rect.has_area() \
+		and not p4_room_rect.grow(0.35).has_point(Vector2(p.global_position.x, p.global_position.z))
+
+
 ## Le joueur a-t-il quitté la pièce du miroir ? (pièce suivie par Haunt ; sans pièce : plus de 6 m)
 func _p4_player_left() -> bool:
+	if _p4_outside(_p4_player()):
+		return true
 	var h := Haunt.of(get_tree())
 	if h and h.room_id != "" and room_id != "":
 		return h.room_id != room_id
@@ -563,6 +603,7 @@ func _p4_bar() -> String:
 	p4_time = 0.0
 	p4_away = 0.0
 	var turn_t := 0.0
+	var flee_t := 0.0
 	while true:
 		var dt := await _p4_tick()
 		if not is_inside_tree():
@@ -571,13 +612,19 @@ func _p4_bar() -> String:
 			return "fui"
 		var ang := _p4_gaze_angle()
 		var watching := ang <= P4_CONE and _p4_gaze_dist() <= P4_DIST
-		# se retourner : plus de 100° du miroir pendant plus de 0,3 s
+		# se retourner : plus de 100° du miroir pendant plus de 0,3 s. Pour sortir à pied, il faut
+		# tourner le dos au miroir : tant que le joueur file vers la porte, il a P4_FLEE_GRACE secondes
+		# pour franchir le seuil (« fui ») ; s'il s'arrête ou reste dans la pièce, il s'est retourné.
 		if ang > P4_TURN_DEG:
 			turn_t += dt
 			if turn_t > P4_TURN_TIME:
-				return "retourne"
+				if flee_t < P4_FLEE_GRACE and _p4_flee_speed() > P4_FLEE_SPEED:
+					flee_t += dt
+				else:
+					return "retourne"
 		else:
 			turn_t = 0.0
+			flee_t = 0.0
 		if not watching:
 			p4_away += dt
 		# la barre n'avance que sous le regard (0,8 s de regard ailleurs tolérées, en tout)
@@ -585,6 +632,9 @@ func _p4_bar() -> String:
 			var before := p4_time
 			p4_time = minf(P4_BAR, p4_time + dt)
 			_p4_timeline(before, p4_time)
+			# M8 s'efface avant que la silhouette n'arrive : rien ne cache plus le flux
+			if before < P4_TEXT_CLEAR and p4_time >= P4_TEXT_CLEAR:
+				clear_text()
 		set_progress(p4_time / P4_BAR)
 		if p4_time >= P4_BAR:
 			return "fixe"

@@ -26,7 +26,7 @@ var fullscreen := true
 var high_quality := true
 var reduced_scares := false   # le visage reste sur l'écran, sons de sursaut plus bas, pas de secousse
 var soft_flashes := false     # éclairs adoucis, pas de flash plein écran
-var whispers := true          # chuchotements par la synthèse vocale de Windows
+var whispers := false         # chuchotements par la synthèse vocale de Windows (désactivés par défaut, C7)
 var sound_captions := false   # sous-titres des sons importants (« [Coups dans le radiateur, en bas] »)
 var seen_warning := false     # avertissement de photosensibilité déjà montré (premier lancement)
 
@@ -140,6 +140,11 @@ func _load_fonts() -> void:
 	pixel.antialiasing = TextServer.FONT_ANTIALIASING_NONE
 	pixel.hinting = TextServer.HINTING_NONE
 	fonts.pixel = pixel
+	# aux 10 px des petites inscriptions (vignettes et bandeaux de la console), sans lissage, le « 1 »
+	# de VT323 perd son drapeau et se lit « L » (« CAM L », « 0L/LL/2040 ») : la même police, lissée
+	var small := pixel.duplicate() as FontFile
+	small.antialiasing = TextServer.FONT_ANTIALIASING_GRAY
+	fonts.pixel_small = small
 	fonts.hand = load("res://assets/fonts/ReenieBeanie.ttf")
 	fonts.goth = load("res://assets/fonts/UnifrakturMaguntia-Book.ttf")
 	fonts.mono = load("res://assets/fonts/IBMPlexMono-Regular.ttf")
@@ -198,9 +203,10 @@ func hint(text: String, seconds := 3.5) -> void:
 	hint_requested.emit(text, seconds)
 
 
-## Voix chuchotée du système (synthèse vocale de Windows), si une voix française est installée.
+## Voix chuchotée du système (synthèse vocale de Windows), si l'option est cochée et qu'une voix
+## française est installée. Option coupée : ne fait rien du tout.
 func whisper(text: String) -> void:
-	if autotest or not whispers:
+	if not whispers or autotest:
 		return
 	var voices := DisplayServer.tts_get_voices_for_language("fr")
 	if voices.is_empty():

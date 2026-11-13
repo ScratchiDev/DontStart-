@@ -396,7 +396,7 @@ static func crisp_size(wanted: float) -> int:
 static func _small_label(text: String, fs: int) -> Label:
 	var l := Label.new()
 	l.text = text
-	l.add_theme_font_override("font", Game.fonts.pixel)
+	l.add_theme_font_override("font", Game.fonts.pixel_small if fs <= 10 else Game.fonts.pixel)
 	l.add_theme_font_size_override("font_size", fs)
 	l.add_theme_color_override("font_color", Color(0.92, 0.94, 0.9))
 	l.add_theme_constant_override("outline_size", 2)

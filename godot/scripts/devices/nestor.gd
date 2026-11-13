@@ -15,6 +15,8 @@ var ring_energy := 3.0
 var _speak_t := 0.0
 var _wake_tw: Tween
 var _wake_k := 0.0
+var _flash := 0.0                # éclat bref du réveil (0..1) : le premier signe de l'entité doit se voir
+var _flash_tw: Tween
 
 
 func build() -> void:
@@ -29,8 +31,8 @@ func build() -> void:
 	add_mesh(cyl(RADIUS * 0.98, RADIUS, 0.006, 28), Vector3(0, HEIGHT - 0.003, 0), plastic)
 	# anneau de lumière, juste sous le bord du dessus
 	var tor := TorusMesh.new()
-	tor.inner_radius = RADIUS * 0.8
-	tor.outer_radius = RADIUS * 0.93
+	tor.inner_radius = RADIUS * 0.74     # (plus épais : vu de profil, un anneau trop fin ne fait que
+	tor.outer_radius = RADIUS * 0.97     # quelques pixels)
 	tor.rings = 32
 	tor.ring_segments = 8
 	ring_mat = glow_mat(Game.peur_color(), 0.0)
@@ -84,9 +86,19 @@ func set_ring(on: bool, seconds := 0.8) -> void:
 		Sfx.voice_at("chirp", speak_pos(), -14.0, 0.8)
 
 
-## Il s'éveille : l'anneau monte en tournant (couleur de la jauge).
+## Il s'éveille : un éclat bref, puis l'anneau reste allumé (couleur de la jauge).
 func wake() -> void:
 	set_ring(true, 1.2)
+	if _flash_tw:
+		_flash_tw.kill()
+	_flash_tw = create_tween()
+	_flash_tw.tween_method(_set_flash, 0.0, 1.0, 0.25)
+	_flash_tw.tween_method(_set_flash, 1.0, 0.0, 0.9)
+
+
+func _set_flash(v: float) -> void:
+	_flash = v
+	_apply_ring()
 
 
 func _apply_ring() -> void:
@@ -96,14 +108,14 @@ func _apply_ring() -> void:
 	var talk := 0.0
 	if _speak_t > 0.0:
 		talk = 0.55 + 0.45 * sin(Time.get_ticks_msec() * 0.03) * sin(Time.get_ticks_msec() * 0.011)
-	var k := _wake_k * (1.0 + talk * 1.3)
+	var k := _wake_k * (1.0 + talk * 1.3) + _flash * 3.0
 	ring_mat.emission = c
-	ring_mat.albedo_color = c * 0.3 if _wake_k > 0.01 else Color(0.18, 0.18, 0.18)
+	ring_mat.albedo_color = c * 0.3 if _wake_k > 0.01 or _flash > 0.01 else Color(0.18, 0.18, 0.18)
 	ring_mat.emission_energy_multiplier = ring_energy * k
 	ring_light.light_color = c
-	# lueur discrète sur le meuble et le mur ; le vert porte plus que le rouge à énergie égale
+	# lueur sur le meuble et le mur ; le vert porte plus que le rouge à énergie égale
 	var lum := 0.5 if c.g > 0.8 else 1.0
-	ring_light.light_energy = 0.035 * lum * _wake_k * (1.0 + talk * 0.5)
+	ring_light.light_energy = lum * (0.07 * _wake_k * (1.0 + talk * 0.5) + 0.25 * _flash)
 
 
 ## Petits bips de données (avant ou sous une phrase).

@@ -207,3 +207,32 @@ func _run() -> void:
 	_check("camera_led_rallumee", couloir.get("cam_led_on") == true, "toujours éteinte")
 	print("BANC REVUE %s" % ("OK" if fails == 0 else "ÉCHEC %d" % fails))
 	get_tree().quit()
+
+
+# outils de test (passés de main.gd à autotest.gd lors du découpage de la 0.3.1)
+var _t: Autotest
+
+
+func _tester() -> Autotest:
+	if _t == null:
+		_t = Autotest.new()
+		_t.name = "Outils"
+		add_child(_t)
+		_t.setup(self)
+	return _t
+
+
+func _view(pos: Vector3, yaw: float, pitch: float, n: String, wait := 0.8) -> void:
+	await _tester().view(pos, yaw, pitch, n, wait)
+
+
+func _shot(n: String) -> void:
+	await _tester().shot(n)
+
+
+func _use_at(pos: Vector3, yaw: float, pitch: float, expected: String, n := "") -> void:
+	await _tester().use_at(pos, yaw, pitch, expected, n)
+
+
+func _until(cond: Callable, timeout := 60.0) -> void:
+	await _tester().until(cond, timeout)
