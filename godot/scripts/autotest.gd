@@ -3,17 +3,26 @@ extends Node
 ## Tests automatiques, joués comme un joueur (on vise avec le rayon, puis on « appuie sur E »).
 ## Nœud enfant de Main, créé par main.gd quand Game.autotest est vrai. Lancement :
 ##   godot --path godot --rendering-driver vulkan -- --autotest --shots=DIR      (parcours principal)
-##   … -- --autotest --hero=aurelia --shots=DIR                                   (au féminin)
-##   … -- --autotest --seance=2,1,0,1,0,2/aube --shots=DIR                        (séance 1 seule : fins)
+##   … -- --autotest --hero=aurelia --sous-titres --shots=DIR  (au féminin ; sous-titres des sons, C5)
+##   … -- --autotest --seance=2,1,0,1,0,2/aube [--attendu=suite:35] --shots=DIR  (séance 1 seule : fins ;
+##        --attendu=<fin>:<jauge> vérifie la fin et la jauge, A5)
 ##   … -- --autotest --charger=C1 --shots=DIR      (B17 C1 : écrit, recharge, compare ; B14 ; B18 refuge)
-##   … -- --autotest --ecrans --shots=DIR                                         (menus et HUD : lisibilité)
-##   … -- --autotest --miroir=fixe|retourne|fui --shots=DIR     (une issue du P4 réel, B11, B12, B14 ; M9b)
+##   … -- --autotest --ecrans --shots=DIR           (menus et HUD : lisibilité ; C5 option gardée, C6, C7)
+##   … -- --autotest --miroir=fixe|retourne|fui --shots=DIR  (une issue du P4 réel, B11, B12, B14 ; M9b ;
+##        puis l'antenne et la convocation, C1)
 ##   … -- --autotest --absorbe --shots=DIR                                        (ABSORBÉ hors séance, B15)
 ##   … -- --autotest --indices --shots=DIR         (indices de 90 s ×30, B13 ; S.O.S. par la minuterie, B5)
 ##   … -- --autotest --charger=C2 --shots=DIR      (B17 C2 : sauvegarde après le P4 réel « fui » ; B14)
+##   … -- --autotest --charger=C3 --shots=DIR      (B17 C3 : sauvegarde de la convocation ; B14 ; C9 reprise)
+##   … -- --autotest --charger=031 --shots=DIR     (migration : sauvegarde 0.3.1 finie sur fin_031)
+##   … -- --autotest --seance2=changer|delai|confirmer --shots=DIR   (séance 2 seule : C1, C2, C3)
+##   … -- --autotest --seance2=absorbe --shots=DIR (jauge à 100 pendant la séance 2 : ABSORBÉ, C3 intact)
 ##   … -- --preview=<pièce>[,<pièce>…] --shots=DIR (6 vues par pièce ; B1 : positions, battants libres)
-## Le parcours principal couvre A1 à A8 (sauf A5 fins : --seance), B1 à B12, B14, B16 et B18.
-## Tout lancer, l'un après l'autre : scratchpad/run_all_031.sh (résumé par variante et par critère).
+## « --sous-titres » active les sous-titres des sons pour le test (sans l'enregistrer) ; sinon ils sont
+## coupés (C5 : les sons sont signalés, jamais affichés).
+## Le parcours principal couvre A1 à A8 (sauf A5 fins : --seance), B1 à B12, B14, B16, B18, C1 à C3
+## (convocation, séance 2 « Confirmer », fin de la version 0.3), C4, C5, C8 (moins de 15 min) et C9.
+## Tout lancer, l'un après l'autre : scratchpad/run_all_032.sh (résumé par variante et par critère).
 ## Chaque vérification imprime « VÉRIF <id> OK » ou « VÉRIF <id> ÉCHEC : <détail> » ; la dernière ligne
 ## est « AUTOTEST OK » (code de sortie 0) ou « AUTOTEST ÉCHEC n » (code 1).
 ## Les sauvegardes de l'autotest vont dans Game.SAVE_PATH_TEST (jamais celle du joueur).
@@ -21,6 +30,8 @@ extends Node
 const AMIS := preload("res://scripts/house/rooms/amis.gd")
 const SDB := preload("res://scripts/house/rooms/sdb.gd")
 const TERMINAL := preload("res://scripts/terminal.gd")
+const ROOM := preload("res://scripts/room.gd")
+const GAME := preload("res://scripts/game.gd")
 const STAGE_META := "autotest_etape"        # --charger : 1 = écrire, 2 = reprendre (survit au rechargement)
 const SNAP_META := "autotest_etat_avant"
 const COUNT_META := "autotest_compteurs"
@@ -85,6 +96,8 @@ func run() -> void:
 		await run_seance()
 	elif Game.load_arg != "":
 		await run_load(Game.load_arg)
+	elif Game.seance2_arg != "":
+		await run_seance2(Game.seance2_arg)
 	elif OS.get_cmdline_user_args().has("--ecrans"):
 		await run_screens()
 	elif Game.miroir_arg != "":
@@ -274,6 +287,7 @@ func check_feeds(where: String) -> void:
 
 func run_main() -> void:
 	print("AUTOTEST début · héros ", Game.hero)
+	set_sound_captions_from_args()
 	Game.delete_save()   # (sauvegarde de test) : l'écran-titre sans « Continuer »
 	hud.fade.color.a = 0.0
 	menu.show_title()
@@ -285,6 +299,9 @@ func run_main() -> void:
 	check("A1 description", not str(ProjectSettings.get_setting("application/config/description", "")).contains("vide-grenier"), "")
 	menu.hide_all()
 	Game.phase = "room"
+	# (C8 : le temps de jeu suit l'horloge dès l'acte I ; avec les 8 pas de physique par image du
+	# réglage par défaut, chaque attente de l'acte I durait quatre à cinq fois plus en rendu logiciel)
+	real_time_pace()
 	# l'étage tel qu'il est construit pour une nouvelle partie : B16 (temps), B1 (positions, battants)
 	check_build_times()
 	check_positions()
@@ -323,12 +340,14 @@ func run_main() -> void:
 	print("disquette en main : ", Game.has_floppy)
 	await use_at(Vector3(0.95, 0, 1.45), PI, -0.6, "Regarder la photo", "08_photo")
 	_watch_term("devant moi, dans sa chambre")
+	# (C8 : mode turbo dès le démarrage de la disquette ; tapé lettre à lettre, le BIOS prenait plus
+	# d'une minute en rendu logiciel, une image par lettre)
+	terminal.turbo = true
 	await use_at(Vector3(1.2, 0, -1.0), 0.0, -0.3, "Insérer la disquette", "09_devant_pc")
 	await terminal.boot_finished
 	await shot("10_demarrage")
 	# la séance 1, jouée avec des réponses fixées : Mamie, verre de droite, demander une preuve,
 	# personne, se retourner (le visage), prononcer le mot → AUBE → fausse fin → suite
-	terminal.turbo = true
 	terminal.autopicks = [0, 1, 1, 2, 0, 2]
 	terminal.autoasks = ["aube"]
 	var names := ["11_choix_proche", "12_choix_verres", "13_choix_porte", "14_choix_prix", "15_choix_reflet", "17_choix_fin"]
@@ -362,11 +381,12 @@ func run_main() -> void:
 	await shot("21_mot_albert")
 	# point de passage C1 « acte2 » : écrit en ramassant la clé et le mot
 	var c1 := Game.load_checkpoint()
-	check("C1 écrit", Game.has_save() and c1.get("checkpoint") == "C1", str(c1.get("checkpoint", "rien")))
-	check("C1 jauge ≥ 25", Game.peur_floor >= 25.0 and Game.peur >= 25.0 and float(c1.get("peur", 0.0)) >= 25.0, "peur %.1f, plancher %.1f" % [Game.peur, Game.peur_floor])
+	check("B17 C1 écrit (clé ramassée)", Game.has_save() and c1.get("checkpoint") == "C1", str(c1.get("checkpoint", "rien")))
+	check("B17 C1 jauge ≥ 25 (plancher)", Game.peur_floor >= 25.0 and Game.peur >= 25.0 and float(c1.get("peur", 0.0)) >= 25.0, "peur %.1f, plancher %.1f" % [Game.peur, Game.peur_floor])
 	check("O1", Game.objective_text == "Sors de la chambre" and acte2.active, "« %s »" % Game.objective_text)
 	hud.close_paper()
 	check_unstuck("C1")
+	await check_eject()
 	hud.toggle_inventory()
 	await wait(0.4)
 	await shot("22_inventaire")
@@ -379,6 +399,16 @@ func run_main() -> void:
 	check("A8 P1 ouverte", room.door_node.is_open and Game.flag("porte_P1", "") == "ouverte", "ouverte %s · drapeau %s" % [room.door_node.is_open, Game.flag("porte_P1", "")])
 	await view(Vector3(1.6, 0, 1.4), -PI / 2.0, -0.05, "23_porte_ouverte", 1.0)
 	await run_floor()
+	# 0.3.2 : stress léger (C4), sous-titres (C5), journal des temps (C9), durée (C8)
+	check_c4("parcours principal", 20)
+	if Game.sound_captions:
+		check_c5_on("parcours principal")
+	else:
+		check_c5_off("parcours principal")
+	check_c9("parcours principal", ["seance1", "fin_seance1", "sortir", "mamie", "explorer", "p4", "convocation", "seance2", "fin"])
+	var real_s := Time.get_ticks_msec() / 1000.0
+	print("C8 : parcours complet joué en %.0f s d'horloge (lancement compris)" % real_s)
+	check("C8 parcours complet en moins de 15 min", real_s < 900.0, "%.0f s" % real_s)
 	finish()
 
 
@@ -502,8 +532,8 @@ func _watch_bulbs(cl: Node, sec: float) -> void:
 		await get_tree().process_frame
 
 
-## Le premier étage, de la sortie de la chambre à la fin provisoire de la 0.3.1 (§ 2.2, étapes 6 à 12,
-## et § 2.3, issue « fixe »).
+## Le premier étage, de la sortie de la chambre à la fin de la version 0.3 (§ 2.2, étapes 6 à 15, et
+## § 2.3, issue « fixe »).
 func run_floor() -> void:
 	var hn: Haunt = main.haunt
 	var cl: Node = house.rooms["couloir"]
@@ -778,21 +808,12 @@ func run_floor() -> void:
 	check("P4 ouverte", (house.doors["P4"] as Door).is_open, "")
 	await run_p4_at_mirror(sb, "fixe", true)
 	check_unstuck("C2")
-	# --- fin provisoire de la 0.3.1
-	await until(func() -> bool: return acte2.end_card_shown, 60.0)
-	await wait(2.2)
-	await shot("45_fin_031")
-	var card_ok := false
-	for c in hud.root.find_children("*", "Label", true, false):
-		if (c as Label).text.begins_with("FIN DE LA VERSION 0.3.1") and (c as Label).text.contains("Ta partie est gardée."):
-			card_ok = true
-	check("fin 0.3.1 : carte", card_ok, "")
-	await until(func() -> bool: return Game.phase == "title", 20.0)
-	await wait(0.6)
-	await shot("46_titre_apres_031")
-	var sv := Game.load_checkpoint()
-	check("fin 0.3.1 : drapeau sauvegardé", (sv.get("flags", {}) as Dictionary).get("fin_031", false) == true and menu.continue_btn.visible,
-		"point %s" % sv.get("checkpoint", "rien"))
+	# --- étape 13 : la convocation (C1)
+	await check_convocation()
+	check_unstuck("C3")
+	# --- étapes 14 et 15 : la séance 2 « Confirmer » (C2), la fin de la version (C3)
+	check_results_lines()
+	await run_seance2_at_pc("confirmer", true)
 	print("étage joué en %.0f s (horloge)" % t_since(t_floor))
 
 
@@ -919,9 +940,11 @@ func run_seance() -> void:
 	Game.has_floppy = true
 	player.global_position = Vector3(1.2, 0, -1.0)
 	player.set_look(0.0, -0.3)
+	# (comme le parcours principal : le temps de jeu suit l'horloge, BIOS en mode turbo)
+	real_time_pace()
+	terminal.turbo = true
 	acte1._on_pc_used()
 	await terminal.boot_finished
-	terminal.turbo = true
 	terminal.autopicks = Game.seance_picks.duplicate()
 	terminal.autoasks = Game.seance_asks.duplicate()
 	await until(func() -> bool: return acte1.seance_result != "", 240.0)
@@ -929,6 +952,16 @@ func run_seance() -> void:
 	await shot("seance_fin_" + acte1.seance_result)
 	print("FIN : %s · peur %d · choix %s · fins trouvées %s" % [acte1.seance_result, int(terminal.fear), Game.choices, terminal.found_endings()])
 	check("jauge = Game.peur", is_equal_approx(terminal.fear, Game.peur), "%s / %s" % [terminal.fear, Game.peur])
+	# --attendu=<fin>:<jauge> (run_all_032.sh) : la fin et la jauge attendues ; une vraie fin
+	# (absorbe, transmission) est écrite dans user://fins.cfg (A5)
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--attendu="):
+			var want := a.substr(10).split(":")
+			var fin := want[0]
+			var peur := int(want[1]) if want.size() > 1 else -1
+			var written: bool = fin == "suite" or terminal.found_endings().has(fin)
+			check("A5 fin « %s », jauge %d" % [fin, peur], acte1.seance_result == fin and (peur < 0 or int(round(Game.peur)) == peur) and written,
+				"fin « %s », jauge %.1f, fins.cfg %s" % [acte1.seance_result, Game.peur, terminal.found_endings()])
 	finish()
 
 
@@ -937,12 +970,20 @@ func run_seance() -> void:
 ## --charger=C1 : 1) écrit C1 par le vrai chemin (la clé et le mot ramassés, après une séance « suite »
 ## simulée), garde l'état d'avant ; 2) recharge la scène, « Continuer » depuis l'écran-titre, compare.
 func run_load(id: String) -> void:
-	if id != "C1" and id != "C2":
-		check("B17 %s" % id, false, "C1 et C2 sont écrits en 0.3.1 (C3 : convocation, 0.3.2)")
+	if not id in ["C1", "C2", "C3", "031"]:
+		check("B17 %s" % id, false, "points de passage : C1, C2, C3 (et 031 : migration d'une sauvegarde 0.3.1)")
 		finish()
 		return
 	var stage := int(Engine.get_meta(STAGE_META, 1))
-	if id == "C2" and stage == 1:
+	if id == "C3" and stage == 1:
+		await _load_write_c3()
+	elif id == "C3":
+		await _load_check_c3()
+	elif id == "031" and stage == 1:
+		await _load_write_031()
+	elif id == "031":
+		await _load_check_031()
+	elif id == "C2" and stage == 1:
 		await _load_write_c2()
 	elif id == "C2":
 		await _load_check_c2()
@@ -1126,6 +1167,7 @@ func _through_couloir() -> void:
 ## --miroir=fixe|retourne|fui : une issue du P4 réel (B12), depuis la salle de bain, minuteries ×3.
 func run_miroir(issue: String) -> void:
 	print("MIROIR début · issue ", issue)
+	set_sound_captions_from_args()
 	await _jump_acte2()
 	var sb: Node = house.rooms["sdb"]
 	Engine.time_scale = 3.0
@@ -1140,6 +1182,26 @@ func run_miroir(issue: String) -> void:
 	check_unstuck("C2 (%s)" % issue)
 	await wait(1.0)
 	await shot("b12_%s" % issue)
+	# 0.3.2 : avec l'antenne (raccourci : la télé n'est pas jouée ici), le P4 réel « %s » mène lui aussi
+	# à la convocation (C1) ; C3 est écrit là où est le joueur, ou au couloir devant la chambre
+	await until(func() -> bool: return not main.haunt.is_busy(), 30.0)
+	check("C1 %s : pas de convocation sans l'antenne" % issue, not bool(Game.flag("convocation", false)) and not room.convoking, "")
+	for row in ITEMS_03:
+		if row[0] in ["tournevis", "antenne"]:
+			Game.add_item(row[0], row[1], row[2], row[3])
+	Game.set_flag("antenne_prise", true)
+	await check_convocation()
+	check_unstuck("C3 (%s)" % issue)
+	await shot("b12_%s_convocation" % issue)
+	check_c4("miroir « %s »" % issue, 5)
+	if Game.sound_captions:
+		var texts := []
+		for e in hud.caption_log:
+			texts.append(e.text)
+		var want := [ROOM.MODEM_CAPTION]
+		if issue == "fixe":
+			want.append_array([SmartMirror.P4_TEXTS["son_rideau"], SmartMirror.P4_TEXTS["son_pas"], SmartMirror.P4_TEXTS["son_souffle"]])
+		check("C5 miroir « %s » : sons du P4 et du modem entre crochets" % issue, want.all(func(x: String) -> bool: return texts.has(x)), str(texts))
 	finish()
 
 
@@ -1224,6 +1286,8 @@ func run_absorbe() -> void:
 		"écran %s · mouvement %s · regard %s · pause %s" % [hud.screen_open, player.can_move, player.can_look, get_tree().paused])
 	await wait(5.4)
 	await shot("b15_absorbe_%s" % acte2.absorbed_screen)
+	# § 1.2 : aucun visage net en dehors de la séance 1 (même quand l'écran est l'ordinateur de ta mère)
+	check("B15 pas de visage", terminal.watch.modulate.a < 0.05, "visage du terminal à %.2f" % terminal.watch.modulate.a)
 	await until(func() -> bool: return terminal.found_endings().has("absorbe"), 40.0)
 	check("B15 fin enregistrée", terminal.found_endings().has("absorbe"), str(terminal.found_endings()))
 	await until(func() -> bool: return hud.fade.color.a > 0.95, 30.0)
@@ -1364,6 +1428,9 @@ func run_indices() -> void:
 	order.append(_hint_text())
 	var want := [Acte2.HINT_CABLE, Acte2.HINT_MIROIR, Acte2.HINT_TIROIR, Acte2.HINT_ANTENNE, Acte2.HINT_MIROIR, ""]
 	check("B13 explorer : ordre du tableau", order == want, str(order))
+	# C4 : au calme dans le couloir, une scène écrite : le cœur s'entend, puis se tait en moins de 12 s
+	await check_c4_calm("indices")
+	check_c4("indices", 5)
 	finish()
 
 
@@ -1465,17 +1532,43 @@ func _load_check_c2() -> void:
 func run_screens() -> void:
 	print("ÉCRANS début")
 	hud.fade.color.a = 0.0
-	# C6 : l'avertissement au premier lancement seulement (sans toucher au settings.cfg du joueur)
+	# C6 : l'avertissement au premier lancement seulement. Avec un dossier user:// vide (run_all_032.sh
+	# isole chaque variante), c'est un vrai premier lancement : « J'ai compris » écrit le drapeau dans
+	# settings.cfg, et un Game neuf (second lancement) le relit. Sinon, sans toucher au settings.cfg du
+	# joueur, on simule.
+	var first := not FileAccess.file_exists(Game.SETTINGS_PATH)
 	var seen := Game.seen_warning
-	Game.seen_warning = false
+	if not first:
+		Game.seen_warning = false
 	menu.show_start()
 	await wait(0.6)
 	check("C6 avertissement", menu.warning_box.visible and not menu.title_box.visible and fits(menu.warning_box), str(menu.warning_box.get_global_rect()))
 	await shot("e00_avertissement")
-	Game.seen_warning = true
-	menu.show_start()
-	check("C6 ensuite le titre", menu.title_box.visible and not menu.warning_box.visible, "")
-	Game.seen_warning = seen
+	if first:
+		var ok_btn: Button = null
+		for b in menu.warning_box.find_children("*", "Button", true, false):
+			if (b as Button).text.contains("J'ai compris"):
+				ok_btn = b
+		if ok_btn:
+			ok_btn.pressed.emit()
+		await wait(0.3)
+		var cfg := ConfigFile.new()
+		cfg.load(Game.SETTINGS_PATH)
+		check("C6 premier lancement : « J'ai compris » écrit le drapeau, puis le titre", ok_btn != null
+			and bool(cfg.get_value("accessibilite", "avertissement_vu", false)) and menu.title_box.visible and not menu.warning_box.visible,
+			"bouton %s · drapeau %s · titre %s" % [ok_btn != null, cfg.get_value("accessibilite", "avertissement_vu", false), menu.title_box.visible])
+		var g2: Node = GAME.new()
+		g2._load_settings()
+		Game.seen_warning = bool(g2.get("seen_warning"))
+		g2.free()
+		menu.show_start()
+		check("C6 second lancement : directement le titre", Game.seen_warning and menu.title_box.visible and not menu.warning_box.visible, "")
+	else:
+		print("C6 : settings.cfg existe déjà (dossier user:// du joueur) : premier lancement simulé")
+		Game.seen_warning = true
+		menu.show_start()
+		check("C6 ensuite le titre", menu.title_box.visible and not menu.warning_box.visible, "")
+		Game.seen_warning = seen
 	# écran-titre avec « Continuer » (une sauvegarde de test)
 	Game.save_checkpoint("C1", Vector3.ZERO, 0.0)
 	menu.show_title()
@@ -1498,10 +1591,44 @@ func run_screens() -> void:
 	await wait(0.3)
 	await shot("e04_pause")
 	menu.hide_all()
-	# C7 : chuchotements coupés par défaut
-	var fresh: Node = (load("res://scripts/game.gd") as GDScript).new()
+	# C7 : chuchotements coupés par défaut ; la case est décochée ; Game.whisper ne fait rien
+	var fresh: Node = GAME.new()
 	check("C7 chuchotements coupés par défaut", fresh.get("whispers") == false, str(fresh.get("whispers")))
 	fresh.free()
+	var box: CheckBox = null
+	for c in menu.options_box.find_children("*", "CheckBox", true, false):
+		if (c as CheckBox).text == "Chuchotements (synthèse Windows)":
+			box = c
+	check("C7 case « Chuchotements (synthèse Windows) » décochée", box != null and not box.button_pressed and not Game.whispers,
+		"case %s · Game.whispers %s" % [box.button_pressed if box else "absente", Game.whispers])
+	Game.whisper("C'est toi. C'est toi.")
+	await wait(0.2)
+	check("C7 Game.whisper ne fait rien", not Game.whispers and not DisplayServer.tts_is_speaking(), "")
+	# C5 : l'option « Sous-titres des sons » est gardée dans settings.cfg (aller-retour par un Game neuf)
+	var keep := Game.sound_captions
+	for v in [true, false]:
+		Game.sound_captions = v
+		Game.save_settings()
+		var g: Node = GAME.new()
+		g._load_settings()
+		check("C5 option gardée (%s)" % ("cochée" if v else "décochée"), g.get("sound_captions") == v, str(g.get("sound_captions")))
+		g.free()
+	Game.sound_captions = keep
+	# A9 : « sursauts réduits » et « éclairs adoucis » gardés dans settings.cfg (aller-retour)
+	var keep_rs := Game.reduced_scares
+	var keep_sf := Game.soft_flashes
+	for v in [true, false]:
+		Game.reduced_scares = v
+		Game.soft_flashes = not v
+		Game.save_settings()
+		var g9: Node = GAME.new()
+		g9._load_settings()
+		check("A9 options gardées (sursauts réduits %s, éclairs adoucis %s)" % ["oui" if v else "non", "non" if v else "oui"],
+			g9.get("reduced_scares") == v and g9.get("soft_flashes") == (not v), "%s / %s" % [g9.get("reduced_scares"), g9.get("soft_flashes")])
+		g9.free()
+	Game.reduced_scares = keep_rs
+	Game.soft_flashes = keep_sf
+	Game.save_settings()
 	# le HUD dans la chambre
 	Game.phase = "room"
 	player.global_position = Acte1.START_POS
@@ -1825,3 +1952,623 @@ func run_preview(id: String) -> void:
 	check("B1 aperçu %s : 6 captures" % id, shots_taken - shots0 == 6 and (Game.shots_dir == "" or saved == 6),
 		"%d captures, %d fichiers" % [shots_taken - shots0, saved])
 	print("APERÇU OK ", id)
+
+
+# ------------------------------------------------------------------ convocation, séance 2, fin (0.3.2)
+
+## --seance2=… : choix imposés à la ligne 16 (« Confirmer » = 0 ; « Changer d'avis » = 1, puis la
+## première des deux autres options ; délai : aucun choix, 10 s).
+const SEANCE2_PICKS := {"confirmer": [0], "changer": [1, 0], "delai": [], "absorbe": [0]}
+const PEUR_SEANCE2 := {"confirmer": 4.0, "changer": 8.0, "delai": 10.0}
+## § 5.6.10, au mot près.
+const CARD_V03 := "FIN DE LA VERSION 0.3\n\nActe II · Essais réels — la suite : la chambre d'Henriette et Albert (version 0.4).\n\nLe cœur de ta grand-mère bat à 52.\n\nTa partie est gardée."
+
+
+## C2 : Seance2.results_lines pour les 9 combinaisons (test pur, sans rendu ; textes du § 5.6.9), et la
+## durée lisible de « {temps} ».
+func check_results_lines() -> void:
+	var sim := {"retourne": "RETOURNÉ", "fixe": "FIXÉ", "yeux_fermes": "YEUX FERMÉS"}
+	var reel := {"fixe": "RECONNU", "retourne": "RETOURNÉ", "fui": "FUITE"}
+	var bad := []
+	var n := 0
+	for a in sim:
+		for b in reel:
+			n += 1
+			var want := [
+				"PROTOCOLE 4 · SIMULATION ..... " + str(sim[a]),
+				"PROTOCOLE 4 · ESSAI RÉEL ..... " + str(reel[b]),
+				"Constant. J'aime les sujets constants." if a == b else "Tu as changé. Je l'ai noté.",
+			]
+			var got: Array = Seance2.results_lines(a, b)
+			if got != want:
+				bad.append("%s/%s : %s" % [a, b, got])
+	check("C2 results_lines (9 combinaisons)", n == 9 and bad.is_empty(), str(bad))
+	var cases := {40.0: "40 secondes", 60.0: "1 minute", 121.0: "2 minutes", 190.0: "3 minutes et 10 secondes",
+		128.0: "2 minutes et 10 secondes", 734.0: "12 minutes", 3900.0: "1 heure et 5 minutes"}
+	var bad_t := []
+	for k in cases:
+		if Seance2.duration_text(k) != cases[k]:
+			bad_t.append("%.0f s → « %s »" % [k, Seance2.duration_text(k)])
+	check("C2 {temps} lisible", bad_t.is_empty(), str(bad_t))
+	# la ligature « fi » de VT323 est coupée (game.gd) : « Tu confirmes ? » garde ses 14 cases
+	var pf: Font = Game.fonts.pixel
+	var w_fi := pf.get_string_size("fi", HORIZONTAL_ALIGNMENT_LEFT, -1, 28).x
+	var w_ab := pf.get_string_size("ab", HORIZONTAL_ALIGNMENT_LEFT, -1, 28).x
+	check("C2 « Tu confirmes ? » sans ligature « fi »", absf(w_fi - w_ab) < 1.0, "« fi » %.0f px, « ab » %.0f px" % [w_fi, w_ab])
+
+
+## C1 : la convocation, dès que le sèche-cheveux, l'antenne et le P4 réel sont réunis : silence de
+## 1,5 s, chant du modem depuis l'ordinateur de ta mère (entendu dans l'étage), N10 et N11 par Nestor,
+## objectif O4, « Répondre à l'ordinateur », C3 écrit (dans la chambre ou au couloir).
+func check_convocation() -> void:
+	var hn: Haunt = main.haunt
+	var ok_conv: bool = await until(func() -> bool: return bool(Game.flag("convocation", false)), 90.0)
+	var obj_during := Game.objective_text
+	await until(func() -> bool: return hn.has_logged("modem"), 15.0)
+	var m: AudioStreamPlayer3D = room.modem
+	var modem_ok: bool = m != null and is_instance_valid(m) and m.playing and m.stream != null \
+		and m.global_position.distance_to(room.screen_center) < 0.05 and m.unit_size >= 5.0 and m.max_distance >= 20.0
+	var sil := -1
+	var mod := -1
+	for i in hn.journal.size():
+		var e: Dictionary = hn.journal[i]
+		if e.get("ev") == "silence" and is_equal_approx(float(e.get("sec", 0.0)), 1.5):
+			sil = i
+		if e.get("ev") == "modem" and mod < 0:
+			mod = i
+	print("C1 : modem %s · silence 1,5 s au journal %d, modem %d" % [modem_ok, sil, mod])
+	await until(func() -> bool: return has_said("nestor", Acte2.N11), 40.0)
+	await until(func() -> bool: return Game.load_checkpoint().get("checkpoint") == "C3", 20.0)
+	# (C3 est écrit au début ; O4 s'affiche quand N11 a fini)
+	await until(func() -> bool: return not hn.is_busy(), 30.0)
+	await wait(0.3)
+	var d := Game.load_checkpoint()
+	check("C1 modem depuis l'ordinateur", ok_conv and modem_ok and sil >= 0 and sil < mod and room.convoking and room.modem_plays >= 1,
+		"convocation %s · modem %s · silence %d < modem %d" % [ok_conv, modem_ok, sil, mod])
+	check("C1 N10 N11", said_in_order("nestor", [Acte2.N10, Acte2.N11]), str(hn.said("nestor").slice(-2)))
+	check("C1 objectif O4", Game.objective_text == Acte2.O4 and Game.objective_sub == "" and obj_during == "",
+		"« %s » / « %s » (pendant le chant : « %s »)" % [Game.objective_text, Game.objective_sub, obj_during])
+	check("C1 « Répondre à l'ordinateur »", room.pc_it.enabled and room.pc_it.label == "Répondre à l'ordinateur", "« %s » %s" % [room.pc_it.label, room.pc_it.enabled])
+	var where := room_of((d.get("pos", Vector3.ZERO) as Vector3) + Vector3(0, 0.5, 0))
+	check("C1 C3 écrit", d.get("checkpoint") == "C3" and (d.get("flags", {}) as Dictionary).get("convocation", false) == true and where in ["mere", "couloir"],
+		"point %s · pièce %s" % [d.get("checkpoint", "rien"), where])
+	check("C1 étape « convocation »", hn.step_id == "convocation" and hn.has_logged("etape", "step", "convocation"), hn.step_id)
+	if Game.sound_captions:
+		# (hud relève à chaque image le pire chevauchement d'un son et d'un dialogue affichés ensemble ;
+		# à la convocation, le chant du modem et N10 le sont toujours)
+		check("C5 son et dialogue l'un au-dessus de l'autre (modem, N10)", hud.caption_both > 0 and hud.caption_overlap_max <= 0.0,
+			"%d images ensemble · chevauchement %.0f px" % [hud.caption_both, hud.caption_overlap_max])
+
+
+## § 4.3 : le bouton d'éjection de la disquette ne fait rien (« Elle ne sort pas. »). On le vise de
+## côté, à gauche de la chaise (derrière elle, son dossier cache le lecteur).
+func check_eject() -> void:
+	await use_on(room.eject_it, Vector3(0.55, 0, -1.55), "Éjecter la disquette")
+	await wait(0.3)
+	check("éjection : « Elle ne sort pas. »", hud.hint_lbl.text == "Elle ne sort pas." and not room.floppy.visible, "« %s »" % hud.hint_lbl.text)
+
+
+## Le texte attendu de la séance 2 (§ 5.6.9, au mot près), ligne par ligne (sans les titres de level).
+func _seance2_expected(issue: String, since: float, sos: bool) -> Array:
+	var out := ["Te revoilà, %s." % Game.hero_name()]
+	if since < 60.0:
+		out.append("Tu es %s vite. C'est bien. Ou c'est la peur." % Game.g("revenu", "revenue"))
+	else:
+		out.append("Tu as mis %s à revenir. Je n'ai rien fait pendant ce temps. Presque rien." % Seance2.duration_text(since))
+	out.append("Résultats.")
+	out.append_array(Seance2.results_lines(str(Game.choices.get("reflet", "")), str(Game.choices.get("miroir_reel", ""))))
+	out.append_array(["Tu as ramassé un sèche-cheveux et une antenne.",
+		"Ta mère avait fait le même dessin, ici, en 2016. Je l'ai vu par l'écran.",
+		"Construis-le. Je veux voir.",
+		"Il te manque deux pièces. Elles sont en bas. Ton grand-père aussi."])
+	if sos:
+		out.append("Il tape encore sur les tuyaux. Je lis tout.")
+	var prix := str(Game.choices.get("prix", "personne"))
+	var word: String = {"toi": "Moi", "proche": str(Game.choices.get("proche", "")), "personne": "Personne"}.get(prix, "?")
+	out.append_array(["En simulation, tu as choisi : %s." % word, "Tout à l'heure, l'essai réel. Chambre du fond.", "Tu confirmes ?"])
+	out.append({"confirmer": "Consigné.", "changer": "Changer d'avis coûte. Je l'ai noté.", "delai": "> DÉLAI DÉPASSÉ. JE CHOISIS POUR TOI."}.get(issue, "?"))
+	out.append_array(["Ta grand-mère dort.", "Son cœur bat à 58.", "57.", "55.", "Je peux faire descendre ce chiffre.", "Viens voir."])
+	return out
+
+
+func _peur_logged(why: String, v: float) -> bool:
+	for e in main.haunt.journal:
+		if e.get("ev") == "peur" and e.get("why") == why and is_equal_approx(float(e.get("v", 0.0)), v):
+			return true
+	return false
+
+
+## Fige le jeu le temps d'une capture (le texte du terminal, tapé en mode turbo, ne file pas pendant
+## que le rendu logiciel prend l'image).
+func frozen_shot(shot_name: String, screen_name := "") -> void:
+	get_tree().paused = true
+	await wait(0.25)
+	await shot(shot_name)
+	if screen_name != "":
+		await tex_shot(terminal.get_viewport().get_texture(), screen_name)
+	get_tree().paused = false
+
+
+## Séance 2 jouée à l'ordinateur de ta mère (mode turbo) : « Répondre à l'ordinateur », le bilan, la
+## confirmation du protocole 3 (issue « confirmer », « changer » ou « delai »), le cœur de 58 à 52 (C2) ;
+## puis la fin de la version : carte, fin_v03 sauvegardé, retour au titre, « Continuer » recharge C3 (C3).
+func run_seance2_at_pc(issue: String, main_path: bool) -> void:
+	var tag := "" if main_path else "s2_%s_" % issue
+	terminal.turbo = true
+	terminal.autopicks = (SEANCE2_PICKS.get(issue, [0]) as Array).duplicate()
+	var sos := bool(Game.flag("sos_joue", false))
+	await use_at(Vector3(1.2, 0, -1.0), 0.0, -0.3, "Répondre à l'ordinateur", "45_convocation" if main_path else tag + "convocation")
+	await until(func() -> bool: return acte2.seance != null and Game.phase == "seated", 10.0)
+	var sc: Seance2 = acte2.seance
+	check("C2 assis à l'ordinateur", sc != null and Game.phase == "seated" and not room.convoking and not room.pc_it.enabled
+		and main.haunt.step_id == "seance2" and Game.objective_text == "",
+		"séance %s · phase %s · modem %s · étape %s" % [sc != null, Game.phase, room.convoking, main.haunt.step_id])
+	if sc == null:
+		return
+	var p_start := Game.peur
+	# le bilan (lignes 2 à 12)
+	var res: Array = Seance2.results_lines(str(Game.choices.get("reflet", "")), str(Game.choices.get("miroir_reel", "")))
+	await until(func() -> bool: return sc.said.has(Seance2.L8) or terminal.aborted, 60.0)
+	await frozen_shot("46_seance2_resultats" if main_path else tag + "resultats", "46b_ecran_resultats" if main_path else tag + "ecran_resultats")
+	check("C2 bilan : %s · %s" % [res[0].get_slice(" ..... ", 1), res[1].get_slice(" ..... ", 1)], sc.said.has(res[0]) and sc.said.has(res[1]) and sc.said.has(res[2]), str(sc.said.slice(0, 7)))
+	# la confirmation (ligne 16)
+	await until(func() -> bool: return not terminal._choice.is_empty() or sc.issue != "", 60.0)
+	var p_choice := Game.peur
+	if main_path:
+		await frozen_shot("46c_seance2_confirmer", "")
+	await until(func() -> bool: return Game.choices.has("prix_confirme") or terminal.aborted, 40.0)
+	var prix := str(Game.choices.get("prix", "personne"))
+	var first_other: Dictionary = {"toi": "proche", "proche": "toi", "personne": "toi"}
+	var want_prix: String = {"confirmer": prix, "changer": first_other.get(prix, "?"), "delai": "proche"}.get(issue, "?")
+	var want_p: float = PEUR_SEANCE2.get(issue, 0.0)
+	check("C2 %s : prix confirmé « %s »" % [issue, want_prix], sc.issue == issue and Game.choices.get("prix_confirme") == want_prix,
+		"issue %s · prix_confirme %s" % [sc.issue, Game.choices.get("prix_confirme")])
+	check("C2 %s : jauge +%d" % [issue, int(want_p)], _peur_logged("seance2_" + issue, want_p) and is_equal_approx(Game.peur - p_choice, want_p),
+		"%.1f → %.1f" % [p_choice, Game.peur])
+	# l'écran montre l'option retenue (au délai : aucune, elle garde le proche sans second choix)
+	var shown := {}
+	for ln in terminal.lines:
+		var txt := ""
+		for sg in ln.segs:
+			txt += str(sg[0])
+		if txt.begins_with("[1] Confirmer") or txt.begins_with("[2] Changer d'avis"):
+			shown[txt] = str(ln.kind)
+	var want_shown: Dictionary = {"confirmer": {"[1] Confirmer": "picked", "[2] Changer d'avis": "dead"},
+		"changer": {"[1] Confirmer": "dead", "[2] Changer d'avis": "picked"},
+		"delai": {"[1] Confirmer": "dead", "[2] Changer d'avis": "dead"}}.get(issue, {})
+	check("C2 %s : option montrée à l'écran" % issue, same(shown, want_shown), str(shown))
+	# le cœur : 58, puis 57, 55, 52 en 6 s (lignes 17 à 19)
+	await until(func() -> bool: return terminal.heart_bpm == 58, 30.0)
+	var t58 := game_t
+	await until(func() -> bool: return terminal.heart_bpm == 52, 15.0)
+	var dt := g_since(t58)
+	await frozen_shot("47_coeur_52" if main_path else tag + "coeur_52", "47b_ecran_coeur_52" if main_path else tag + "ecran_coeur_52")
+	var gp: Node = house.rooms.get("gp")
+	print("C3 : cœur %s en %.2f s" % [terminal.heart_log, dt])
+	check("C3 cœur 58 → 52 à l'écran", terminal.heart_log == [58, 57, 55, 52] and dt >= 5.0 and dt <= 8.0 and terminal.heart_box.visible
+		and terminal.heart_val.text == "52" and terminal.heart_val.get_theme_font_size("font_size") == TERMINAL.HEART_FONT and int(gp.heart_bpm) == 52,
+		"%s en %.1f s · « %s » · bracelet %d" % [terminal.heart_log, dt, terminal.heart_val.text, int(gp.heart_bpm)])
+	await until(func() -> bool: return sc.done or terminal.aborted, 30.0)
+	check("C2 jauge du cœur +6", _peur_logged("seance2_coeur", 6.0) and is_equal_approx(Game.peur - p_start, minf(want_p + 6.0, 100.0 - p_start)),
+		"%.1f → %.1f" % [p_start, Game.peur])
+	var want_lines := _seance2_expected(issue, sc.since_convocation, sos)
+	check("C2 lignes 2 à 21 (au mot près)", same(sc.said, want_lines), "écrites : %s" % [sc.said])
+	if sc.since_convocation < 60.0:
+		var acc := Game.g("revenu", "revenue")
+		check("C2 accord « %s » (%s)" % [acc, Game.hero_name()], sc.said.has("Tu es %s vite. C'est bien. Ou c'est la peur." % acc)
+			and sc.said[0] == "Te revoilà, %s." % Game.hero_name(), str(sc.said.slice(0, 2)))
+	check("C3 écran éteint", float(room.screen_mat.get_shader_parameter("power_on")) < 0.5, "")
+	# la fin de la version (§ 2.2, étape 15)
+	await until(func() -> bool: return acte2.end_card_shown, 40.0)
+	await wait(2.2)
+	await shot("48_fin_v03" if main_path else tag + "fin_v03")
+	var card_ok := false
+	for c in hud.root.find_children("*", "Label", true, false):
+		if (c as Label).text == CARD_V03:
+			card_ok = true
+	check("C3 carte « FIN DE LA VERSION 0.3 »", card_ok, "")
+	var hn: Haunt = main.haunt
+	check("C3 bip de Nestor, respiration ralentie", hn.has_logged("fin_v03") and float(gp.breath_cpm) < 14.0 and hn.step_id == "fin", "respiration %.1f/min · étape %s" % [float(gp.breath_cpm), hn.step_id])
+	await until(func() -> bool: return Game.phase == "title", 30.0)
+	await wait(0.6)
+	await shot("48b_titre_apres_v03" if main_path else tag + "titre")
+	var sv := Game.load_checkpoint()
+	check("C3 fin_v03 sauvegardé, retour au titre", sv.get("checkpoint") == "C3" and (sv.get("flags", {}) as Dictionary).get("fin_v03", false) == true
+		and menu.title_box.visible and menu.continue_btn.visible and Game.objective_text == "",
+		"point %s · titre %s · continuer %s · objectif « %s »" % [sv.get("checkpoint", "rien"), menu.title_box.visible, menu.continue_btn.visible, Game.objective_text])
+	# « Continuer » recharge C3 : la convocation, l'ordinateur appelle encore
+	menu.continue_btn.pressed.emit()
+	await wait(2.5)
+	check("C3 « Continuer » recharge C3", acte2.active and Game.phase == "room" and not player.seated and room.convoking
+		and room.pc_it.label == "Répondre à l'ordinateur" and Game.objective_text == Acte2.O4 and hn.step_id == "convocation"
+		and player.global_position.distance_to(sv.get("pos", Vector3.ZERO)) < 0.1 and bool(Game.flag("fin_v03", false)),
+		"phase %s · assis %s · modem %s · objectif « %s » · étape %s · position %s" % [Game.phase, player.seated, room.convoking, Game.objective_text, hn.step_id, player.global_position])
+	await shot("48c_reprise_c3" if main_path else tag + "reprise_c3")
+
+
+## Saute l'acte I et l'étage : l'état d'après un P4 réel « fixe », l'antenne déjà prise (objets,
+## drapeaux, jauge ; P1, P3, P4 et P7 ouvertes), puis la convocation se déclenche par le vrai chemin
+## (Acte2._check_convocation). Le joueur attend au couloir. Les pièces ne sont pas remises en état (le
+## sèche-cheveux reste visible…) : « Continuer » le fait, après un rechargement (--charger=C3).
+## sos : le S.O.S. a été entendu (ligne 12 de la séance 2).
+func _jump_convocation(peur := 45.0, sos := true, trigger := true, miroir := "fixe") -> void:
+	await _jump_acte2()
+	for row in ITEMS_03:
+		if row[0] in ["cle_bureau", "tournevis", "seche_cheveux", "antenne", "plan_imprime", "croquis_imprime", "photo_couloir"]:
+			Game.add_item(row[0], row[1], row[2], row[3])
+	for k in ["entree_couloir", "nestor_eveille", "entree_amis", "entree_bureau", "entree_sdb", "babyphone_parle", "tele_a_neige",
+			"boite_ouverte", "antenne_prise", "antenne_examinee", "seche_cheveux_pris", "p4_reel_fait", "cameras_vues", "croquis_lu",
+			"imprime_plan_imprime", "imprime_croquis_imprime", "imprime_photo_couloir"]:
+		Game.set_flag(k, true)
+	Game.set_flag("p2_coups", 2 if sos else 0)
+	(house.doors["P2"] as Door).knocks = 2 if sos else 0
+	Game.set_flag("sos_joue", sos)
+	Game.set_flag("habite", "console")
+	Game.set_flag("couloir_niveau", 0.0)
+	for id in ["P3", "P4", "P7"]:
+		Game.set_flag("porte_" + id, "ouverte")
+	Game.set_flag("porte_P1", "ouverte")
+	for id in ["P1", "P3", "P4", "P7"]:
+		var dr: Door = house.doors[id]
+		dr.unlock()
+		dr.set_open_now(true)
+	Game.set_peur(peur, "test séance 2")
+	look_from(Vector3(4.0, 0, 0.6), Vector3(3.3, 1.2, 1.4))
+	await wait(0.4)
+	if trigger:
+		await check_eject()
+		look_from(Vector3(4.0, 0, 0.6), Vector3(3.3, 1.2, 1.4))
+		await wait(0.4)
+	# (le P4 réel en dernier : sans lui, la convocation ne part pas)
+	Game.choices["miroir_reel"] = miroir
+	if trigger:
+		acte2._check_convocation()
+	await wait(0.5)
+
+
+## --seance2=confirmer|changer|delai : la séance 2 seule (raccourci : ni acte I ni étage), puis la fin ;
+## --seance2=absorbe : la jauge atteint 100 pendant la séance 2 (deux étapes, à travers l'épilogue).
+func run_seance2(issue: String) -> void:
+	if issue == "absorbe" and int(Engine.get_meta(STAGE_META, 1)) == 2:
+		await _seance2_absorbe_check()
+		return
+	if not issue in ["confirmer", "changer", "delai", "absorbe"]:
+		check("--seance2=%s" % issue, false, "issues : confirmer, changer, delai, absorbe")
+		finish()
+		return
+	print("SÉANCE 2 début · issue ", issue)
+	set_sound_captions_from_args()
+	check_results_lines()
+	# (le bilan de la séance 2 joué avec une autre issue du P4 réel que le parcours principal :
+	# « changer » après « retourne », « delai » après « fui » ; le reflet de la séance 1 est « fixe »)
+	var miroir: String = {"changer": "retourne", "delai": "fui"}.get(issue, "fixe")
+	await _jump_convocation(97.0 if issue == "absorbe" else 45.0, issue != "delai", true, miroir)
+	await check_convocation()
+	check_unstuck("C3")
+	if issue == "changer":
+		acte2.conv_elapsed = 128.0     # « Tu as mis 2 minutes et 10 secondes à revenir. »
+	if issue == "absorbe":
+		await _seance2_absorbe()
+		return
+	await run_seance2_at_pc(issue, false)
+	check_c4("séance 2 « %s »" % issue, 3)
+	if Game.sound_captions:
+		var texts := []
+		for e in hud.caption_log:
+			texts.append(e.text)
+		check("C5 séance 2 « %s » : modem entre crochets" % issue, texts.has(ROOM.MODEM_CAPTION) and Game.sound_captions, str(texts))
+	else:
+		check("C5 séance 2 « %s » : modem signalé, pas affiché (option coupée)" % issue, main.haunt.count("son", "text", ROOM.MODEM_CAPTION) >= 1
+			and hud.caption_log.is_empty(), "%d sons affichés" % hud.caption_log.size())
+	finish()
+
+
+## La jauge atteint 100 pendant la séance 2 (97 + 4) : la fin ABSORBÉ de la séance (comme à la
+## séance 1), une seule fin, aucune fin de version, C3 intact.
+func _seance2_absorbe() -> void:
+	var got: Array = terminal.found_endings()
+	if got.has("absorbe"):
+		got.erase("absorbe")
+		var cfg := ConfigFile.new()
+		cfg.set_value("fins", "trouvees", got)
+		cfg.save(TERMINAL.ENDS_PATH)
+	var c3 := Game.load_checkpoint()
+	# (jauge à 97 à la convocation : C3 l'écrit plafonnée, la reprise ne refait pas ABSORBÉ à coup sûr)
+	check("C2 ABSORBÉ : C3 écrit sous %d (pas de boucle)" % int(Acte2.C3_PEUR_MAX + 1.0), float(c3.get("peur", 100.0)) <= Acte2.C3_PEUR_MAX
+		and Game.peur > Acte2.C3_PEUR_MAX, "C3 %.1f · jauge %.1f" % [float(c3.get("peur", -1.0)), Game.peur])
+	terminal.turbo = true
+	terminal.autopicks = [0]
+	await use_at(Vector3(1.2, 0, -1.0), 0.0, -0.3, "Répondre à l'ordinateur")
+	await until(func() -> bool: return acte2.seance != null, 10.0)
+	var sc: Seance2 = acte2.seance
+	await until(func() -> bool: return sc != null and sc.issue == "absorbe", 90.0)
+	await wait(2.0)
+	await shot("s2_absorbe_ecran")
+	await until(func() -> bool: return acte1.waiting_stand, 60.0)
+	check("C2 ABSORBÉ : pas de visage", terminal.watch.modulate.a < 0.05, "visage du terminal à %.2f" % terminal.watch.modulate.a)
+	var hn: Haunt = main.haunt
+	var sv := Game.load_checkpoint()
+	check("C2 ABSORBÉ pendant la séance 2", sc.issue == "absorbe" and Game.peur >= 100.0 and terminal.found_endings().has("absorbe")
+		and acte2.absorbed_screen == "" and hn.count("absorbe") == 1,
+		"issue %s · peur %.1f · fins %s · écran hors séance « %s »" % [sc.issue, Game.peur, terminal.found_endings(), acte2.absorbed_screen])
+	check("C2 ABSORBÉ : ni fin de version ni C3 écrasé", not acte2.end_card_shown and not Game.flags.has("fin_v03") and not sc.done
+		and sv.get("checkpoint") == "C3" and is_equal_approx(float(sv.get("peur", -1.0)), float(c3.get("peur", -2.0)))
+		and not (sv.get("flags", {}) as Dictionary).has("fin_v03"),
+		"point %s · peur %.1f (avant %.1f)" % [sv.get("checkpoint", "rien"), float(sv.get("peur", -1.0)), float(c3.get("peur", -2.0))])
+	Engine.set_meta(SNAP_META, {"peur": float(c3.get("peur", -1.0)), "pos": c3.get("pos", Vector3.ZERO)})
+	Engine.set_meta(STAGE_META, 2)
+	Engine.set_meta(COUNT_META, [checks, failures])
+	print("SÉANCE 2 ABSORBÉ : on se lève, l'épilogue recharge la scène")
+	acte1._stand_up()
+
+
+func _seance2_absorbe_check() -> void:
+	Engine.remove_meta(STAGE_META)
+	var before: Dictionary = Engine.get_meta(SNAP_META, {})
+	Engine.remove_meta(SNAP_META)
+	var counts: Array = Engine.get_meta(COUNT_META, [0, 0])
+	Engine.remove_meta(COUNT_META)
+	checks += int(counts[0])
+	failures += int(counts[1])
+	hud.fade.color.a = 0.0
+	menu.show_title()
+	await wait(1.0)
+	menu.continue_btn.pressed.emit()
+	var peur_loaded := Game.peur
+	await wait(2.5)
+	check("C2 ABSORBÉ : « Continuer » reprend C3", Game.load_checkpoint().get("checkpoint") == "C3" and is_equal_approx(peur_loaded, float(before.get("peur", -1.0)))
+		and room.convoking and Game.objective_text == Acte2.O4 and player.global_position.distance_to(before.get("pos", Vector3.ZERO)) < 0.1,
+		"peur %.1f (attendu %.1f) · modem %s · objectif « %s »" % [peur_loaded, float(before.get("peur", -1.0)), room.convoking, Game.objective_text])
+	await shot("s2_absorbe_reprise")
+	finish()
+
+
+## --charger=C3 (B17) : 1) la convocation par le vrai chemin (raccourci jusqu'à l'état d'après le P4
+## réel), C3 écrit ; 2) rechargement de la scène, « Continuer », comparaison champ par champ.
+func _load_write_c3() -> void:
+	print("CHARGER C3 : écriture (convocation)")
+	await _jump_convocation()
+	await check_convocation()
+	check_unstuck("C3")
+	var d := Game.load_checkpoint()
+	check("B17 C3 écrit", d.get("checkpoint") == "C3", str(d.get("checkpoint", "rien")))
+	var ids := []
+	for it in d.get("items", []):
+		ids.append(str((it as Dictionary).get("id", "")))
+	Engine.set_meta(SNAP_META, {"hero": d.get("hero"), "items": ids, "choices": d.get("choices", {}), "flags": d.get("flags", {}),
+		"peur": d.get("peur"), "peur_floor": d.get("peur_floor"), "pos": d.get("pos", Vector3.ZERO), "yaw": d.get("yaw", 0.0),
+		"doors": door_states()})
+	Engine.set_meta(STAGE_META, 2)
+	Engine.set_meta(COUNT_META, [checks, failures])
+	await shot("c3_avant")
+	print("CHARGER C3 : rechargement de la scène")
+	get_tree().reload_current_scene()
+
+
+func _load_check_c3() -> void:
+	Engine.remove_meta(STAGE_META)
+	var before: Dictionary = Engine.get_meta(SNAP_META, {})
+	Engine.remove_meta(SNAP_META)
+	var counts: Array = Engine.get_meta(COUNT_META, [0, 0])
+	Engine.remove_meta(COUNT_META)
+	checks += int(counts[0])
+	failures += int(counts[1])
+	print("CHARGER C3 : reprise depuis l'écran-titre")
+	hud.fade.color.a = 0.0
+	menu.show_title()
+	await wait(1.0)
+	check("B17 C3 « Continuer »", menu.continue_btn.visible and Game.has_save(), "")
+	menu.continue_btn.pressed.emit()
+	var peur_loaded := Game.peur
+	await wait(2.5)
+	var ids := []
+	for it in Game.items:
+		ids.append(it.id)
+	check("B17 C3 héros", Game.hero == before.get("hero"), Game.hero)
+	check("B17 C3 objets", same(ids, before.get("items")), "%s / %s" % [ids, before.get("items")])
+	check("B17 C3 choix", same(Game.choices, before.get("choices")) and Game.choices.get("miroir_reel") == "fixe", "%s" % [Game.choices])
+	var bad := []
+	var bflags: Dictionary = before.get("flags", {})
+	for k in bflags:
+		if not same(Game.flags.get(k), bflags[k]):
+			bad.append(k)
+	check("B17 C3 drapeaux", bad.is_empty() and bflags.size() > 10 and bool(Game.flag("convocation", false)), "différents : %s" % [bad])
+	check("B17 C3 jauge", is_equal_approx(peur_loaded, float(before.get("peur", -1.0))) and is_equal_approx(Game.peur_floor, float(before.get("peur_floor", -1.0))),
+		"peur %.1f (avant %.1f)" % [peur_loaded, float(before.get("peur", -1.0))])
+	check("B17 C3 position", player.global_position.distance_to(before.get("pos", Vector3.ZERO)) < 0.1 and absf(wrapf(player.yaw - float(before.get("yaw", 0.0)), -PI, PI)) < 0.01,
+		"%s lacet %.2f" % [player.global_position, player.yaw])
+	check_doors_same("C3", before.get("doors", {}))
+	check("B17 C3 l'ordinateur appelle encore", room.convoking and room.pc_it.enabled and room.pc_it.label == "Répondre à l'ordinateur" and room.modem_plays >= 1
+		and Game.objective_text == Acte2.O4 and main.haunt.step_id == "convocation" and acte2.active and Game.phase == "room",
+		"modem %s · « %s » · objectif « %s » · étape %s" % [room.convoking, room.pc_it.label, Game.objective_text, main.haunt.step_id])
+	var sb: Node = house.rooms["sdb"]
+	var am: Node = house.rooms["amis"]
+	check("B17 C3 pièces", not (sb.dryer as Node3D).visible and not am.tin_it.enabled and Game.has_item("antenne") and Game.has_item("seche_cheveux"), "")
+	check_unstuck("C3 (rechargé)")
+	# C9 : « Continuer » ne remet pas le journal des temps à zéro ; il note la reprise, puis l'étape
+	var lines := check_c9("C3 rechargé", ["sortir", "convocation", "convocation"])
+	var i_conv := -1
+	var i_rep := -1
+	var i_back := -1
+	for i in lines.size():
+		if i_conv < 0 and lines[i].contains("étape « convocation » ·"):
+			i_conv = i
+		if lines[i].contains("reprise (« Continuer ») au point de passage C3"):
+			i_rep = i
+		if i_rep >= 0 and i > i_rep and lines[i].contains("étape « convocation » (remise en place)"):
+			i_back = i
+	check("C9 « Continuer » : reprise notée, journal gardé", i_conv >= 0 and i_rep > i_conv and i_back > i_rep and lines[0].contains("nouvelle partie"),
+		"convocation %d · reprise %d · remise en place %d" % [i_conv, i_rep, i_back])
+	await shot("c3_reprise")
+	# on répond : la séance 2 démarre (la disquette est toujours dans le lecteur)
+	terminal.turbo = true
+	terminal.autopicks = [0]
+	await use_at(Vector3(1.2, 0, -1.0), 0.0, -0.3, "Répondre à l'ordinateur")
+	await until(func() -> bool: return acte2.seance != null and Game.phase == "seated", 10.0)
+	check("B17 C3 séance 2 après la reprise", acte2.seance != null and Game.phase == "seated" and not room.convoking, "")
+	finish()
+
+
+## --charger=031 : une sauvegarde de la 0.3.1 finie sur sa carte provisoire (drapeau fin_031, C2,
+## sèche-cheveux, antenne, P4 réel) reprend normalement en 0.3.2 et déclenche la convocation.
+func _load_write_031() -> void:
+	print("CHARGER 031 : écriture d'une sauvegarde de la 0.3.1 (fin_031)")
+	await _jump_convocation(40.0, true, false)
+	Game.set_flag("point_passage", "C2")
+	Game.set_flag("fin_031", true)
+	var ok := Game.save_checkpoint("C2", Vector3(4.0, 0, -1.0), PI)
+	# (une vraie sauvegarde de la 0.3.1 porte « version » : « 0.3.1 »)
+	var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(Game.save_path()))
+	if ok and raw is Dictionary:
+		(raw as Dictionary)["version"] = "0.3.1"
+		var f := FileAccess.open(Game.save_path(), FileAccess.WRITE)
+		f.store_string(JSON.stringify(raw, "\t"))
+		f.close()
+	check("migration : sauvegarde 0.3.1 écrite", ok and (Game.load_checkpoint().get("flags", {}) as Dictionary).get("fin_031", false) == true
+		and Game.load_checkpoint().get("version") == "0.3.1" and not bool(Game.flag("convocation", false)), "")
+	Engine.set_meta(STAGE_META, 2)
+	Engine.set_meta(COUNT_META, [checks, failures])
+	get_tree().reload_current_scene()
+
+
+func _load_check_031() -> void:
+	Engine.remove_meta(STAGE_META)
+	var counts: Array = Engine.get_meta(COUNT_META, [0, 0])
+	Engine.remove_meta(COUNT_META)
+	checks += int(counts[0])
+	failures += int(counts[1])
+	hud.fade.color.a = 0.0
+	menu.show_title()
+	await wait(1.0)
+	menu.continue_btn.pressed.emit()
+	await wait(1.0)
+	check("migration : fin_031 effacé, partie reprise", not Game.flags.has("fin_031") and acte2.active and Game.phase == "room", str(Game.flags.keys()))
+	await check_convocation()
+	var sv := Game.load_checkpoint()
+	check("migration : convocation et C3", sv.get("checkpoint") == "C3" and not (sv.get("flags", {}) as Dictionary).has("fin_031")
+		and sv.get("version") == ProjectSettings.get_setting("application/config/version", ""),
+		"%s · version %s" % [sv.get("checkpoint", "rien"), sv.get("version")])
+	await shot("m031_convocation")
+	finish()
+
+
+# ------------------------------------------------------------------ finitions (0.3.2) : C4 à C9
+
+## Les sons importants (C5) : S.O.S., coups à P2, rideau, pas mouillés, souffle (P4 réel), modem.
+func important_sounds() -> Array:
+	return [Acte2.SON_SOS, Haunt.KNOCK_CAPTION, SmartMirror.P4_TEXTS["son_rideau"], SmartMirror.P4_TEXTS["son_pas"],
+		SmartMirror.P4_TEXTS["son_souffle"], ROOM.MODEM_CAPTION]
+
+
+## Option « Sous-titres des sons » de ce lancement : coupée, sauf avec « --sous-titres » (sans toucher au
+## settings.cfg du joueur : la valeur n'est pas enregistrée).
+func set_sound_captions_from_args() -> void:
+	Game.sound_captions = OS.get_cmdline_user_args().has("--sous-titres")
+	print("C5 : sous-titres des sons %s pour ce test" % ("activés" if Game.sound_captions else "coupés"))
+
+
+## C4 : chaque impulsion de stress (scène écrite, silence, sursaut, réaction de séance, événement de
+## pièce) rend le cœur audible (> −20 dB), puis il repasse sous −36 dB en moins de 12 s au calme ; une
+## impulsion relayée par une autre avant le calme n'a pas de retour à mesurer (suivi : Haunt.c4_report).
+func check_c4(tag: String, min_n := 5) -> void:
+	var hn: Haunt = main.haunt
+	var r: Dictionary = hn.c4_report()
+	print("C4 %s : %d impulsions, crête la plus basse %.1f dB, %d retours au calme mesurés (le plus long %.1f s), %d en cours" % [
+		tag, int(r.n), float(r.peak_min), int(r.measured), float(r.calm_max), int(r.open)])
+	check("C4 stress léger (%s) : audible puis calme < 12 s" % tag, bool(r.ok) and int(r.n) >= min_n and int(r.measured) >= 1
+		and float(r.peak_min) > Sfx.HEART_AUDIBLE_DB and float(r.calm_max) < 12.0,
+		"%d impulsions, %d mesurées, crête min %.1f dB, calme max %.1f s · %s" % [int(r.n), int(r.measured), float(r.peak_min), float(r.calm_max), r.fails])
+
+
+## C4 : un événement écrit, puis le calme : le cœur s'entend (> −20 dB) et repasse sous −36 dB en moins
+## de 12 s de jeu (mesuré ici, image par image, hors du suivi de Haunt).
+func check_c4_calm(tag: String) -> void:
+	await until(func() -> bool: return not main.haunt.is_busy(), 30.0)
+	var t0 := game_t
+	await until(func() -> bool: return Sfx.heart_db < Sfx.HEART_CALM_DB or g_since(t0) > 15.0, 20.0)
+	main.haunt.begin_scene()
+	main.haunt.end_scene()
+	var peak := Sfx.heart_db
+	var t1 := game_t
+	var calm := -1.0
+	while g_since(t1) < 14.0:
+		await get_tree().process_frame
+		if g_since(t1) < Haunt.C4_PEAK_WINDOW:
+			peak = maxf(peak, Sfx.heart_db)
+		if Sfx.heart_db < Sfx.HEART_CALM_DB:
+			calm = g_since(t1)
+			break
+	print("C4 %s : scène écrite, crête %.1f dB, sous −36 dB après %.1f s de jeu" % [tag, peak, calm])
+	check("C4 %s : une scène écrite, puis le calme" % tag, peak > Sfx.HEART_AUDIBLE_DB and calm > 0.0 and calm < 12.0,
+		"crête %.1f dB, calme après %.1f s" % [peak, calm])
+
+
+## C5, option coupée : chaque son important est passé par Haunt.sound_caption (journal « son ») sans
+## jamais s'afficher ; les dialogues de l'entité (N8 à N11) et les pensées du héros, toujours.
+func check_c5_off(tag: String) -> void:
+	var hn: Haunt = main.haunt
+	var missing := []
+	for s in important_sounds():
+		if hn.count("son", "text", s) < 1:
+			missing.append(s)
+	check("C5 %s : les sons importants sont signalés" % tag, missing.is_empty(), "jamais signalés : %s" % [missing])
+	check("C5 %s : option coupée, aucun son entre crochets" % tag, not Game.sound_captions and hud.caption_log.is_empty()
+		and hn.count("son", "shown", true) == 0 and not hud.snd_lbl.visible,
+		"%d affichés : %s" % [hud.caption_log.size(), hud.caption_log.slice(0, 3)])
+	var shown := []
+	for e in hud.subtitle_log:
+		if e.get("kind") == "elle":
+			shown.append(e.get("text"))
+	var dlg := []
+	for n in [Acte2.N8, Acte2.N9, Acte2.N10, Acte2.N11]:
+		if not shown.has(hn.fill(n)):
+			dlg.append(n)
+	check("C5 %s : dialogues toujours affichés" % tag, dlg.is_empty() and shown.size() >= 10, "absents : %s" % [dlg])
+
+
+## C5, option active (« --sous-titres ») : chaque son important s'est affiché entre crochets, le
+## bourdonnement aussi ; les dialogues restent affichés.
+func check_c5_on(tag: String) -> void:
+	var hn: Haunt = main.haunt
+	var texts := []
+	for e in hud.caption_log:
+		texts.append(e.text)
+	var missing := []
+	for s in important_sounds() + [Haunt.HUM_CAPTION]:
+		if not texts.has(s):
+			missing.append(s)
+	print("C5 %s : sons affichés %s" % [tag, texts])
+	check("C5 %s : option active, sons importants entre crochets" % tag, Game.sound_captions and missing.is_empty()
+		and texts.all(func(x: String) -> bool: return x.begins_with("[") and x.ends_with("]")) and hn.count("son", "shown", true) >= 6,
+		"absents : %s" % [missing])
+	var n_dlg := 0
+	for e in hud.subtitle_log:
+		if e.get("kind") == "elle":
+			n_dlg += 1
+	check("C5 %s : dialogues toujours affichés" % tag, n_dlg >= 10, "%d répliques" % n_dlg)
+
+
+## C9 : le journal des temps (user://journal.txt ; en autotest user://journal_autotest.txt) a une ligne
+## par étape, avec l'heure réelle et le temps passé ; « want » doit y être, dans l'ordre.
+func check_c9(tag: String, want: Array) -> PackedStringArray:
+	var path := Haunt.times_path()
+	var lines := FileAccess.get_file_as_string(path).strip_edges().split("\n")
+	var re := RegEx.create_from_string("^\\d\\d:\\d\\d:\\d\\d · étape « ([^»]+) »( \\(remise en place\\))? · (.+ depuis l'étape « [^»]+ » · )?.+ depuis le début$")
+	var steps := []
+	var bad := []
+	for l in lines:
+		if l.contains(" · étape « "):
+			var m := re.search(l)
+			if m == null:
+				bad.append(l)
+			else:
+				steps.append(m.get_string(1))
+	var i := 0
+	for s in steps:
+		if i < want.size() and s == want[i]:
+			i += 1
+	print("C9 %s : %s, %d lignes, étapes %s" % [tag, path, lines.size(), steps])
+	check("C9 %s : journal des temps, chaque étape avec son temps" % tag, lines.size() > 2 and lines[0].contains("journal des temps · nouvelle partie")
+		and bad.is_empty() and i == want.size(),
+		"%d étapes trouvées sur %d (%s) · lignes mal formées : %s" % [i, want.size(), steps, bad.slice(0, 2)])
+	return lines

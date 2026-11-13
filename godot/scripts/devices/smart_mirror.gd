@@ -12,6 +12,9 @@ signal typed
 
 const RES := Vector2i(144, 200)
 const TEXT_COLOR := Color(0.82, 0.92, 1.0)
+const HEADER_FONT := 20     # taille de l'en-tête (VT323 n'est nette qu'en 10 et 20 px ; 10 px abîme M et O)
+const TEXT_FONT := 20       # taille du texte tapé (M0 à M10)
+const TEXT_LINE_SPACING := 0   # interligne du texte tapé (M7, six lignes, tient : 27 + 6 × 20 = 147 px)
 
 var screen_size := Vector2(0.5, 0.7)
 var frame_size := Vector2(0.6, 0.8)
@@ -104,7 +107,7 @@ func build() -> void:
 
 func _label(fs: int, c := TEXT_COLOR) -> Label:
 	var l := Label.new()
-	l.add_theme_font_override("font", Game.fonts.pixel)
+	l.add_theme_font_override("font", no_liga(Game.fonts.pixel))     # (« fixé », « vérifie » : sans ligature)
 	l.add_theme_font_size_override("font_size", fs)
 	l.add_theme_color_override("font_color", c)
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -140,11 +143,13 @@ func _build_ui() -> void:
 	feed_rect.material = m
 	feed_rect.visible = false
 	ui.add_child(feed_rect)
-	# en-tête
-	header_lbl = _label(10, Color(0.55, 0.7, 0.9))
+	# en-tête (« TÉLÉASSISTANCE », « MODE MIROIR ») en 20 px, la taille nette de VT323 : en 10 px,
+	# chaque pixel de la police tombe sur un demi-pixel de la dalle et « MODE MIROIR » se lisait
+	# « MXDE MIRXIR » (14 lettres × 8 px = 112 px : ça tient dans les 144 px)
+	header_lbl = _label(HEADER_FONT, Color(0.55, 0.7, 0.9))
 	header_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	header_lbl.size = Vector2(RES.x, 14)
-	header_lbl.position = Vector2(0, 3)
+	header_lbl.size = Vector2(RES.x, HEADER_FONT)
+	header_lbl.position = Vector2(0, 1)
 	ui.add_child(header_lbl)
 	# le texte (tapé), sur un fond sombre quand le flux est derrière
 	text_panel = PanelContainer.new()
@@ -152,14 +157,16 @@ func _build_ui() -> void:
 	sb.bg_color = Color(0, 0, 0, 0.0)
 	sb.set_content_margin_all(4)
 	text_panel.add_theme_stylebox_override("panel", sb)
-	text_panel.position = Vector2(6, 22)
+	text_panel.position = Vector2(6, 23)
 	text_panel.size = Vector2(RES.x - 12, 20)
 	ui.add_child(text_panel)
-	text_lbl = _label(20)
+	text_lbl = _label(TEXT_FONT)
 	text_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	text_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	text_lbl.custom_minimum_size = Vector2(RES.x - 20, 0)
-	text_lbl.add_theme_constant_override("line_spacing", -3)
+	# (interligne 0 : à −3, l'accent d'une capitale touchait la ligne du dessus : « À VOS » sous
+	# « 03:20 » faisait lire « Q3:20 », et l'accent de « RÉEL » marquait « MIROIR »)
+	text_lbl.add_theme_constant_override("line_spacing", TEXT_LINE_SPACING)
 	text_lbl.add_theme_constant_override("outline_size", 3)
 	text_lbl.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
 	text_panel.add_child(text_lbl)
@@ -350,6 +357,8 @@ const FEED_BRIGHTNESS := 2.3    # dalle en mode miroir (1,3 sinon) : vu de devan
 const FEED_GAIN := 1.9          # gain de l'image du flux (1,2 avant) : le fond de la salle de bain
                                 # s'éclaircit, la silhouette (sombre, non éclairée) s'en détache
 const P4_PEUR := {"fixe": 10.0, "retourne": 16.0, "fui": 12.0}
+## Sursauts du P4 (stress, C4) : ce qu'on entend derrière soi, ce qu'on voit dans le flux, l'issue.
+const P4_JOLTS := {"rideau": 0.25, "silhouette": 0.25, "pas": 0.2, "souffle": 0.4, "fixe": 0.5, "fui": 0.3}
 const P4_TEXT_CLEAR := 3.0      # pendant la barre, M8 s'efface à t = 3 s (la silhouette vient à 5 s)
 const P4_HOLDS := {"M2": 2.5, "M3": 3.0, "M4": 2.0, "M5": 2.5, "M6": 2.5, "M7": 3.5, "M8": 1.5}
 const SILHOUETTE_TEX := "res://assets/images/silhouette_feed.png"
@@ -595,7 +604,7 @@ func _p4_player_left() -> bool:
 func _p4_bar() -> String:
 	var h := Haunt.of(get_tree())
 	if h:
-		h.stress(0.5)
+		h.stress(0.5, "P4 réel")
 	_p4_signal("barre")
 	_p4_sil = p4_silhouette if p4_silhouette else make_silhouette()
 	_p4_sil.visible = false
@@ -655,6 +664,7 @@ func _p4_timeline(t0: float, t1: float, sounds := true) -> void:
 		if sounds:
 			Sfx.play_at("curtain_rings", cp, -6.0, 1.0, 2.5)
 			_p4_caption("son_rideau")
+			_p4_jolt(P4_JOLTS["rideau"], "P4 rideau")
 		_p4_signal("rideau")
 	if cross.call(3.5) and not p4_path.is_empty():
 		if sounds:
@@ -665,6 +675,8 @@ func _p4_timeline(t0: float, t1: float, sounds := true) -> void:
 		_p4_sil.visible = true
 		if Game.reduced_scares:
 			_p4_fade_in(_p4_sil, 1.2)
+		if sounds:
+			_p4_jolt(P4_JOLTS["silhouette"], "P4 silhouette")
 		_p4_signal("silhouette")
 	for k in 3:
 		var tj := 7.5 + 2.5 * k
@@ -675,6 +687,8 @@ func _p4_timeline(t0: float, t1: float, sounds := true) -> void:
 				Sfx.play_at("wet_step", at + Vector3(0, 0.05, 0), -12.0 if Game.reduced_scares else -3.0, 1.0, 2.5)
 			if sounds and k == 0:
 				_p4_caption("son_pas")
+			if sounds:
+				_p4_jolt(P4_JOLTS["pas"], "P4 pas mouillés")
 			_p4_signal("saut")
 	if cross.call(13.0):
 		var cam := get_viewport().get_camera_3d()
@@ -683,6 +697,7 @@ func _p4_timeline(t0: float, t1: float, sounds := true) -> void:
 			Sfx.play_at("breath_near", cam.global_position + back * 0.35 + Vector3(0, -0.05, 0), -8.0 if Game.reduced_scares else -2.0, 1.0, 1.0)
 		if sounds:
 			_p4_caption("son_souffle")
+			_p4_jolt(P4_JOLTS["souffle"], "P4 souffle")
 		_p4_signal("souffle")
 
 
@@ -690,6 +705,13 @@ func _p4_caption(key: String) -> void:
 	var h := Haunt.of(get_tree())
 	if h:
 		h.sound_caption(P4_TEXTS[key])
+
+
+## Sursaut du P4 : impulsion de stress par Haunt (le cœur s'emballe, C4).
+func _p4_jolt(v: float, why: String) -> void:
+	var h := Haunt.of(get_tree())
+	if h:
+		h.stress(v, why)
 
 
 ## Silhouette au point i du trajet (au-delà du dernier : le dernier).
@@ -746,6 +768,7 @@ func _p4_fixe() -> void:
 		_p4_glow = _make_chest_glow()
 		_p4_glow.global_position = Vector3(at.x, floor_y + 1.25, at.z) + toward.normalized() * 0.09
 	set_progress(-1.0)
+	_p4_jolt(P4_JOLTS["fixe"], "P4 reconnu")
 	await _p4_say("M9a", 2.0, false)
 	await _p4_say("M10a", 3.0, false)
 	var h := Haunt.of(get_tree())
@@ -768,7 +791,7 @@ func _p4_retourne() -> void:
 		p4_lamp.burst()
 		Game.set_flag("applique_eclatee", true)
 	if h:
-		h.stress(0.6)
+		h.stress(0.6, "applique qui éclate")
 		h.peur(P4_PEUR["retourne"], "p4_retourne")
 	_p4_after_turn()
 
@@ -799,6 +822,7 @@ func _p4_fui() -> void:
 	if h:
 		h.say("nestor", P4_TEXTS["M9c"])
 		h.peur(P4_PEUR["fui"], "p4_fui")
+		h.stress(P4_JOLTS["fui"], "P4 fui")
 	_p4_alone()
 
 

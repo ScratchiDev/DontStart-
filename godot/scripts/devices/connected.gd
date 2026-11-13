@@ -67,6 +67,22 @@ static func glow_mat(c: Color, energy := 4.0) -> StandardMaterial3D:
 	return m
 
 
+## La police pixel sans sa ligature « fi » : VT323 dessine « fi » dans une seule case de 8 px, et
+## « fixé » se lisait « nxé », « vérifie » « vérine » (écrans, HUD, menus). Une variante par police.
+static var _no_liga := {}
+
+
+static func no_liga(f: Font) -> Font:
+	if f == null:
+		return f
+	if not _no_liga.has(f):
+		var v := FontVariation.new()
+		v.base_font = f
+		v.opentype_features = {TextServerManager.get_primary_interface().name_to_tag("liga"): 0}
+		_no_liga[f] = v
+	return _no_liga[f]
+
+
 static func plain_mat(c: Color, rough := 0.6, metal := 0.0) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
 	m.albedo_color = c

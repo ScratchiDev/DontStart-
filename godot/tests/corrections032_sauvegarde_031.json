@@ -1,0 +1,94 @@
+{
+	"checkpoint": "C2",
+	"choices": {
+		"fin_seance1": "suite",
+		"miroir_reel": "fui",
+		"peur_seance1": 41,
+		"porte": "preuve",
+		"prix": "personne",
+		"proche": "Mamie",
+		"reflet": "fixe",
+		"verres": "gauche"
+	},
+	"date": "2026-11-13T18:42:55",
+	"face_scares": 0,
+	"flags": {
+		"acte1_fini": true,
+		"acte2": true,
+		"antenne_prise": true,
+		"babyphone_parle": true,
+		"boite_ouverte": true,
+		"console_allumee": true,
+		"couloir_niveau": 0.0,
+		"entree_amis": true,
+		"entree_bureau": true,
+		"entree_couloir": true,
+		"entree_sdb": true,
+		"fin_031": true,
+		"habite": "console",
+		"horloge_s": 36.4,
+		"imprime_croquis_imprime": true,
+		"imprime_photo_couloir": true,
+		"imprime_plan_imprime": true,
+		"interrupteur_couloir": true,
+		"nestor_eveille": true,
+		"p2_coups": 2,
+		"p4_reel_fait": true,
+		"point_passage": "C2",
+		"porte_P1": "ouverte",
+		"porte_P3": "ouverte",
+		"porte_P7": "ouverte",
+		"seche_cheveux_pris": true,
+		"sos_joue": true,
+		"tele_a_neige": true,
+		"tiroir_bureau_ouvert": true
+	},
+	"hero": "alexandre",
+	"items": [
+		{
+			"desc": "Glissée sous la porte par Papi.",
+			"id": "cle_chambre",
+			"kind": "cle",
+			"name": "Clé de la chambre"
+		},
+		{
+			"desc": "« N'ouvre à personne. Même pas à moi. »",
+			"id": "mot_albert",
+			"kind": "doc",
+			"name": "Mot de Papi"
+		},
+		{
+			"desc": "Un double. Étiquette de Mamie : BUREAU. Il était dans la boîte à biscuits.",
+			"id": "cle_bureau",
+			"kind": "cle",
+			"name": "Clé du bureau"
+		},
+		{
+			"desc": "Une étiquette « A. » sur le manche. Évidemment.",
+			"id": "tournevis",
+			"kind": "outil",
+			"name": "Tournevis de Papi"
+		},
+		{
+			"desc": "Un Calor de 1994. Le boîtier et la gâchette du croquis.",
+			"id": "seche_cheveux",
+			"kind": "arme",
+			"name": "Sèche-cheveux de Mamie"
+		},
+		{
+			"desc": "Les oreilles de lapin de la vieille télé.",
+			"id": "antenne",
+			"kind": "arme",
+			"name": "Antenne télescopique"
+		}
+	],
+	"peur": 55.8,
+	"peur_floor": 25.0,
+	"pos": [
+		7.0,
+		0.0,
+		-4.84999990463257
+	],
+	"version": "0.3.1",
+	"yaw": 3.14159265358979
+}

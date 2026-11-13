@@ -1,9 +1,10 @@
 class_name Acte2
 extends Node
 ## Acte II, première moitié (v0.3) : l'étage. Le joueur sort de la chambre de sa mère, explore le
-## couloir, la salle de bain, la chambre d'amis et le bureau ; la maison connectée s'éveille.
-## Référence : docs/v0.3.md, § 2.2 (étapes 6 à 12), § 2.3 (P4 réel), § 5.5 (jauge), § 5.6 (textes),
-## § 5.6.8 (objectifs et indices de 90 s).
+## couloir, la salle de bain, la chambre d'amis et le bureau ; la maison connectée s'éveille ; puis
+## l'entité le convoque à l'ordinateur pour la séance 2, et la version 0.3 finit.
+## Référence : docs/v0.3.md, § 2.2 (étapes 6 à 15), § 2.3 (P4 réel), § 5.5 (jauge), § 5.6 (textes),
+## § 5.6.8 (objectifs et indices de 90 s), § 5.6.9 (convocation, séance 2), § 5.6.10 (carte de fin).
 ##
 ## Nœud enfant de Main, créé par main.gd. Branchements (main._route_signals) :
 ## - Acte1._on_key_taken() → begin() (clé et mot d'Albert ramassés), puis main.checkpoint("C1") ;
@@ -14,16 +15,23 @@ extends Node
 ## - house.door_opened(id) → on_door_opened(id) ;
 ## - haunt.story(name, data) → on_story(name, data) (événements des pièces et des appareils) ;
 ## - Game.absorbed → on_absorbed() (jauge à 100 hors séance : fin ABSORBÉ, B15) ;
+## - room.pc_answered → _on_pc_answered() (« Répondre à l'ordinateur » : séance 2) ;
+## - terminal.ended(id) → on_seance_end(id) (« fin_v03 » : la fin de la version) ;
 ## - haunt.hint_fn = hint (indices moqueurs de 90 s, § 5.6.8) ;
 ## - main.continue_game() → restore() (après Game.apply_checkpoint et Acte1.restore, avant
 ##   house.restore_all).
 ## Tout l'état qui doit survivre à une sauvegarde est dans Game.flags :
 ##   entree_<pièce>, nestor_eveille, couloir_niveau, p2_coups, sos_joue, babyphone_parle, habite,
-##   imprime_<page>, croquis_lu, clovis_vu, p4_reel_fait, point_passage, fin_031 (et ceux des pièces).
-## Points de passage : C1 (clé, écrit par Acte1), C2 après le P4 réel (§ 2.3). C3 (convocation) : 0.3.2.
-## La fin provisoire de la 0.3.1 est dans _end_031() (à remplacer par la convocation en 0.3.2).
+##   imprime_<page>, croquis_lu, clovis_vu, p4_reel_fait, point_passage, convocation, fin_v03 (et ceux
+##   des pièces).
+## Points de passage : C1 (clé, écrit par Acte1), C2 après le P4 réel (§ 2.3), C3 à la convocation
+## (dans la chambre de ta mère ou au couloir). La fin de la version (fin_v03) ajoute son drapeau à C3 :
+## « Continuer » reprend la convocation, l'ordinateur appelle encore.
+## Migration : une sauvegarde de la 0.3.1 qui porte fin_031 (fin provisoire) reprend normalement ; le
+## drapeau est effacé et la convocation se déclenche.
+## Étapes (Haunt.step, journal des temps) : sortir, mamie, explorer, p4, convocation, seance2, fin.
 
-signal ended_031      # la carte de fin de la 0.3.1 est passée (autotest)
+signal ended_v03      # la carte de fin de la version 0.3 est passée (autotest)
 
 const PEUR_FLOOR := 25.0                       # plancher de la jauge à l'acte II (§ 5.5)
 const BREATH_POS := Vector3(2.6, 0.9, -3.6)     # respiration lente d'Henriette, derrière P2 (§ 5.2)
@@ -31,7 +39,16 @@ const REFUGE_RATE := 0.2                       # chambre de ta mère, hors séan
 const SOS_DELAY := 25.0                        # S.O.S. 25 s après le premier appui sur P2…
 const SOS_RADIUS := 2.0                        # … ou à moins de 2 m du radiateur
 const SOS_CALM := 2.5                          # (jamais par-dessus une scène écrite : 2,5 s de calme)
-const END_DELAY := 5.0                         # fin provisoire : 5 s après les trois conditions, au calme
+const CONV_CALM := 1.0                         # convocation : une seconde de calme après la dernière scène
+const CONV_READ_MAX := 15.0                    # (elle attend au plus 15 s qu'on ait fini de lire)
+## C3 hors de la chambre et du couloir : devant P1, côté couloir, face à la chambre.
+const C3_POS := Vector3(4.0, 0.0, 1.4)
+const C3_YAW := PI / 2.0
+## La jauge écrite dans C3 ne dépasse pas 83 : la séance 2 ajoute au moins +10 et au plus +16 ; après
+## une reprise de C3, elle ne peut donc plus finir en ABSORBÉ à coup sûr (sinon : ABSORBÉ, reprise,
+## ABSORBÉ…). La première traversée garde sa jauge réelle.
+const C3_PEUR_MAX := 83.0
+const SEANCE2 := preload("res://scripts/seance2.gd")
 const PIPE_POS := Vector3(4.62, 0.12, -2.9)    # les coups montent du pied du radiateur
 const COULOIR := preload("res://scripts/house/rooms/couloir.gd")
 
@@ -73,6 +90,10 @@ const C3 := "Presque toute. Dans la chambre de ta mère, il n'y a pas de caméra
 const C4 := "C'est le seul endroit où je ne te vois pas."
 const C5 := "PEUR MESURÉE : %d %%"
 const H_CLOVIS := "Clovis est là. Il n'a pas bougé. La caméra, si."
+
+## Convocation (§ 5.6.9), au mot près.
+const N10 := "Ta mère avait une sonnerie pour moi. Celle-ci."
+const N11 := "Reviens dans sa chambre. On fait le point."
 const PAGE_TEX := {
 	"plan_imprime": "res://assets/images/plan_etage.png",
 	"croquis_imprime": "res://assets/images/croquis_fractionneur.png",
@@ -100,8 +121,8 @@ const ABSORBE_LINES := [
 ]
 const ABSORBE_END := "FIN · ABSORBÉ"
 
-## Carte de la fin provisoire de la 0.3.1 (remplacée par la convocation et la séance 2 en 0.3.2).
-const END_031 := ["FIN DE LA VERSION 0.3.1", "", "Acte II · Essais réels", "Dans la chambre de ta mère, l'ordinateur t'appelle.", "La suite dans la version 0.3.2.", "", "Ta partie est gardée."]
+## Carte de fin de la version (§ 5.6.10), au mot près.
+const END_V03 := ["FIN DE LA VERSION 0.3", "", "Acte II · Essais réels — la suite : la chambre d'Henriette et Albert (version 0.4).", "", "Le cœur de ta grand-mère bat à 52.", "", "Ta partie est gardée."]
 
 var main: Main
 var house: House
@@ -117,13 +138,17 @@ var last_door := ""            # dernière porte essayée (autotest)
 var p4_issue := ""             # issue du P4 réel (autotest)
 var absorbed_screen := ""      # écran choisi pour la fin ABSORBÉ hors séance (autotest)
 var sos_source := ""           # « minuterie » ou « radiateur » (autotest)
-var end_card_shown := false    # la carte de la 0.3.1 est affichée (autotest)
+var end_card_shown := false    # la carte de fin de la version 0.3 est affichée (autotest)
+var seance: Seance2            # la séance 2 en cours (ou finie)
+var conv_elapsed := 0.0        # secondes de jeu depuis la convocation (« {temps} » de la séance 2)
+var room: Node3D               # la chambre de ta mère (room.gd)
 var _breath: Node              # boucle « breath_slow » derrière P2
 var _prev_room := ""
 var _knock_t := -1.0           # temps depuis le premier appui sur P2 (−1 : pas encore)
 var _calm := 0.0               # temps passé hors de toute scène écrite
-var _end_pending := false
-var _end_calm := 0.0
+var _conv_busy := false        # convocation en cours (attente du calme, scène, C3)
+var _seance2_on := false       # séance 2 ou fin de la version en cours
+var _ending := false
 var _p4_busy := false
 var _check_t := 0.0
 var _absorbing := false
@@ -132,6 +157,7 @@ var _p2_waiting := false       # coups frappés à P2, N5 à N7 pas encore dits 
 
 func setup(m: Main) -> void:
 	main = m
+	room = m.room
 	house = m.house
 	haunt = m.haunt
 	player = m.player
@@ -212,14 +238,8 @@ func _croquis_seen() -> bool:
 
 
 func _refresh_objective() -> void:
-	if not active or _absorbing:
-		return     # (pendant ABSORBÉ, l'objectif reste effacé)
-	if _flag("fin_031"):
-		# fin provisoire de la 0.3.1 passée : rien de plus à faire dans cette version (la suite, la
-		# convocation, arrive en 0.3.2) ; pas d'objectif déjà rempli à l'écran
-		if Game.objective_text != "" or Game.objective_sub != "":
-			Game.objective("")
-		return
+	if not active or _absorbing or _seance2_on or _conv_busy:
+		return     # (pendant ABSORBÉ, la séance 2 et la fin, l'objectif reste effacé ; O4 suit N10 et N11)
 	var t := objective()
 	var s := objective_sub()
 	if t != Game.objective_text or s != Game.objective_sub:
@@ -228,6 +248,8 @@ func _refresh_objective() -> void:
 
 ## Étape du scénario d'après Game.flags (sert aux indices et au chargement).
 func _step() -> String:
+	if _flag("convocation"):
+		return "convocation"
 	if not bool(Game.flag("entree_couloir", false)):
 		return "sortir"
 	if int(Game.flag("p2_coups", 0)) == 0 or _p2_waiting:
@@ -402,6 +424,7 @@ func on_story(event_name: String, data: Dictionary) -> void:
 func _on_inventory() -> void:
 	if active:
 		_refresh_objective()
+		_check_convocation()
 
 
 # ------------------------------------------------------------------ S.O.S. (étape 8)
@@ -576,6 +599,7 @@ func _p4() -> void:
 	if _p4_done() or _p4_busy or sdb == null:
 		return
 	_p4_busy = true
+	_set_step("p4")
 	var issue: String = await sdb.run_p4()
 	p4_issue = issue
 	_p4_busy = false
@@ -595,6 +619,7 @@ func _p4() -> void:
 	if _absorbing or Game.phase == "end":
 		return
 	_checkpoint("C2")
+	_set_step(_step())
 	_refresh_objective()
 	_check_convocation()
 
@@ -608,52 +633,179 @@ func _in_doorway() -> bool:
 	return false
 
 
-## Écrit le point de passage (jamais pendant la séquence ABSORBÉ : la jauge y est à 100).
-func _checkpoint(id: String) -> void:
+## Écrit le point de passage (jamais pendant la séquence ABSORBÉ : la jauge y est à 100), à la
+## position du joueur, ou à « pos » (lacet « yaw ») si elle est donnée.
+func _checkpoint(id: String, pos := Vector3.INF, yaw := 0.0, peur_max := 100.0) -> void:
 	if _absorbing:
 		return
 	Game.set_flag("point_passage", id)
-	main.checkpoint(id)
+	main.checkpoint(id, pos, yaw, peur_max)
 
 
-# ------------------------------------------------------------------ fin de la 0.3.1 (provisoire)
+# ------------------------------------------------------------------ convocation (étape 13)
 
-## Les trois conditions de la convocation (sèche-cheveux, antenne, P4 réel). En 0.3.1, c'est la fin
-## provisoire (_end_031), quelques secondes plus tard, hors de toute scène écrite.
+## Les trois conditions de la convocation (§ 2.2, étape 13) : le sèche-cheveux, l'antenne et le P4 réel
+## (Game.choices["miroir_reel"]). Dès qu'elles sont réunies : _convocation(), hors de toute scène
+## écrite et jamais pendant ABSORBÉ.
 func _check_convocation() -> void:
-	if _end_pending or _flag("fin_031") or not active:
+	if not active or _absorbing or _conv_busy or _seance2_on or _flag("convocation"):
 		return
 	if Game.has_item("seche_cheveux") and Game.has_item("antenne") and _p4_done():
-		_end_pending = true
-		_end_calm = 0.0
+		_convocation()
 
 
-## Fin de la version 0.3.1 (À REMPLACER en 0.3.2 par _convocation()) : silence de 1,5 s, un bip de
-## Nestor dans le couloir, fondu au noir, carte de fin, drapeau « fin_031 » sauvegardé, retour au titre.
-func _end_031() -> void:
-	_end_pending = false
-	if _flag("fin_031"):
+## La convocation : elle attend la fin des scènes écrites (et du P4 réel) ; une seconde et demie de
+## silence ; le chant du modem depuis l'ordinateur de ta mère, entendu dans tout l'étage, et l'écran
+## qui clignote (room.convocation) ; N10 et N11 par Nestor ; objectif O4. Le point de passage C3 est
+## écrit au début (dans la chambre de ta mère ou au couloir), juste avant le chant. Stress +0,5.
+func _convocation() -> void:
+	_conv_busy = true
+	var calm := 0.0
+	var t := 0.0
+	while is_inside_tree() and not _absorbing:
+		await get_tree().process_frame
+		if get_tree().paused:
+			continue
+		var dt := get_process_delta_time()
+		t += dt
+		var mirror_busy: bool = sdb != null and bool((sdb.mirror as SmartMirror).p4_running)
+		var reading: bool = bool(hud.is_reading()) and t < CONV_READ_MAX
+		var busy: bool = Game.phase != "room" or haunt.is_busy() or mirror_busy or _p4_busy or reading
+		calm = 0.0 if busy else calm + dt
+		if calm >= CONV_CALM:
+			break
+	if _absorbing or not active or _flag("convocation") or Game.phase != "room":
+		_conv_busy = false
 		return
-	Game.set_flag("fin_031", true)
 	haunt.begin_scene()
-	Game.phase = "end"
-	player.can_move = false
-	hud.set_prompt(null)
+	# (l'objectif d'avant, « Elle t'attend dans la salle de bain », ne reste pas affiché pendant le
+	# chant : l'écran reste vide jusqu'à O4, qui suit N10 et N11)
+	Game.objective("")
+	Game.set_flag("convocation", true)
+	conv_elapsed = 0.0
+	_set_step("convocation")
+	# C3 tout de suite, debout, là où il est (le joueur peut répondre avant la fin de N11 : il serait
+	# alors assis) ; « Continuer » reprend la convocation, l'ordinateur appelle encore
+	var spot := _c3_spot()
+	_checkpoint("C3", spot[0], spot[1], C3_PEUR_MAX)
 	haunt.silence(1.5)
 	await _wait(1.5)
+	if _absorbing:
+		haunt.end_scene()
+		_conv_busy = false
+		return
+	room.convocation(true)
+	haunt.stress(0.5)
+	await _wait(1.6)
+	await haunt.say_lines("nestor", [N10, N11])
+	haunt.end_scene()
+	_conv_busy = false
+	_refresh_objective()
+
+
+## Où C3 reprend : là où est le joueur s'il est dans la chambre de ta mère ou au couloir (pas dans
+## l'embrasure d'une porte) ; sinon au couloir, devant la chambre, face à elle.
+func _c3_spot() -> Array:
+	var cur := house.current.room_id if house.current else ""
+	if cur in ["mere", "couloir"] and not _in_doorway():
+		return [player.global_position, float(player.yaw)]
+	return [C3_POS, C3_YAW]
+
+
+# ------------------------------------------------------------------ séance 2 (étape 14)
+
+## « Répondre à l'ordinateur » (room.pc_answered) : le joueur s'assoit, comme à l'acte I (la disquette
+## est toujours dans le lecteur) ; la séance 2 (seance2.gd) se joue sur le terminal.
+func _on_pc_answered() -> void:
+	if not active or _absorbing or _seance2_on or not _flag("convocation"):
+		return
+	_seance2_on = true
+	Game.phase = "seated"
+	if hud.paper_open:
+		hud.close_paper()
+	if hud.screen_open:
+		hud.close_screen()
+	if hud.inv_open:
+		hud.toggle_inventory()
+	hud.set_prompt(null)
+	hud.show_hand(false)
+	hud.show_crosshair(false)
+	Game.objective("")
+	room.convocation(false)
+	room.chair.visible = false
+	_set_step("seance2")
+	haunt.log({"ev": "seance2", "depuis_convocation": snappedf(conv_elapsed, 0.1)})
+	await player.sit(room.seat_pos, room.screen_center)
+	Sfx.play_at("drive_seek", room.screen_center + Vector3(-0.09, -0.3, 0.1), -6.0)
+	if seance and is_instance_valid(seance):
+		seance.queue_free()
+	seance = SEANCE2.new()
+	seance.name = "Seance2"
+	seance.T = main.terminal
+	seance.player = player
+	seance.haunt = haunt
+	seance.gp = house.rooms.get("gp")
+	seance.since_convocation = conv_elapsed
+	add_child(seance)
+	seance.run()
+
+
+## Fin d'une séance sur le terminal (terminal.ended) : « fin_v03 » joue la fin de la version. (Les
+## autres fins, dont ABSORBÉ pendant la séance 2, passent par Acte1._on_seance_end.)
+func on_seance_end(id: String) -> void:
+	if not _seance2_on:
+		return
+	if id == "fin_v03":
+		_end_v03()
+
+
+# ------------------------------------------------------------------ fin de la version 0.3 (étape 15)
+
+## L'écran s'est éteint (fin de la séance 2). Deux secondes de silence ; dans le couloir, un bip de
+## Nestor ; derrière P2, la respiration d'Henriette ralentit. Fondu au noir, carte de fin (§ 5.6.10),
+## drapeau « fin_v03 » ajouté à la sauvegarde (C3 : « Continuer » reprend la convocation), retour au
+## titre.
+func _end_v03() -> void:
+	if _ending:
+		return
+	_ending = true
+	haunt.begin_scene()
+	Game.phase = "end"
+	hud.set_prompt(null)
+	Game.objective("")
+	haunt.silence(2.0)
+	await _wait(2.0)
+	_set_step("fin")
 	if couloir:
-		(couloir.nestor as Nestor).chirp(-4.0)
-	await _wait(1.4)
+		(couloir.nestor as Nestor).chirp(-3.0)
+	haunt.log({"ev": "fin_v03"})
+	await _wait(1.0)
+	_slow_breath()
+	await _wait(4.5)
 	await hud.fade_to(1.0, 2.5)
-	_checkpoint(str(Game.flag("point_passage", "C2")))
 	hud.clear_subtitles()
 	Game.objective("")
+	Game.set_flag("fin_v03", true)
+	main.save_flag("fin_v03", true)
+	Game.save_choices()
 	end_card_shown = true
-	await hud.card(END_031, 7.0)
+	await hud.card(END_V03, 7.0)
 	end_card_shown = false
 	haunt.end_scene()
-	ended_031.emit()
+	ended_v03.emit()
 	_back_to_title()
+
+
+## Derrière P2, la respiration d'Henriette ralentit (et s'entend mieux) ; sous la couette, la forme
+## respire plus lentement.
+func _slow_breath() -> void:
+	if _breath and is_instance_valid(_breath):
+		var tw := create_tween().set_parallel()
+		tw.tween_property(_breath, "pitch_scale", 0.72, 5.0)
+		tw.tween_property(_breath, "volume_db", -9.0, 1.5)
+	var gp: Node = house.rooms.get("gp")
+	if gp:
+		gp.set_breath(9.0)
 
 
 ## Retour à l'écran-titre (« Continuer » reprend la partie gardée).
@@ -694,6 +846,8 @@ func _absorbe() -> void:
 	hud.set_prompt(null)
 	hud.clear_subtitles()
 	Game.objective("")
+	if room.convoking:
+		room.convocation(false)
 	Sfx.music("", -60.0, 0.1)
 	Sfx.sting(-2.0)
 	haunt.silence(2.0)
@@ -767,7 +921,7 @@ func _screen_power(id: String) -> Texture2D:
 	term.clear()
 	await term.power_off()
 	await term.power_on()
-	term.watch_face(0.7, 2.0)
+	term.glitch(1.0)     # (pas de visage : § 1.2, aucun visage net en dehors de la séance 1)
 	return (term as Control).get_viewport().get_texture()
 
 
@@ -841,6 +995,8 @@ func _process(delta: float) -> void:
 		Game.stress_decay_mult = 1.0
 	if not in_room:
 		return
+	if _flag("convocation") and not _seance2_on:
+		conv_elapsed += delta
 	var busy: bool = haunt.is_busy() or bool(hud.is_reading())
 	_calm = 0.0 if busy else _calm + delta
 	# S.O.S. : 25 s après le premier appui sur P2, ou plus tôt si le joueur passe à moins de 2 m du
@@ -862,15 +1018,6 @@ func _process(delta: float) -> void:
 			if cl and _sees_clovis_from_window(cl.global_position + Vector3(0, 0.5, 0)):
 				Game.set_flag("clovis_vu", true)
 				Game.hint(H_CLOVIS, 5.0)
-	# fin provisoire de la 0.3.1 : quelques secondes de calme après les trois conditions
-	if _end_pending:
-		var mirror_busy: bool = sdb != null and bool((sdb.mirror as SmartMirror).p4_running)
-		if busy or mirror_busy:
-			_end_calm = 0.0
-		else:
-			_end_calm += delta
-			if _end_calm >= END_DELAY:
-				_end_031()
 
 
 ## « À la fenêtre de la chambre de Manon ou de la chambre d'amis » (§ 5.6.4) : le joueur se tient à
@@ -908,8 +1055,19 @@ func restore() -> void:
 	if not _flag("acte2"):
 		return
 	active = true
-	_end_pending = false
 	_absorbing = false
+	_conv_busy = false
+	_seance2_on = false
+	_ending = false
+	end_card_shown = false
+	conv_elapsed = 0.0
+	if seance and is_instance_valid(seance):
+		seance.queue_free()
+	seance = null
+	# migration : une sauvegarde de la 0.3.1 finie sur sa carte provisoire reprend normalement (la
+	# convocation se déclenche)
+	if Game.flags.has("fin_031"):
+		Game.flags.erase("fin_031")
 	# l'heure de la maison reprend où elle en était (main.checkpoint garde « horloge_s »)
 	Game.clock_origin_ms = Time.get_ticks_msec() - int(float(Game.flag("horloge_s", 0.0)) * 1000.0)
 	if couloir:
@@ -917,6 +1075,9 @@ func restore() -> void:
 		couloir.set_cam_led(_flag("entree_couloir"))
 	if _flag("entree_couloir"):
 		_start_breath()
+		if _breath and is_instance_valid(_breath):
+			_breath.set("pitch_scale", 1.0)
+			_breath.set("volume_db", -14.0)
 		_track_player()
 		# (sauvegardé pendant l'éveil du couloir : Nestor est réveillé, la scène ne se rejoue pas)
 		if not _flag("nestor_eveille"):
@@ -934,7 +1095,12 @@ func restore() -> void:
 	for id in ["plan_imprime", "croquis_imprime", "photo_couloir"]:
 		if _flag("imprime_" + id) and not Game.has_item(id):
 			_print_page(id, null, true)
-	# fin provisoire de la 0.3.1 déjà vue : plus d'indice ni d'objectif (la suite est en 0.3.2)
-	_set_step("" if _flag("fin_031") else _step())
+	var gp: Node = house.rooms.get("gp")
+	if gp:
+		gp.set_breath(14.0)
+	# convoqué (C3, ou fin de la version vue) : l'ordinateur appelle encore
+	if _flag("convocation"):
+		room.convocation(true)
+	_set_step(_step())
 	_refresh_objective()
 	_check_convocation()

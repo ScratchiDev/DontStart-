@@ -19,6 +19,8 @@ const PAGES := {
 	"photo_couloir": {"name": "Photo du couloir, 03:2x", "desc": "Le couloir vide. Juste le rond de ta lampe.",
 		"legend": "CAM 1, 03:2x. Le couloir, vide. Juste le rond de ta lampe. C'est toi."},
 }
+## Sous-titre du son de l'imprimante (option « Sous-titres des sons » ; texte à valider par l'auteur).
+const CAPTION := "[L'imprimante du bureau se met en marche]"
 const SHEET := Vector2(0.21, 0.297)     # A4, posée à plat : x = largeur, y = longueur (vers +Z)
 
 var body_size := Vector3(0.42, 0.2, 0.35)
@@ -171,6 +173,10 @@ func _print_one(p: Dictionary) -> void:
 	show_len.call(0.0)
 	led(Color(0.2, 1.0, 0.3))
 	Sfx.play_at("printer", global_position + Vector3(0, body_size.y, 0), -6.0, 1.0, 2.0)
+	# sous-titre de son (option) : elle imprime toute seule, on l'entend parfois du couloir (la photo)
+	var h := get_tree().get_first_node_in_group("haunt")
+	if h and h.has_method("sound_caption"):
+		h.sound_caption(CAPTION)
 	# entraînement par à-coups (moteur pas à pas), pendant ~3 s
 	var steps := 12
 	var shown := 0.0

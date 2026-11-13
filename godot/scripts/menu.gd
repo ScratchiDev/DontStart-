@@ -52,7 +52,7 @@ func _boxes() -> Array:
 
 func _theme() -> Theme:
 	var th := Theme.new()
-	th.default_font = Game.fonts.pixel
+	th.default_font = Connected.no_liga(Game.fonts.pixel)     # (sans la ligature « fi »)
 	th.default_font_size = FONT
 	var normal := StyleBoxFlat.new()
 	normal.bg_color = Color(0, 0, 0, 0)

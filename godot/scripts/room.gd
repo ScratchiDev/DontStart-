@@ -6,6 +6,7 @@ extends HouseRoom
 signal floppy_taken
 signal pc_used
 signal key_taken        # la clé et le mot d'Albert sont ramassés (début de l'acte II, point de passage C1)
+signal pc_answered      # convocation : le joueur répond à l'ordinateur (séance 2, Acte2)
 
 const W := 6.4
 const D := 5.2
@@ -17,6 +18,13 @@ const WIN_Z1 := 0.25
 const WIN_Y0 := 0.95
 const WIN_Y1 := 2.2
 const DOOR_Z := 1.4
+## Convocation (§ 2.2, étape 13) : le chant du modem, repris tant qu'on n'a pas répondu.
+const MODEM_EVERY := 22.0
+const MODEM_DB := -3.0
+const LABEL_ANSWER := "Répondre à l'ordinateur"
+const LABEL_INSERT := "Insérer la disquette"
+const EJECT_MSG := "Elle ne sort pas."
+const MODEM_CAPTION := "[Chant de modem, dans la chambre de ta mère]"   # (texte à valider par l'auteur)
 
 var desk_top := 0.76
 var pc_x := 1.2
@@ -45,6 +53,13 @@ var window_glass_mat: ShaderMaterial
 var outside: Node3D
 var decor: Node3D
 var pc_dev: Connected               # l'ordinateur, vu par l'entité comme un écran de la maison (« pc_manon »)
+var eject_it: Interactable         # bouton d'éjection de la disquette : elle ne sort pas
+var convoking := false             # convocation : le modem chante, l'écran clignote (convocation(on))
+var modem_plays := 0               # chants du modem joués depuis le lancement (autotest)
+var modem: AudioStreamPlayer3D     # le chant en cours (ou null)
+var _modem_timer: Timer
+var _blink_tw: Tween
+var _screen_light_e := 0.32
 
 
 func _ready() -> void:
@@ -387,14 +402,28 @@ func _build_pc() -> void:
 	screen_center = Vector3(x, my + 0.215, z + 0.193)
 	var screen := _quad(Vector2(0.38, 0.29), screen_center, screen_mat)
 	screen.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	var it := _interactable("Insérer la disquette", Vector3(1.0, 0.8, 0.8), Vector3(x, base + 0.3, z + 0.2))
+	var it := _interactable(LABEL_INSERT, Vector3(1.0, 0.8, 0.8), Vector3(x, base + 0.3, z + 0.2))
 	pc_it = it
 	it.used.connect(func(_i: Interactable) -> void:
-		if Game.has_floppy:
+		if convoking:
 			it.enabled = false
+			_set_pc_shape(false)
+			pc_answered.emit()
+		elif Game.has_floppy:
+			it.enabled = false
+			_set_pc_shape(false)
 			pc_used.emit()
 		else:
 			Game.hint("L'écran clignote. Il attend quelque chose."))
+	# le bouton d'éjection, sous la fente : la disquette ne ressort pas (§ 4.3). Il n'est visé qu'une
+	# fois la disquette dans le lecteur (la grande boîte « Insérer la disquette » est alors coupée).
+	_box(Vector3(0.022, 0.009, 0.006), Vector3(x + 0.035, base + 0.052, z + 0.222), mats.dark)
+	# (la boîte dépasse de 3 cm le collisionneur de l'unité centrale, pour que le rayon la trouve)
+	eject_it = _interactable("Éjecter la disquette", Vector3(0.3, 0.1, 0.12), Vector3(x - 0.05, base + 0.065, z + 0.29))
+	eject_it.enabled = false
+	eject_it.used.connect(func(_i: Interactable) -> void:
+		Sfx.play_at("metalClick", eject_it.global_position, -8.0, 1.3)
+		Game.hint(EJECT_MSG, 3.0))
 	_collider(Vector3(0.52, 0.56, 0.6), Vector3(x, base + 0.28, z), self)
 	var hum: Node = Sfx.loop("crt_hum", -30.0, screen_center, self)
 	hum.set("max_distance", 6.0)
@@ -448,6 +477,7 @@ func insert_floppy() -> void:
 	led_mat.emission = Color(1, 0.65, 0.15)
 	led_mat.emission_energy_multiplier = 3.0
 	Sfx.play_at("drive_seek", slot, -4.0)
+	eject_it.enabled = true
 	await get_tree().create_timer(1.2).timeout
 
 
@@ -779,8 +809,11 @@ func restore_after_seance() -> void:
 		d.rotation.y = sign_ * 1.85
 	floppy.visible = false
 	floppy_item.enabled = false
-	if pc_it:
+	if pc_it and not convoking:
 		pc_it.enabled = false
+		pc_it.label = LABEL_INSERT
+		_set_pc_shape(false)
+	eject_it.enabled = true
 	led_mat.albedo_color = Color(1, 0.7, 0.18)
 	led_mat.emission_enabled = true
 	led_mat.emission = Color(1, 0.65, 0.15)
@@ -789,3 +822,80 @@ func restore_after_seance() -> void:
 	ceiling_dead = true
 	ceiling_light.light_energy = 0.0
 	chair.visible = true
+
+
+# ------------------------------------------------------------------ convocation (acte II)
+
+## La grande boîte d'interaction de l'ordinateur : coupée quand elle ne sert pas (on vise alors le
+## bouton d'éjection, qu'elle recouvre), rendue pour la convocation.
+func _set_pc_shape(on: bool) -> void:
+	if pc_it == null:
+		return
+	for c in pc_it.get_children():
+		if c is CollisionShape3D:
+			(c as CollisionShape3D).set_deferred("disabled", not on)
+
+
+## Convocation (§ 2.2, étape 13 ; § 4.3) : le chant du modem, joué depuis l'ordinateur et entendu dans
+## tout l'étage, repris toutes les MODEM_EVERY secondes ; l'écran clignote ; « Répondre à
+## l'ordinateur » (pc_answered). convocation(false) : tout s'arrête (le joueur a répondu, ou la fin).
+func convocation(on: bool) -> void:
+	convoking = on
+	if _modem_timer == null:
+		_modem_timer = Timer.new()
+		_modem_timer.name = "ModemRepete"
+		_modem_timer.wait_time = MODEM_EVERY
+		_modem_timer.timeout.connect(_modem_chant)
+		add_child(_modem_timer)
+	if _blink_tw:
+		_blink_tw.kill()
+		_blink_tw = null
+	if on:
+		pc_it.label = LABEL_ANSWER
+		pc_it.enabled = true
+		_set_pc_shape(true)
+		_modem_chant()
+		_modem_timer.start()
+		# l'écran clignote (luminosité du tube et sa lueur dans la pièce)
+		_blink_tw = create_tween().set_loops()
+		_blink_tw.tween_method(_screen_blink, 1.0, 0.0, 0.45)
+		_blink_tw.tween_method(_screen_blink, 0.0, 1.0, 0.45)
+		return
+	_modem_timer.stop()
+	if modem and is_instance_valid(modem):
+		var p := modem
+		var tw := p.create_tween()
+		tw.tween_property(p, "volume_db", -50.0, 0.4)
+		tw.tween_callback(p.queue_free)
+	modem = null
+	_screen_blink(1.0)
+	pc_it.enabled = false
+	pc_it.label = LABEL_INSERT
+	_set_pc_shape(false)
+
+
+func _screen_blink(k: float) -> void:
+	if screen_mat:
+		screen_mat.set_shader_parameter("brightness", lerpf(0.55, 1.45, k))
+	if screen_light:
+		screen_light.light_energy = lerpf(0.1, _screen_light_e, k)
+
+
+## Un chant du modem (8 s : tonalité, numérotation, poignée de main) depuis l'ordinateur, assez fort
+## pour traverser l'étage (assourdi de loin), et son sous-titre « [Chant de modem…] » (si l'option des
+## sous-titres des sons est active).
+func _modem_chant() -> void:
+	if not convoking:
+		return
+	if modem and is_instance_valid(modem) and modem.playing:
+		return
+	modem = Sfx.play_at("modem_chant", screen_center, MODEM_DB, 1.0, 6.0)
+	if modem:
+		modem.max_distance = 40.0
+		modem.attenuation_filter_cutoff_hz = 3500.0
+		modem.pitch_scale = 1.0
+	modem_plays += 1
+	var h := Haunt.of(get_tree())
+	if h:
+		h.sound_caption(MODEM_CAPTION)
+		h.log({"ev": "modem", "dev": "pc_manon", "n": modem_plays})

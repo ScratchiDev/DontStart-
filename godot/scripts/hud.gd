@@ -5,6 +5,7 @@ extends CanvasLayer
 ## 10 px (détails) ; en 12 à 16 px, le « M » de cette police se lit « N ».
 
 signal subtitle_shown(who: String, text: String)
+signal sound_captioned(text: String)     # un sous-titre de son vient de s'afficher (option active)
 signal screen_closed
 
 const GREEN := Color(0.36, 1.0, 0.42)
@@ -49,10 +50,19 @@ var _toast_tw: Tween
 var objective_sub: Label
 # sous-titres
 var sub_lbl: RichTextLabel
+var caption_both := 0              # images où un son et un dialogue sont affichés ensemble (C5)
+var caption_overlap_max := -INF    # pire chevauchement de leurs textes (px ; ≤ 0 : jamais)
 var subtitle_log: Array = []        # lignes affichées, dans l'ordre : {who, text, kind}
 var current_subtitle := ""          # texte affiché en ce moment ("" = rien)
+var current_kind := ""              # sorte de la ligne affichée : "elle", "proche", "son", "autre"
 var _sub_queue: Array = []
 var _sub_left := 0.0
+# sous-titres des sons importants (option) : une ligne à part, au-dessus des dialogues, tout de suite
+var snd_lbl: Label
+var caption_log: Array = []         # sous-titres de sons affichés, dans l'ordre : {text, t (s)}
+var current_caption := ""
+var _snd_left := 0.0
+var _snd_tw: Tween
 # image dans le lecteur de papiers, écran en grand
 var _paper_fs := 26                 # taille de l'écriture manuscrite (rapetisse si la page déborde)
 const PAPER_TEXT_H := 220.0         # hauteur disponible pour l'écriture sur la feuille
@@ -74,7 +84,7 @@ func _ready() -> void:
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var th := Theme.new()
-	th.default_font = Game.fonts.pixel
+	th.default_font = Connected.no_liga(Game.fonts.pixel)     # (sans la ligature « fi »)
 	th.default_font_size = FONT
 	root.theme = th
 	add_child(root)
@@ -137,7 +147,7 @@ func _ready() -> void:
 	sub_lbl.offset_top = -52
 	sub_lbl.offset_bottom = -12
 	sub_lbl.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	sub_lbl.add_theme_font_override("normal_font", Game.fonts.pixel)
+	sub_lbl.add_theme_font_override("normal_font", Connected.no_liga(Game.fonts.pixel))
 	sub_lbl.add_theme_font_size_override("normal_font_size", FONT)
 	sub_lbl.add_theme_constant_override("outline_size", 4)
 	sub_lbl.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.92))
@@ -145,6 +155,21 @@ func _ready() -> void:
 	sub_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	sub_lbl.visible = false
 	root.add_child(sub_lbl)
+
+	snd_lbl = _label(SUB_COLORS.son)
+	snd_lbl.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	snd_lbl.offset_left = 50
+	snd_lbl.offset_right = -50
+	snd_lbl.offset_top = -52
+	snd_lbl.offset_bottom = -12
+	snd_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	snd_lbl.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+	snd_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	snd_lbl.add_theme_constant_override("outline_size", 4)
+	snd_lbl.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.92))
+	snd_lbl.add_theme_constant_override("line_spacing", 0)
+	snd_lbl.visible = false
+	root.add_child(snd_lbl)
 
 	hand = _build_hand()
 	hand.visible = false
@@ -380,7 +405,7 @@ func _inv_text() -> RichTextLabel:
 	r.scroll_active = false
 	r.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	r.custom_minimum_size = Vector2(INV_COL_W, 0)
-	r.add_theme_font_override("normal_font", Game.fonts.pixel)
+	r.add_theme_font_override("normal_font", Connected.no_liga(Game.fonts.pixel))
 	r.add_theme_font_size_override("normal_font_size", FONT)
 	r.add_theme_color_override("default_color", Color(0.8, 0.78, 0.7))
 	r.add_theme_constant_override("line_separation", -2)
@@ -586,14 +611,33 @@ func _process(delta: float) -> void:
 		_sub_left -= delta
 		if _sub_left <= 0.0:
 			_next_subtitle()
-	if sub_lbl.visible:
+	if current_caption != "":
+		_snd_left -= delta
+		if _snd_left <= 0.0:
+			_end_caption()
+	if sub_lbl.visible or snd_lbl.visible:
 		# au-dessus de la pensée du héros quand elle est affichée (1 à 3 lignes de 20 px)
 		var above := hint_lbl.modulate.a > 0.05 and hint_lbl.text != ""
 		var hint_h := 0.0
 		if above:
 			hint_h = clampi(hint_lbl.get_line_count(), 1, 3) * float(FONT) + 6.0
 		sub_lbl.offset_bottom = -12.0 - hint_h
-		sub_lbl.offset_top = sub_lbl.offset_bottom - 2.0 * FONT
+		# la boîte du dialogue a la hauteur de son texte (une ligne ou deux) : le texte, dessiné en haut
+		# de la boîte, touche ainsi le bas, et le son posé juste au-dessus ne le chevauche jamais
+		var sub_h := float(sub_lbl.get_content_height())
+		if sub_h < FONT:
+			sub_h = clampi(sub_lbl.get_line_count(), 1, 3) * float(FONT)
+		sub_lbl.offset_top = sub_lbl.offset_bottom - sub_h
+		# le son, au-dessus du dialogue (s'il y en a un), sinon à sa place
+		var sb := sub_lbl.offset_bottom
+		if sub_lbl.visible and sub_lbl.modulate.a > 0.05:
+			sb -= sub_h + 2.0
+		snd_lbl.offset_bottom = sb
+		snd_lbl.offset_top = sb - 2.0 * FONT
+		var o := caption_overlap()
+		if o > -INF:
+			caption_both += 1
+			caption_overlap_max = maxf(caption_overlap_max, o)
 
 
 # ------------------------------------------------------------------ sous-titres
@@ -614,13 +658,58 @@ func subtitle(who: String, text: String, kind := "", on_show := Callable()) -> f
 	return wait + dur
 
 
-## Sous-titre d'un son important, entre crochets et en gris, seulement si l'option est active
-## (ou force = true). Renvoie sa durée (0 s'il n'est pas affiché).
+## Sous-titre d'un son important (C5), entre crochets et en gris, seulement si l'option « Sous-titres
+## des sons » est active (force = true : toujours ; réservé aux captures de test). Il s'affiche tout de
+## suite, sur sa propre ligne au-dessus du dialogue en cours (il n'attend pas dans la file des
+## dialogues) ; le même son déjà affiché est seulement prolongé. Durée : 2 s + 0,06 s par caractère.
+## Renvoie sa durée (0 s'il n'est pas affiché).
 func sound_caption(text: String, force := false) -> float:
 	if not Game.sound_captions and not force:
 		return 0.0
 	var t := text if text.begins_with("[") else "[" + text + "]"
-	return subtitle("", t, "son")
+	var dur := 2.0 + 0.06 * t.length()
+	if _snd_tw:
+		_snd_tw.kill()
+	snd_lbl.modulate.a = 1.0
+	snd_lbl.visible = true
+	if t == current_caption:
+		_snd_left = maxf(_snd_left, dur)
+		return dur
+	snd_lbl.text = t
+	current_caption = t
+	_snd_left = dur
+	caption_log.append({"text": t, "t": snappedf(Time.get_ticks_msec() / 1000.0, 0.01)})
+	subtitle_log.append({"who": "", "text": t, "kind": "son"})
+	subtitle_shown.emit("", t)
+	sound_captioned.emit(t)
+	return dur
+
+
+func _end_caption() -> void:
+	current_caption = ""
+	_snd_left = 0.0
+	_snd_tw = create_tween()
+	_snd_tw.tween_property(snd_lbl, "modulate:a", 0.0, 0.25)
+	_snd_tw.tween_callback(func() -> void:
+		if current_caption == "":
+			snd_lbl.visible = false)
+
+
+## Le son et le dialogue sont-ils affichés ensemble ? Renvoie alors de combien de pixels le bas du
+## texte du son descend sous le haut du texte du dialogue (> 0 : ils se chevauchent ; le son est
+## aligné en bas de sa boîte, le dialogue en haut de la sienne) ; sinon −INF. (C5, autotest.)
+func caption_overlap() -> float:
+	if not (sub_lbl.visible and snd_lbl.visible and sub_lbl.modulate.a > 0.05 and snd_lbl.modulate.a > 0.05):
+		return -INF
+	if current_subtitle == "" or current_caption == "":
+		return -INF
+	return snd_lbl.get_global_rect().end.y - sub_lbl.get_global_rect().position.y
+
+
+## Un dialogue (l'entité, une voix imitée, un autre locuteur) est-il affiché ? (Sfx range le cœur
+## dessous.) Les sous-titres de sons ne comptent pas.
+func dialogue_on() -> bool:
+	return current_subtitle != "" and current_kind != "son"
 
 
 static func speaker_kind(who: String) -> String:
@@ -639,6 +728,7 @@ static func speaker_kind(who: String) -> String:
 func _next_subtitle() -> void:
 	if _sub_queue.is_empty():
 		current_subtitle = ""
+		current_kind = ""
 		_sub_left = 0.0
 		var tw := create_tween()
 		tw.tween_property(sub_lbl, "modulate:a", 0.0, 0.25)
@@ -656,6 +746,7 @@ func _next_subtitle() -> void:
 	sub_lbl.visible = true
 	sub_lbl.modulate.a = 1.0
 	current_subtitle = q.text
+	current_kind = q.kind
 	_sub_left = q.dur
 	subtitle_log.append({"who": q.who, "text": q.text, "kind": q.kind})
 	subtitle_shown.emit(q.who, q.text)
@@ -664,12 +755,16 @@ func _next_subtitle() -> void:
 		cb.call()
 
 
-## Efface les sous-titres (la ligne courante et la file).
+## Efface les sous-titres (la ligne courante et la file, et le son affiché).
 func clear_subtitles() -> void:
 	_sub_queue.clear()
 	current_subtitle = ""
+	current_kind = ""
 	_sub_left = 0.0
 	sub_lbl.visible = false
+	current_caption = ""
+	_snd_left = 0.0
+	snd_lbl.visible = false
 
 
 ## Lecture en cours (papier, image, écran) : pas d'indice, pas de déplacement.

@@ -83,8 +83,10 @@ func _route_signals() -> void:
 	room.floppy_taken.connect(acte1._on_floppy_taken)
 	room.pc_used.connect(acte1._on_pc_used)
 	room.key_taken.connect(acte1._on_key_taken)
+	room.pc_answered.connect(acte2._on_pc_answered)
 	terminal.event.connect(acte1._on_term_event)
 	terminal.ended.connect(acte1._on_seance_end)
+	terminal.ended.connect(acte2.on_seance_end)     # (« fin_v03 » : la fin de la version)
 	terminal.fear_changed.connect(_on_fear)      # (le terminal suit Game.peur, séance ou pas)
 	house.entered_room.connect(acte2.on_room_entered)
 	house.door_tried.connect(acte2.on_door_tried)
@@ -202,6 +204,8 @@ func continue_game() -> void:
 	menu.hide_all()
 	Game.reset_state()
 	Game.apply_checkpoint(d)
+	if player.seated:
+		player.stand(d.pos, float(d.yaw))     # (autotest : la scène n'est pas rechargée après la fin)
 	acte1.restore()
 	acte2.restore()
 	house.restore_all()
@@ -218,11 +222,36 @@ func continue_game() -> void:
 	print("REPRISE %s · peur %.1f · %d objets" % [d.get("checkpoint", "?"), Game.peur, Game.items.size()])
 
 
-## Écrit le point de passage « id » (C1, C2, C3) à la position du joueur, avec l'heure de la maison.
-func checkpoint(id: String) -> bool:
+## Écrit le point de passage « id » (C1, C2, C3) à la position du joueur (ou à « pos », lacet « yaw »,
+## si elle est donnée), avec l'heure de la maison.
+func checkpoint(id: String, pos := Vector3.INF, yaw := 0.0, peur_max := 100.0) -> bool:
 	if bool(Game.flag("acte2", false)):
 		Game.set_flag("horloge_s", snappedf((Time.get_ticks_msec() - Game.clock_origin_ms) / 1000.0, 0.1))
-	return Game.save_checkpoint(id, player.global_position, player.yaw)
+	if pos == Vector3.INF:
+		return Game.save_checkpoint(id, player.global_position, player.yaw, peur_max)
+	return Game.save_checkpoint(id, pos, yaw, peur_max)
+
+
+## Ajoute un drapeau à la sauvegarde existante, sans rien changer d'autre (le point de passage, la
+## position, la jauge restent) : la fin de la version 0.3 garde C3 et note « fin_v03 ».
+func save_flag(id: String, v: Variant = true) -> bool:
+	var path := Game.save_path()
+	if not FileAccess.file_exists(path):
+		return false
+	var d: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if not d is Dictionary:
+		return false
+	var flags: Dictionary = (d as Dictionary).get("flags", {})
+	flags[id] = v
+	(d as Dictionary)["flags"] = flags
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	if f == null:
+		return false
+	f.store_string(JSON.stringify(d, "\t"))
+	f.close()
+	if Game.autotest:
+		print("SAUVEGARDE %s · drapeau %s = %s" % [(d as Dictionary).get("checkpoint", "?"), id, v])
+	return true
 
 
 func _unhandled_input(event: InputEvent) -> void:

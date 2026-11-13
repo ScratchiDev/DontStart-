@@ -25,7 +25,13 @@ var _amb_bus := -1
 var _voice_bus := -1
 var _silence_tw: Tween
 var _heart: AudioStreamPlayer
-var heart_db := -80.0   # volume courant du battement de cœur (lu par l'autotest)
+var heart_db := -80.0   # volume appliqué au battement de cœur, baisse sous les dialogues comprise (C4)
+var heart_curve_db := -80.0   # volume que donne le stress seul (avant la baisse sous les dialogues)
+var _duck := 0.0        # 0..1 : un dialogue s'affiche (le cœur se range dessous)
+
+## Le silence de l'entité (avant qu'elle agisse) et les sursauts : Haunt les écoute pour le stress.
+signal silenced(seconds: float)
+signal stung(db: float)
 
 
 func _ready() -> void:
@@ -47,6 +53,7 @@ func _ensure_bus(bus_name: String) -> int:
 
 ## Juste avant qu'elle agisse : tous les sons d'ambiance se coupent net, puis reviennent.
 func silence(seconds := 1.0) -> void:
+	silenced.emit(seconds)
 	if _silence_tw:
 		_silence_tw.kill()
 	AudioServer.set_bus_volume_db(_amb_bus, -80.0)
@@ -241,24 +248,62 @@ func music(track: String, db := -12.0, fade := 3.0) -> void:
 
 ## Coup de sursaut (à utiliser avec parcimonie).
 func sting(db := -2.0) -> void:
+	stung.emit(db)
 	play("sting", db, 1.0)
 
 
 # ------------------------------------------------------------------ battement de cœur (stress)
 
-## Volume du cœur selon le stress (0..1) : muet au calme, audible (> −20 dB) dès 0,3,
-## sous −36 dB quand le stress retombe sous 0,05.
+## Volume du cœur (dB) selon le stress (0..1), points reliés en ligne droite : muet au calme, −36 dB
+## vers 0,064, −20 dB à 0,12 (une impulsion de Haunt, au moins 0,35, donne −15 dB), −10 dB au maximum.
+## Le cœur reste ainsi sous les voix et les bips de l'entité (−12 dB sur l'appareil) ; sa boucle
+## (heartbeat_loop, 95 % de l'énergie sous 80 Hz) ne masque ni les bips (1,2 à 4 kHz) ni une voix.
+const HEART_POINTS := [[0.01, -56.0], [0.05, -40.0], [0.12, -20.0], [0.4, -14.0], [1.0, -10.0]]
+const HEART_AUDIBLE_DB := -20.0   # C4 : au-dessus, le cœur s'entend
+const HEART_CALM_DB := -36.0      # C4 : au-dessous, il s'est tu
+## Pendant un dialogue (sous-titre de l'entité ou d'un proche, chuchotement Windows), le cœur ne
+## dépasse pas ce volume : il reste audible (> −20 dB) mais passe sous les voix.
+const HEART_DUCK_DB := -18.0
+const HEART_DUCK_SPEED := 2.5     # passage d'un état à l'autre en 0,4 s
+
+
 static func heart_volume(stress: float) -> float:
-	if stress <= 0.001:
+	if stress <= float(HEART_POINTS[0][0]):
 		return -80.0
-	var x := clampf((stress - 0.05) / 0.55, 0.0, 1.0)
-	return -44.0 + 38.0 * sqrt(x)
+	for i in range(1, HEART_POINTS.size()):
+		var a: Array = HEART_POINTS[i - 1]
+		var b: Array = HEART_POINTS[i]
+		if stress <= float(b[0]):
+			return lerpf(float(a[1]), float(b[1]), (stress - float(a[0])) / (float(b[0]) - float(a[0])))
+	return float(HEART_POINTS[-1][1])
 
 
-func _process(_delta: float) -> void:
+## Un dialogue s'affiche-t-il (le HUD le dit), ou la synthèse vocale parle-t-elle ?
+func _dialogue_on() -> bool:
+	var hud := get_tree().get_first_node_in_group("hud")
+	if hud and hud.has_method("dialogue_on") and bool(hud.dialogue_on()):
+		return true
+	return Game.whispers and DisplayServer.tts_is_speaking()
+
+
+func _process(delta: float) -> void:
+	_update_heart(delta)
+
+
+## Recalcule et applique tout de suite le volume du cœur (Haunt l'appelle à chaque impulsion de stress :
+## le cœur part au moment de l'événement, pas à l'image suivante, qui peut être longue en rendu logiciel).
+func refresh_heart() -> void:
+	_update_heart(0.0)
+
+
+func _update_heart(delta: float) -> void:
 	var s: float = Game.stress
-	heart_db = heart_volume(s)
-	if s <= 0.001:
+	heart_curve_db = heart_volume(s)
+	_duck = move_toward(_duck, 1.0 if _dialogue_on() else 0.0, HEART_DUCK_SPEED * delta)
+	heart_db = heart_curve_db
+	if heart_curve_db > HEART_DUCK_DB:
+		heart_db = lerpf(heart_curve_db, HEART_DUCK_DB, _duck)
+	if heart_curve_db <= -80.0:
 		if _heart and _heart.playing:
 			_heart.stop()
 		return

@@ -8,6 +8,17 @@ extends Node
 ## Tout est noté dans un journal en mémoire (journal), consultable par l'autotest.
 ## Le directeur de la v0.5 se branchera ici, sans toucher aux pièces.
 ##
+## C'est aussi ici que passent :
+## - le stress léger (C4) : chaque scène écrite (begin_scene), chaque silence de l'entité, chaque
+##   sursaut (Sfx.sting, réactions de la séance par terminal.event, sursauts du P4) et certains
+##   événements de pièce (story_event, table STORY_STRESS) donnent une impulsion de stress (stress()) :
+##   le cœur s'entend (> −20 dB), puis retombe sous −36 dB en moins de 12 s au calme. Chaque impulsion
+##   est suivie dans stress_pulses (crête et temps de retour au calme) ; c4_report() résume ;
+## - les sous-titres des sons importants (C5, sound_caption, seulement avec l'option), y compris les
+##   coups aux portes (P2, séance 1) et le bourdonnement qui traverse les murs ;
+## - le journal des temps (C9) : chaque changement d'étape (step) écrit une ligne dans
+##   user://journal.txt (heure réelle, temps depuis l'étape précédente et depuis le début).
+##
 ## Accès : Haunt.of(get_tree()) (le nœud est dans le groupe « haunt », créé par main.gd).
 ## Attention : à l'intérieur de ce script, appeler self.log(...) (log() seul est la fonction
 ## mathématique de Godot) ; de l'extérieur, haunt.log(...) marche normalement.
@@ -21,6 +32,37 @@ signal logged(event: Dictionary)
 const HINT_DELAY := 90.0
 const BULB_RADIUS := 2.0          # les ampoules à moins de 2 m du trajet vacillent
 const HUM_CAPTION := "[Bourdonnement électrique, qui traverse le mur]"
+## Coups frappés à une porte (P2 « Frapper à la porte » ; la porte de la chambre pendant la séance 1).
+const KNOCK_CAPTION := "[Trois coups à la porte]"
+## Sous-titres de sons des réactions de la chambre pendant les séances (terminal.event).
+const TERM_CAPTIONS := {"knock": KNOCK_CAPTION, "handle": "[La poignée de la porte tourne]"}
+
+# --- stress léger (C4) ---
+const STRESS_PULSE_MIN := 0.35    # après une impulsion, le stress vaut au moins 0,35 (cœur à −15 dB)
+const STRESS_SCENE := 0.3         # début d'une scène écrite (begin_scene)
+const STRESS_SILENCE := 0.25      # une seconde de silence : elle va agir (le cœur, seul dans le silence)
+const STRESS_STING := 0.5         # sursaut (Sfx.sting)
+const STRESS_HINT := 0.3          # indice moqueur au bout de 90 s (elle parle d'un coup)
+## Événements de pièce (story_event) qui touchent le joueur ; négatif : ça calme. Les autres
+## (tiroir ouvert, page ramassée, lumière…) sont les gestes du joueur : rien.
+const STORY_STRESS := {
+	"camera_led_eteinte": 0.3,    # la caméra éteint sa LED : elle sait que tu sais
+	"box_debranchee": 0.3,        # la box se rallume toute seule (la première fois)
+	"page_imprimee": 0.3,         # l'imprimante démarre toute seule
+	"nestor_debranche": 0.25,     # l'anneau reste allumé
+	"madeleine_mangee": -0.3,     # « Ça va un peu mieux. »
+}
+## Réactions de la chambre pendant les séances (signal terminal.event) ; défaut : TERM_STRESS_DEFAULT.
+const TERM_STRESS := {
+	"knock": 0.35, "handle": 0.35, "wardrobe": 0.3, "silhouette": 0.3, "ceiling_on": 0.25,
+	"ceiling_burst": 0.5, "scream": 0.6, "absorbed": 0.6, "undawn": 0.4, "dawn": -0.4,
+}
+const TERM_STRESS_DEFAULT := 0.3
+const C4_PEAK_WINDOW := 1.5       # la crête du cœur est cherchée dans les 1,5 s qui suivent l'impulsion
+
+# --- journal des temps (C9) ---
+const TIMES_PATH := "user://journal.txt"
+const TIMES_PATH_TEST := "user://journal_autotest.txt"   # l'autotest n'écrase jamais celui du joueur
 
 var devices := {}                 # device_id -> Connected
 var journal: Array = []           # [{t, ev, …}]
@@ -35,8 +77,20 @@ var hint_fn: Callable
 var hints_given := 0
 var _busy := 0
 var _idle := 0.0
-var _hum_captioned := false
 var _t0 := 0
+## C4 : une entrée par impulsion de stress, dans l'ordre : {t (s de jeu), why, v, stress, peak_db (crête de
+## Sfx.heart_db dans les 1,5 s), calm_s (temps jusqu'à Sfx.heart_db < −36 dB ; −1 tant que ce n'est pas
+## arrivé), relayed (une autre impulsion est venue avant le calme : pas de mesure de retour)}.
+var stress_pulses: Array = []
+var _game_t := 0.0
+var _knocks_seen := {}
+## C9 : lignes écrites dans le journal des temps par cette scène (copie en mémoire, pour l'autotest).
+var times_lines: Array = []
+var _times_open := false          # le journal a été ouvert (nouvelle partie ou reprise) dans cette scène
+var _times_new_ms := -100000      # heure où il a été remis à zéro dans cette scène (nouvelle partie)
+var _times_origin_ms := 0         # début de la partie, ramené à cette session (temps cumulé)
+var _times_last_ms := 0           # heure de la dernière étape (ou de la reprise)
+var _times_last_step := ""
 
 
 ## Le Haunt de la scène (ou null).
@@ -57,6 +111,9 @@ func _ready() -> void:
 	_t0 = Time.get_ticks_msec()
 	if Game.indices:
 		hint_speed = 30.0
+	Sfx.silenced.connect(_on_silenced)
+	Sfx.stung.connect(_on_stung)
+	Game.flag_changed.connect(_on_flag_changed)
 	_late_setup.call_deferred()
 
 
@@ -71,7 +128,23 @@ func _late_setup() -> void:
 		var cur: Variant = (house as Node).get("current")
 		if cur is Node:
 			room_changed(str((cur as Node).get("room_id")))
-	Game.absorbed.connect(func() -> void: self.log({"ev": "absorbe", "peur": Game.peur}))
+	Game.absorbed.connect(_on_absorbed)
+	# coups frappés aux portes (P2 « Frapper à la porte ») : sous-titre de son
+	var doors: Variant = (house as Node).get("doors") if house is Node else null
+	if doors is Dictionary:
+		for id in doors:
+			var dr: Node = doors[id] as Node
+			var it: Variant = dr.get("it") if dr else null
+			if it is Interactable:
+				(it as Interactable).used.connect(_on_door_used.bind(dr, str(id)))
+	# réactions de la chambre pendant les séances : stress et sous-titres de sons
+	var term: Variant = scene.get("terminal") if scene else null
+	if term is Node and (term as Node).has_signal("event"):
+		(term as Node).connect("event", _on_term_event)
+	# « Nouvelle partie » : le journal des temps repart de zéro
+	var menu: Variant = scene.get("menu") if scene else null
+	if menu is Node and (menu as Node).has_signal("start_requested"):
+		(menu as Node).connect("start_requested", times_new_game)
 
 
 # ------------------------------------------------------------------ appareils
@@ -214,12 +287,15 @@ func _voice(dev: Connected, text: String, dur: float, whisper: bool) -> void:
 
 
 ## Sous-titre d'un son important (« [Coups dans le radiateur, en bas] ») : affiché seulement si
-## l'option « Sous-titres des sons » est active, sauf force = true.
+## l'option « Sous-titres des sons » est active (C5) ; force = true est réservé aux captures de test.
+## Les dialogues (say) et les pensées du héros (Game.hint), eux, s'affichent toujours.
+## Le journal note {"ev": "son", "text", "shown"} (shown : le sous-titre a été affiché).
 func sound_caption(text: String, force := false) -> void:
 	var hud := _hud()
+	var shown := 0.0
 	if hud and hud.has_method("sound_caption"):
-		hud.sound_caption(text, force)
-	self.log({"ev": "son", "text": text})
+		shown = float(hud.sound_caption(text, force))
+	self.log({"ev": "son", "text": text, "shown": shown > 0.0})
 
 
 ## Elle se déplace de from_id à to_id : bourdonnement en ligne droite à travers les murs, les
@@ -233,9 +309,7 @@ func move(from_id: String, to_id: String, sec := 1.2) -> void:
 	var pa := a.speak_pos()
 	var pb := b.speak_pos()
 	Sfx.hum_move(pa, pb, sec)
-	if not _hum_captioned:
-		_hum_captioned = true
-		sound_caption(HUM_CAPTION, true)
+	sound_caption(HUM_CAPTION)
 	for n in get_tree().get_nodes_in_group("connecte"):
 		var bulb := n as SmartBulb
 		if bulb and bulb.is_inside_tree() and _seg_dist(bulb.global_position, pa, pb) < BULB_RADIUS:
@@ -270,10 +344,15 @@ func peur(v: float, why := "") -> void:
 	self.log({"ev": "peur", "v": v, "why": why, "peur": Game.peur})
 
 
-## Stress caché (cœur, grain) : +0,3 imitation, S.O.S. ; +0,5 P4 réel ; +0,6 ampoule qui éclate.
-func stress(v: float) -> void:
-	Game.add_stress(v)
-	self.log({"ev": "stress", "v": v})
+## Impulsion de stress caché (cœur, grain) : +0,3 imitation, S.O.S., caméras ; +0,5 P4 réel, chant du
+## modem ; +0,6 applique qui éclate (§ 5.5). Une impulsion positive laisse le stress à au moins
+## STRESS_PULSE_MIN : le cœur s'entend toujours après un événement écrit (C4). Négatif : ça calme.
+func stress(v: float, why := "") -> void:
+	Game.add_stress(v, STRESS_PULSE_MIN if v > 0.0 else 0.0)
+	Sfx.refresh_heart()
+	self.log({"ev": "stress", "v": v, "why": why, "stress": snappedf(Game.stress, 0.001)})
+	if v > 0.0:
+		_track_pulse(v, why)
 
 
 ## Événement de scénario signalé par une pièce ou un appareil (« seche_cheveux_pris »,
@@ -283,6 +362,8 @@ func story_event(event_name: String, data := {}) -> void:
 	e.merge(data)
 	self.log(e)
 	progress()
+	if STORY_STRESS.has(event_name) and bool(data.get("premiere", true)):
+		stress(float(STORY_STRESS[event_name]), event_name)
 	story.emit(event_name, data)
 
 
@@ -340,10 +421,14 @@ func room_changed(id: String) -> void:
 # ------------------------------------------------------------------ indices de 90 s
 
 ## Étape du scénario (« sortir », « mamie », « explorer », « convocation »…) : remet le compteur à zéro.
+## Un changement d'étape écrit une ligne dans le journal des temps (C9).
 func step(id: String) -> void:
+	var changed := id != step_id
 	step_id = id
 	_idle = 0.0
 	self.log({"ev": "etape", "step": id})
+	if changed:
+		_times_step(id)
 
 
 ## Le joueur a progressé : le compteur des indices repart de zéro.
@@ -351,9 +436,10 @@ func progress() -> void:
 	_idle = 0.0
 
 
-## Scène écrite en cours : pas d'indice (à appeler par paires).
+## Scène écrite en cours : pas d'indice (à appeler par paires). Le cœur du héros s'emballe (C4).
 func begin_scene() -> void:
 	_busy += 1
+	stress(STRESS_SCENE, "scène")
 
 
 func end_scene() -> void:
@@ -375,6 +461,7 @@ func _reading() -> bool:
 
 
 func _process(delta: float) -> void:
+	_watch_pulses(delta)
 	if step_id == "" or _busy > 0 or Game.phase != "room" or _reading():
 		return
 	_idle += delta * hint_speed
@@ -396,5 +483,259 @@ func _process(delta: float) -> void:
 		return
 	var id := say_nearest(text, "elle", among)
 	peur(1.0, "indice")
+	stress(STRESS_HINT, "indice")
 	hints_given += 1
 	self.log({"ev": "indice", "step": step_id, "dev": id, "text": fill(text)})
+
+
+# ------------------------------------------------------------------ stress léger (C4)
+
+func _on_silenced(seconds: float) -> void:
+	stress(STRESS_SILENCE, "silence %.1f s" % seconds)
+
+
+func _on_stung(_db: float) -> void:
+	stress(STRESS_STING, "sursaut")
+
+
+## Réaction de la chambre pendant une séance (terminal.event) : stress, et sous-titre de son.
+func _on_term_event(what: String) -> void:
+	var v: float = float(TERM_STRESS.get(what, TERM_STRESS_DEFAULT))
+	stress(v, "séance : " + what)
+	if TERM_CAPTIONS.has(what):
+		sound_caption(str(TERM_CAPTIONS[what]))
+
+
+## Une porte qu'on « frappe » (P2) : le sous-titre des coups (une fois par série de coups).
+func _on_door_used(_it: Interactable, dr: Node, id: String) -> void:
+	if not is_instance_valid(dr):
+		return
+	var n := int(dr.get("knocks"))
+	if n > int(_knocks_seen.get(id, 0)):
+		_knocks_seen[id] = n
+		sound_caption(KNOCK_CAPTION)
+
+
+func _on_absorbed() -> void:
+	self.log({"ev": "absorbe", "peur": Game.peur})
+	_times_event("ABSORBÉ (jauge à 100)")
+
+
+func _track_pulse(v: float, why: String) -> void:
+	for e in stress_pulses:
+		if float(e.calm_s) < 0.0:
+			e.relayed = true
+	# (Sfx vient d'appliquer le volume de ce stress : c'est la première mesure ; puis les images suivantes)
+	stress_pulses.append({"t": _game_t, "frame": Engine.get_process_frames(), "why": why, "v": v,
+		"stress": snappedf(Game.stress, 0.001), "peak_db": Sfx.heart_db, "calm_s": -1.0, "relayed": false})
+	if stress_pulses.size() > 500:
+		stress_pulses.pop_front()
+
+
+## Suit les impulsions (en temps de jeu : le mode turbo et la pause sont respectés) : crête du cœur
+## dans les 1,5 s qui suivent, puis le moment où il repasse sous −36 dB.
+func _watch_pulses(delta: float) -> void:
+	_game_t += delta
+	var frame := Engine.get_process_frames()
+	for i in range(stress_pulses.size() - 1, -1, -1):
+		var e: Dictionary = stress_pulses[i]
+		var age := _game_t - float(e.t)
+		if int(e.frame) >= frame:
+			continue
+		# (la première image d'après compte toujours : une image très longue, en rendu logiciel,
+		# peut sauter toute la fenêtre de 1,5 s)
+		if age <= C4_PEAK_WINDOW or not e.has("seen"):
+			e.peak_db = maxf(float(e.peak_db), Sfx.heart_db)
+			e.seen = true
+		elif bool(e.relayed) and not e.has("printed"):
+			e.printed = true
+			if Game.autotest:
+				print("C4 impulsion « %s » à %.1f s : crête %.1f dB, relayée avant le calme" % [e.why, e.t, e.peak_db])
+		elif i < stress_pulses.size() - 2:
+			break
+	if stress_pulses.is_empty():
+		return
+	var last: Dictionary = stress_pulses[-1]
+	var last_age := _game_t - float(last.t)
+	if float(last.calm_s) < 0.0 and not bool(last.relayed) and int(last.frame) < frame and Sfx.heart_db < Sfx.HEART_CALM_DB:
+		last.calm_s = snappedf(last_age, 0.01)
+		last.printed = true
+		if Game.autotest:
+			print("C4 impulsion « %s » à %.1f s : crête %.1f dB, sous −36 dB après %.1f s" % [last.why, last.t, last.peak_db, last.calm_s])
+
+
+## Résumé C4 depuis l'impulsion n° « from » : {n, peak_min (dB), calm_max (s), measured (retours au calme
+## mesurés), open (pas encore retombée, sans relais), fails ([textes]), ok}. Critère : chaque crête
+## > −20 dB ; chaque retour au calme mesuré < 12 s. (Une impulsion relayée n'a pas de retour à mesurer.)
+func c4_report(from := 0) -> Dictionary:
+	var n := 0
+	var peak_min := 0.0
+	var calm_max := 0.0
+	var measured := 0
+	var open := 0
+	var fails: Array = []
+	for i in range(from, stress_pulses.size()):
+		var e: Dictionary = stress_pulses[i]
+		n += 1
+		var pk := float(e.peak_db)
+		peak_min = pk if n == 1 else minf(peak_min, pk)
+		if pk <= Sfx.HEART_AUDIBLE_DB and _game_t - float(e.t) > C4_PEAK_WINDOW:
+			fails.append("%s à %.1f s : crête %.1f dB" % [e.why, e.t, pk])
+		if float(e.calm_s) >= 0.0:
+			measured += 1
+			calm_max = maxf(calm_max, float(e.calm_s))
+			if float(e.calm_s) >= 12.0:
+				fails.append("%s à %.1f s : calme après %.1f s" % [e.why, e.t, e.calm_s])
+		elif not bool(e.relayed):
+			open += 1
+			if _game_t - float(e.t) >= 12.0:
+				fails.append("%s à %.1f s : pas retombé en 12 s" % [e.why, e.t])
+	return {"n": n, "peak_min": peak_min, "calm_max": calm_max, "measured": measured, "open": open,
+		"fails": fails, "ok": n > 0 and fails.is_empty()}
+
+
+# ------------------------------------------------------------------ journal des temps (C9)
+
+## Le fichier du journal des temps (celui de l'autotest est à part).
+static func times_path() -> String:
+	return TIMES_PATH_TEST if Game.autotest else TIMES_PATH
+
+
+## « Nouvelle partie » (menu.start_requested, ou appel direct) : le journal repart de zéro.
+func times_new_game() -> void:
+	if _times_open and Time.get_ticks_msec() - _times_new_ms < 5000:
+		return      # (déjà remis à zéro pour cette partie, par sa première étape : rien à refaire)
+	_times_begin(false)
+
+
+## « Continuer » : le journal continue (le temps depuis le début reprend où il s'était arrêté).
+## Appelée toute seule par la première étape remise en place pendant le chargement (_restoring()).
+func times_resume() -> void:
+	if not _times_open:
+		_times_begin(true)
+
+
+func _times_begin(resume: bool) -> void:
+	var now := Time.get_ticks_msec()
+	var base_s := _times_previous_total() if resume else 0.0
+	_times_open = true
+	_times_origin_ms = now - int(base_s * 1000.0)
+	_times_last_ms = now
+	_times_last_step = ""
+	times_lines.clear()
+	var d := Time.get_datetime_dict_from_system()
+	var date := "%02d/%02d/%04d à %02d:%02d:%02d" % [d.day, d.month, d.year, d.hour, d.minute, d.second]
+	var version := str(ProjectSettings.get_setting("application/config/version", ""))
+	if resume:
+		var cp := str(Game.load_checkpoint().get("checkpoint", "?"))
+		if FileAccess.file_exists(times_path()):
+			_times_write("", false)
+		else:
+			# (première reprise d'une partie commencée sans journal, par exemple en 0.3.1 : le temps
+			# joué avant est inconnu ; « depuis le début » compte depuis cette reprise)
+			_times_write("Don't Play %s · journal des temps · partie reprise le %s · %s · temps joué avant : inconnu" % [
+				version, date, Game.hero_name()], true)
+		_times_write("%s · reprise (« Continuer ») au point de passage %s, le %s · %s depuis le début" % [
+			_clock(), cp, date, _duration(base_s)], false)
+	else:
+		_times_new_ms = now
+		_times_write("Don't Play %s · journal des temps · nouvelle partie le %s · %s" % [version, date, Game.hero_name()], true)
+		_times_write("%s · début de la partie" % _clock(), false)
+
+
+## Une étape posée pendant le chargement d'une sauvegarde (« Continuer ») : Game.phase vaut encore
+## « title », la sauvegarde existe et ses drapeaux sont déjà rendus. (« Nouvelle partie » efface la
+## sauvegarde et les drapeaux avant sa première étape, posée elle aussi pendant « title ».)
+static func _restoring() -> bool:
+	return Game.phase == "title" and not Game.flags.is_empty() and Game.has_save()
+
+
+func _times_step(id: String) -> void:
+	var restoring := _restoring()
+	if not _times_open:
+		if restoring:
+			times_resume()           # étape remise en place par « Continuer »
+		else:
+			_times_begin(false)      # première étape d'une partie neuve
+	var now := Time.get_ticks_msec()
+	var since := (now - _times_last_ms) / 1000.0
+	var total := (now - _times_origin_ms) / 1000.0
+	var what := ("étape « %s »" % id) if id != "" else "plus d'étape en cours (fin)"
+	if restoring:
+		what += " (remise en place)"
+	if _times_last_step != "":
+		_times_write("%s · %s · %s depuis l'étape « %s » · %s depuis le début" % [
+			_clock(), what, _duration(since), _times_last_step, _duration(total)], false)
+	else:
+		_times_write("%s · %s · %s depuis le début" % [_clock(), what, _duration(total)], false)
+	_times_last_ms = now
+	_times_last_step = id
+
+
+## Une ligne d'événement (point de passage, ABSORBÉ…), sans changer d'étape.
+func _times_event(what: String) -> void:
+	if not _times_open:
+		return
+	var total := (Time.get_ticks_msec() - _times_origin_ms) / 1000.0
+	_times_write("%s · %s · %s depuis le début" % [_clock(), what, _duration(total)], false)
+
+
+func _on_flag_changed(id: String, v: Variant) -> void:
+	if id == "point_passage" and str(v) != "":
+		_times_event("point de passage %s" % str(v))
+
+
+## Temps depuis le début écrit à la fin du journal (pour « Continuer ») : la dernière mention
+## « … depuis le début ».
+func _times_previous_total() -> float:
+	var path := times_path()
+	if not FileAccess.file_exists(path):
+		return 0.0
+	var txt := FileAccess.get_file_as_string(path)
+	var re := RegEx.create_from_string("(?:(\\d+) h )?(?:(\\d+) min )?(\\d+) s depuis le début")
+	var last: RegExMatch = null
+	for m in re.search_all(txt):
+		last = m
+	if last == null:
+		return 0.0
+	var h := last.get_string(1).to_int() if last.get_string(1) != "" else 0
+	var mn := last.get_string(2).to_int() if last.get_string(2) != "" else 0
+	return h * 3600.0 + mn * 60.0 + last.get_string(3).to_int()
+
+
+func _times_write(line: String, truncate: bool) -> void:
+	times_lines.append(line)
+	var path := times_path()
+	var f: FileAccess = null
+	if truncate or not FileAccess.file_exists(path):
+		f = FileAccess.open(path, FileAccess.WRITE)
+	else:
+		f = FileAccess.open(path, FileAccess.READ_WRITE)
+		if f:
+			f.seek_end()
+	if f == null:
+		push_warning("journal des temps impossible : %s" % path)
+		return
+	f.store_line(line)
+	f.close()
+	if Game.autotest:
+		print("JOURNAL ", line)
+
+
+## Heure réelle, « 21:04:05 ».
+static func _clock() -> String:
+	var t := Time.get_time_dict_from_system()
+	return "%02d:%02d:%02d" % [t.hour, t.minute, t.second]
+
+
+## Durée lisible : « 45 s », « 3 min 05 s », « 1 h 02 min 09 s ».
+static func _duration(sec: float) -> String:
+	var n := maxi(0, int(round(sec)))
+	var h := n / 3600
+	var m := (n % 3600) / 60
+	var s := n % 60
+	if h > 0:
+		return "%d h %02d min %02d s" % [h, m, s]
+	if m > 0:
+		return "%d min %02d s" % [m, s]
+	return "%d s" % s

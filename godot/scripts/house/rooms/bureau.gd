@@ -1169,7 +1169,7 @@ func look_cameras() -> void:
 		var hn := _haunt()
 		if hn:
 			hn.peur(2.0, "cameras")
-			hn.stress(0.3)
+			hn.stress(0.3, "caméras")
 	_story("cameras_regardees", {"premiere": first})
 
 

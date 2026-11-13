@@ -45,10 +45,14 @@ var flags := {}
 var peur := 0.0
 var peur_floor := 0.0
 var _absorbed_sent := false
-## Stress caché (0..1) : battement de cœur, grain. Retombe tout seul (0,08 par seconde, × stress_decay_mult).
+## Stress caché (0..1) : battement de cœur (Sfx), grain. Les impulsions viennent de Haunt (scènes
+## écrites, événements, sursauts). Il retombe tout seul de (STRESS_DECAY + STRESS_DECAY_K × stress) par
+## seconde, × stress_decay_mult : vite quand il est haut, doucement à la fin (≈ 0,08/s vers 0,25).
+## De 1 (le maximum), le cœur repasse sous −36 dB en 9 s ; d'une impulsion de 0,35, en 4 s (C4).
 var stress := 0.0
 var stress_decay_mult := 1.0     # 2 dans la chambre de Manon (refuge) : le scénario le règle
-const STRESS_DECAY := 0.08
+const STRESS_DECAY := 0.04       # part constante de la baisse (par seconde)
+const STRESS_DECAY_K := 0.15     # part proportionnelle au stress (par seconde)
 var _grain_base := -1.0
 var _grain_set := 0.0
 ## Heure de la maison pour les écrans (« 03:2x ») : minutes après 3 h 20 depuis clock_origin_ms.
@@ -139,6 +143,9 @@ func _load_fonts() -> void:
 	var pixel: FontFile = load("res://assets/fonts/VT323-Regular.ttf")
 	pixel.antialiasing = TextServer.FONT_ANTIALIASING_NONE
 	pixel.hinting = TextServer.HINTING_NONE
+	# VT323 a une ligature « fi » qui tient dans une seule case : « Tu confirmes ? » se lisait
+	# « Tu confrmes ? », « vérifie » « vérine ». Coupée pour tout le jeu (terminal compris).
+	pixel.opentype_feature_overrides = {TextServerManager.get_primary_interface().name_to_tag("liga"): 0}
 	fonts.pixel = pixel
 	# aux 10 px des petites inscriptions (vignettes et bandeaux de la console), sans lissage, le « 1 »
 	# de VT323 perd son drapeau et se lit « L » (« CAM L », « 0L/LL/2040 ») : la même police, lissée
@@ -312,8 +319,15 @@ func peur_color(v := -1.0) -> Color:
 	return Color(1.0, 0.12, 0.08)
 
 
-func add_stress(v: float) -> void:
-	stress = clampf(stress + v, 0.0, 1.0)
+## Ajoute « v » au stress (négatif pour calmer), borné entre 0 et 1 ; « at_least » : après l'ajout, le
+## stress vaut au moins cette valeur (une impulsion rend toujours le cœur audible).
+func add_stress(v: float, at_least := 0.0) -> void:
+	stress = clampf(maxf(stress + v, at_least), 0.0, 1.0)
+
+
+## Baisse du stress pendant « delta » secondes (décroissance du § 5.5, réglée pour C4).
+static func stress_after(s: float, delta: float, mult := 1.0) -> float:
+	return maxf(0.0, s - (STRESS_DECAY + STRESS_DECAY_K * s) * mult * delta)
 
 
 func flag(id: String, default_value: Variant = false) -> Variant:
@@ -336,7 +350,7 @@ func house_clock(seconds := false) -> String:
 
 func _process(delta: float) -> void:
 	if stress > 0.0:
-		stress = maxf(0.0, stress - STRESS_DECAY * stress_decay_mult * delta)
+		stress = stress_after(stress, delta, stress_decay_mult)
 	# le stress déteint sur le grain de l'image (filtre rétro)
 	var want := snappedf(stress * 0.05, 0.001)
 	if want == _grain_set:
@@ -376,7 +390,7 @@ func save_path() -> String:
 
 
 ## Écrit le point de passage « id » (C1, C2, C3…) : héros, objets, choix, drapeaux, jauge, position.
-func save_checkpoint(id: String, pos: Vector3, yaw: float) -> bool:
+func save_checkpoint(id: String, pos: Vector3, yaw: float, peur_max := 100.0) -> bool:
 	var d := {
 		"version": ProjectSettings.get_setting("application/config/version", ""),
 		"checkpoint": id,
@@ -384,7 +398,7 @@ func save_checkpoint(id: String, pos: Vector3, yaw: float) -> bool:
 		"items": items.duplicate(true),
 		"choices": choices.duplicate(true),
 		"flags": flags.duplicate(true),
-		"peur": peur,
+		"peur": minf(peur, peur_max),
 		"peur_floor": peur_floor,
 		"face_scares": face_scares,
 		"pos": [pos.x, pos.y, pos.z],
@@ -398,7 +412,7 @@ func save_checkpoint(id: String, pos: Vector3, yaw: float) -> bool:
 	f.store_string(JSON.stringify(d, "\t"))
 	f.close()
 	if autotest:
-		print("SAUVEGARDE %s · peur %.1f · %d objets · %d drapeaux" % [id, peur, items.size(), flags.size()])
+		print("SAUVEGARDE %s · peur %.1f · %d objets · %d drapeaux" % [id, float(d.peur), items.size(), flags.size()])
 	return true
 
 

@@ -1,5 +1,6 @@
 extends "res://scripts/main.gd"
-## Relecture « joueur » (banc exclu de l'export) : l'étage de la 0.3.1 joué comme un vrai joueur.
+## Relecture « joueur » (banc exclu de l'export) : l'étage de la 0.3.1 joué comme un vrai joueur
+## (en 0.3.2, il s'arrête sur la convocation).
 ## Pas de téléportation : on marche (Z/Q/S/D par Input.action_press, avec la physique et les
 ## collisions), on tourne le regard peu à peu (comme à la souris), on appuie sur E par un vrai
 ## événement clavier. Chaque interaction est visée depuis une place où un joueur se tiendrait.
@@ -614,14 +615,15 @@ func _sdb(issue: String) -> void:
 		await walk([p(6.0, -4.7), p(5.4, -4.6), p(4.1, -4.5)], "sortie de la salle de bain après le P4")
 	await snap("apres_p4_couloir")
 	ck("joueur libre après le P4", player.can_move and house.current.room_id == "couloir", house.current.room_id)
-	# fin provisoire (si les trois conditions sont réunies), sinon l'indice qui guide
+	# la convocation (0.3.2 ; si les trois conditions sont réunies), sinon l'indice qui guide
 	if Game.has_item("antenne"):
-		await until(func() -> bool: return acte2.end_card_shown, 40.0)
-		await wait(2.0)
-		await snap("fin_031")
-		await until(func() -> bool: return Game.phase == "title", 20.0)
-		await wait(0.6)
-		await snap("titre_apres")
+		await until(func() -> bool: return bool(Game.flag("convocation", false)) and room.convoking, 40.0)
+		await until(func() -> bool: return Game.objective_text == Acte2.O4, 40.0)
+		await wait(1.0)
+		await snap("convocation")
+		ck("convocation : O4, « Répondre à l'ordinateur »", room.convoking and Game.objective_text == Acte2.O4
+			and room.pc_it.enabled and room.pc_it.label == "Répondre à l'ordinateur" and Game.load_checkpoint().get("checkpoint") == "C3",
+			"« %s » · « %s »" % [Game.objective_text, room.pc_it.label])
 	else:
 		await wait(2.0)
 		print("indice suivant : ", acte2.explore_hint())

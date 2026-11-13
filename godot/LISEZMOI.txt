@@ -1,19 +1,25 @@
 Don't Play - version de développement
 =========================================
 
-Version 0.3.1 : l'acte I et le début de l'acte II (45 minutes à 1 heure)
-------------------------------------------------------------------------
+Version 0.3.2 : l'acte I et la première moitié de l'acte II (30 à 40 minutes)
+-----------------------------------------------------------------------------
 Acte I : la chambre de ta mère, la disquette, la première séance avec S.1.L.3.N.C.3.
 (choix aux touches 1, 2, 3, mot à taper au clavier) et ses trois fins.
 
 Acte II : l'étage de la maison. Le couloir, la salle de bain, la chambre d'amis,
 le bureau et la chambre des grands-parents, avec leurs appareils connectés
 (Nestor, le miroir, la console des caméras, l'imprimante, le babyphone...).
-La version s'arrête sur une carte « FIN DE LA VERSION 0.3.1 » : la suite arrive
-dans la version 0.3.2.
+Une fois l'étage fouillé, l'ordinateur de ta mère te rappelle pour une seconde
+séance. La version s'arrête sur une carte « FIN DE LA VERSION 0.3 » :
+la suite (la chambre d'Henriette et Albert) arrive dans la version 0.4.
 
 Sauvegarde automatique : la partie est gardée à certains moments de l'histoire.
-« Continuer », sur l'écran-titre, la reprend. « Nouvelle partie » l'efface.
+« Continuer », sur l'écran-titre, la reprend (après la carte de fin : au moment où
+l'ordinateur te rappelle). « Nouvelle partie » l'efface.
+
+Options (Échap > Options) : « Sous-titres des sons » (les sons importants écrits entre
+crochets), « Sursauts réduits », « Éclairs adoucis (photosensibilité) », « Chuchotements
+(synthèse Windows) » (désactivés au départ).
 
 Lancer le jeu
 -------------

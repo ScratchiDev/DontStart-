@@ -9,6 +9,7 @@ extends Node
 ## Nœud enfant de Main, créé par main.gd, qui lui branche les signaux de la chambre et du terminal :
 ## room.floppy_taken → _on_floppy_taken, room.pc_used → _on_pc_used, room.key_taken → _on_key_taken,
 ## terminal.event → _on_term_event, terminal.ended → _on_seance_end ; E quand waiting_stand → _stand_up.
+## Étapes notées par Haunt.step (journal des temps) : debut, seance1, fin_seance1.
 
 const SEANCE1 := preload("res://scripts/seance1.gd")
 const START_POS := Vector3(2.15, 0.0, 1.85)
@@ -39,6 +40,7 @@ func setup(m: Main) -> void:
 ## Nouvelle partie : le noir, l'ouverture, puis la main est rendue dans la chambre.
 func start() -> void:
 	Game.reset_state()
+	_step("debut")
 	Game.phase = "intro"
 	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	hud.fade.color.a = 1.0
@@ -87,6 +89,7 @@ func _on_floppy_taken() -> void:
 
 
 func _on_pc_used() -> void:
+	_step("seance1")
 	Game.phase = "seated"
 	hud.set_prompt(null)
 	hud.show_hand(false)
@@ -142,6 +145,10 @@ func _dawn(on: bool) -> void:
 
 
 func _on_seance_end(id: String) -> void:
+	if id == "fin_v03":
+		return     # (la fin de la séance 2 : Acte2 la joue)
+	if id != "absorbe" or not main.acte2.active:
+		_step("fin_seance1")
 	seance_result = id
 	if id == "suite":
 		await get_tree().create_timer(1.5, false).timeout
@@ -225,6 +232,12 @@ func _hide_journal() -> void:
 			if n3 and not n3 is Interactable and n3.get_child_count() > 0 \
 					and Vector2(n3.position.x, n3.position.z).distance_to(Vector2(it.position.x, it.position.z)) < 0.2:
 				n3.visible = false
+
+
+## Étape du déroulé (Haunt.step : journal des temps, compteur des indices).
+func _step(id: String) -> void:
+	if main and main.haunt:
+		main.haunt.step(id)
 
 
 func _process(delta: float) -> void:

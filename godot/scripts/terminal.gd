@@ -3,7 +3,9 @@ extends Control
 ## par le shader crt_screen. C'est le moteur du jeu-terminal RUNTIME : texte tapé lettre à lettre,
 ## choix minutés (touches 1, 2, 3), saisie au clavier, jauge PEUR MESURÉE qui fait virer le phosphore
 ## du vert à l'ambre puis au rouge, erreurs aux lettres qui brillent, texte qui se corrompt,
-## extinction du tube, plantage. Le contenu des séances est écrit dans seance1.gd.
+## extinction du tube, plantage. Le contenu des séances est écrit dans seance1.gd et seance2.gd.
+## Séance 2 : petit afficheur « ♥ 58 » dans la barre d'état (show_heart, set_heart, hide_heart), et
+## fin de la version (end_version : ended("fin_v03"), sans écran de fin ni fins.cfg).
 ##
 ## Les touches arrivent par key_input(), appelé par main.gd quand le joueur est assis.
 ## La jauge PEUR MESURÉE est celle de la partie (Game.peur) : « fear » la lit, set_fear() et corrupt()
@@ -14,7 +16,7 @@ extends Control
 signal boot_finished
 signal fear_changed(value: float)
 signal event(name: String)          # réactions de la chambre : knock, wardrobe, ceiling, scream…
-signal ended(id: String)            # fin atteinte (absorbe, transmission, suite…)
+signal ended(id: String)            # fin atteinte (absorbe, transmission, suite…, fin_v03)
 
 const GREEN := Color(0.36, 1.0, 0.42)
 const AMBER := Color(1.0, 0.72, 0.22)
@@ -29,6 +31,10 @@ const ENDS := {
 	"extinction": "EXTINCTION",
 }
 const ENDS_PATH := "user://fins.cfg"
+## Fin de la version (séance 2) : ended l'accepte, mais ce n'est pas une fin du jeu (ni ENDS ni fins.cfg).
+const VERSION_END := "fin_v03"
+const TIMER_W := 60.0               # largeur de la barre du délai (px du terminal)
+const HEART_FONT := 40              # chiffre de l'afficheur « ♥ 58 » (VT323 : 40 px est net)
 
 var text: RichTextLabel
 var status: Control
@@ -37,6 +43,12 @@ var fear_val: Label
 var timer_box: Control
 var timer_fill: ColorRect
 var timer_val: Label
+var heart_box: Control              # afficheur « ♥ 58 » (séance 2), à droite de la barre d'état
+var heart_icon: TextureRect
+var heart_val: Label
+var heart_bpm := 0                  # valeur affichée (0 : afficheur caché)
+var heart_log: Array = []           # valeurs affichées depuis show_heart (autotest)
+var _heart_t := 0.0
 var ghost_lbl: Label
 var watch: TextureRect
 var crash_box: ColorRect
@@ -54,6 +66,7 @@ var aborted := false
 var fast := false
 var narrating := false
 var hesitation := 0.0
+var last_timeout := false           # le dernier pick() a fini sur « DÉLAI DÉPASSÉ »
 var proche := ""                    # « Mamie », « Papi » ou « Maman »
 var next_player := ""
 var started_ms := 0
@@ -135,23 +148,57 @@ func _build_status() -> void:
 	status.add_child(fear_fill)
 	fear_val = _small_label("00%", Vector2(258, 0))
 	status.add_child(fear_val)
+	# « DÉLAI 07 ▬▬▬ » : le chiffre juste après le mot, puis la barre, le tout sous x ≈ 450 du
+	# terminal (plus à droite, la courbure et le vignetage du tube le mangent, vu de la chaise)
 	timer_box = Control.new()
-	timer_box.position = Vector2(330, 0)
+	timer_box.position = Vector2(300, 0)
 	timer_box.visible = false
 	status.add_child(timer_box)
 	timer_box.add_child(_small_label("DÉLAI", Vector2(0, 0)))
+	timer_val = _small_label("--", Vector2(60, 0))
+	timer_box.add_child(timer_val)
 	var tb := ColorRect.new()
 	tb.color = Color(GREEN, 0.18)
-	tb.position = Vector2(56, 9)
-	tb.size = Vector2(110, 10)
+	tb.position = Vector2(96, 9)
+	tb.size = Vector2(TIMER_W, 10)
 	timer_box.add_child(tb)
 	timer_fill = ColorRect.new()
 	timer_fill.color = GREEN
 	timer_fill.position = tb.position
-	timer_fill.size = Vector2(110, 10)
+	timer_fill.size = Vector2(TIMER_W, 10)
 	timer_box.add_child(timer_fill)
-	timer_val = _small_label("--", Vector2(174, 0))
-	timer_box.add_child(timer_val)
+	# « ♥ 58 » : VT323 n'a pas de cœur ; il est dessiné en pixels (7 × 6, quadruplés à l'écran), le
+	# chiffre en VT323 40 px (taille nette) : lisible du joueur assis, hors du vignetage du tube
+	heart_box = Control.new()
+	heart_box.name = "Coeur"
+	# (à la place du « DÉLAI » des choix, jamais montrés ensemble)
+	heart_box.position = Vector2(300, 8)
+	heart_box.size = Vector2(90, 40)
+	heart_box.visible = false
+	status.add_child(heart_box)
+	heart_icon = TextureRect.new()
+	heart_icon.texture = _heart_texture()
+	heart_icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	heart_icon.stretch_mode = TextureRect.STRETCH_KEEP
+	heart_icon.position = Vector2(0, 4)
+	heart_icon.scale = Vector2(2, 2)
+	heart_box.add_child(heart_icon)
+	heart_val = _small_label("58", Vector2(34, -6))
+	heart_val.add_theme_font_size_override("font_size", HEART_FONT)
+	heart_box.add_child(heart_val)
+
+
+## Le cœur de l'afficheur : 7 × 6 pixels, doublés (blanc ; la couleur du phosphore vient de modulate).
+static func _heart_texture() -> ImageTexture:
+	var rows := [".XX.XX.", "XXXXXXX", "XXXXXXX", ".XXXXX.", "..XXX..", "...X..."]
+	var img := Image.create_empty(14, 12, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	for y in rows.size():
+		var r: String = rows[y]
+		for x in r.length():
+			if r[x] == "X":
+				img.fill_rect(Rect2i(x * 2, y * 2, 2, 2), Color.WHITE)
+	return ImageTexture.create_from_image(img)
 
 
 func _small_label(t: String, pos: Vector2) -> Label:
@@ -196,6 +243,8 @@ func _apply_colors() -> void:
 	for n in status.find_children("*", "Label", true, false):
 		(n as Label).add_theme_color_override("font_color", p)
 	fear_fill.color = p
+	if heart_icon:
+		heart_icon.self_modulate = p
 	timer_fill.color = RED if timer_val.text.to_int() <= 3 and timer_val.text != "--" else p
 	if screen_mat:
 		screen_mat.set_shader_parameter("phosphor", Vector3(p.r, p.g, p.b))
@@ -228,6 +277,10 @@ func _process(delta: float) -> void:
 		if _rot_t > 0.9:
 			_rot_t = 0.0
 			_rot()
+	if heart_bpm > 0 and heart_box.visible:
+		# le cœur bat au rythme affiché
+		_heart_t += delta * heart_bpm / 60.0
+		heart_icon.modulate.a = 1.0 if fmod(_heart_t, 1.0) < 0.25 else 0.45
 
 
 ## Démarrage de la disquette (BIOS, chargement), puis la séance prend la main.
@@ -486,6 +539,15 @@ func power_on() -> void:
 	await tw.finished
 
 
+## L'écran allumé tout de suite, sans animation (chargement d'une sauvegarde).
+func power_on_now() -> void:
+	if not screen_mat:
+		return
+	screen_mat.set_shader_parameter("power_on", 1.0)
+	screen_mat.set_shader_parameter("collapse", 0.0)
+	screen_mat.set_shader_parameter("bright_line", 0.0)
+
+
 ## Écran de titre d'un protocole (le tube s'éteint, le titre se déchiffre).
 func level(label: String, title: String) -> void:
 	if aborted:
@@ -618,7 +680,12 @@ func _rot() -> void:
 
 ## Propose des choix (touches 1, 2, 3) avec un délai visible. À l'expiration, choisit « worst ».
 ## extra : condition physique vérifiée en continu (ex. le joueur s'est retourné) qui choisit 0.
-func pick(opts: Array, time := 12.0, worst := 0, extra := Callable()) -> int:
+## timeout_fear : jauge ajoutée au délai dépassé (5 par défaut ; la séance 2 compte elle-même).
+## last_timeout dit si le choix a fini sur le délai (worst peut valoir −1 : aucune option retenue).
+## mark_worst : au délai, « worst » est montré comme choisi ; faux : aucune option ne l'est (la
+## séance 2 décide elle-même de ce qu'elle garde).
+func pick(opts: Array, time := 12.0, worst := 0, extra := Callable(), timeout_fear := 5.0, mark_worst := true) -> int:
+	last_timeout = false
 	if aborted:
 		return worst
 	narrating = false
@@ -661,20 +728,22 @@ func pick(opts: Array, time := 12.0, worst := 0, extra := Callable()) -> int:
 			timer_val.text = "%02d" % sec
 			Sfx.play("metalClick", -10.0 if sec <= 3 else -20.0, 1.6 if sec <= 3 else 1.1)
 			_apply_colors()
-		timer_fill.size.x = 110.0 * left / time
+		timer_fill.size.x = TIMER_W * left / time
 		await get_tree().process_frame
 	hesitation = elapsed
 	_choice = {}
 	timer_box.visible = false
 	timer_val.text = "--"
 	for i in opt_lines.size():
-		opt_lines[i].kind = "picked" if i == result else "dead"
+		opt_lines[i].kind = "picked" if i == result and (mark_worst or not timeout or aborted) else "dead"
 	_render()
 	Sfx.play("metalClick", -6.0, 0.8)
 	Sfx.music("music_house", -16.0, 3.0)
+	last_timeout = timeout and not aborted
 	if timeout and not aborted:
 		await line("> DÉLAI DÉPASSÉ. JE CHOISIS POUR TOI.", "err", 0.01)
-		corrupt(5)
+		if timeout_fear > 0.0:
+			corrupt(timeout_fear)
 	return result
 
 
@@ -782,6 +851,8 @@ func show_static(rows: Array, with_status := true) -> void:
 	mode = "done"
 	aborted = false
 	narrating = false
+	hide_heart()
+	power_on_now()
 	lines.clear()
 	for r in rows:
 		if r is Array:
@@ -825,3 +896,40 @@ func show_end(id: String) -> void:
 	await line(list, "dim", 0.004, 0.4)
 	mode = "done"
 	ended.emit(id)
+
+
+## Fin de la version (séance 2) : rien n'est écrit dans fins.cfg ; Acte2 joue la fin (ended).
+func end_version(id := VERSION_END) -> void:
+	narrating = false
+	mode = "done"
+	ended.emit(id)
+
+
+# ------------------------------------------------------------------ afficheur du cœur (séance 2)
+
+## Montre l'afficheur « ♥ bpm » dans la barre d'état.
+func show_heart(bpm: int) -> void:
+	heart_log.clear()
+	timer_box.visible = false
+	heart_box.visible = true
+	_heart_t = 0.0
+	set_heart(bpm)
+
+
+## Change le chiffre de l'afficheur (le montre s'il était caché).
+func set_heart(bpm: int) -> void:
+	if not heart_box.visible:
+		heart_log.clear()
+		timer_box.visible = false
+		heart_box.visible = true
+	heart_bpm = bpm
+	heart_val.text = str(bpm)
+	heart_log.append(bpm)
+	heart_icon.self_modulate = phos()
+	heart_val.add_theme_color_override("font_color", phos())
+
+
+func hide_heart() -> void:
+	heart_bpm = 0
+	if heart_box:
+		heart_box.visible = false

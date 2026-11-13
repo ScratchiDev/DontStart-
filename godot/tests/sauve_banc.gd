@@ -4,9 +4,11 @@ extends "res://scripts/main.gd"
 ## « Continuer » / « Nouvelle partie » passent par les boutons du menu).
 ## Lancer avec un dossier user:// isolé (XDG_DATA_HOME) pour ne pas toucher aux sauvegardes d'autrui :
 ##   XDG_DATA_HOME=… godot --headless --path godot res://tests/sauve_banc.tscn -- --cas=<cas>
-## Cas : absorbe (ABSORBÉ après la boîte, puis « Continuer » → C1), nouvelle (fin 0.3.1, puis
-## « Nouvelle partie »), fin_continuer (fin 0.3.1, « Continuer », puis ABSORBÉ et « Continuer » encore),
-## p4_100 (jauge 90 avant le P4 « fixe » → ABSORBÉ pendant le P4).
+## Cas : absorbe (ABSORBÉ après la boîte, puis « Continuer » → C1), nouvelle (fin de la version 0.3,
+## puis « Nouvelle partie »), fin_continuer (fin de la version 0.3, « Continuer » → C3, puis ABSORBÉ et
+## « Continuer » encore), p4_100 (jauge 90 avant le P4 « fixe » → ABSORBÉ pendant le P4).
+## (0.3.2 : la fin provisoire 0.3.1 est remplacée par la convocation, la séance 2 « Confirmer » et la
+## carte « FIN DE LA VERSION 0.3 » ; l'avertissement de photosensibilité est tenu pour déjà vu.)
 
 const AMIS := preload("res://scripts/house/rooms/amis.gd")
 const SDB := preload("res://scripts/house/rooms/sdb.gd")
@@ -22,6 +24,7 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--cas="):
 			cas = a.substr(6)
+	Game.seen_warning = true      # (dossier user:// neuf : le titre, pas l'avertissement)
 	super()
 	at = Autotest.new()
 	at.name = "AT"
@@ -152,7 +155,8 @@ func _to_tin() -> void:
 	print("progrès : objets %s · peur %.1f" % [_items(), Game.peur])
 
 
-## Tout l'étage jusqu'à la fin provisoire 0.3.1 (P4 « fui »), par le vrai chemin ; la fin recharge la scène.
+## Tout l'étage jusqu'à la fin de la version 0.3 (P4 « fui », convocation, séance 2 « Confirmer »), par
+## le vrai chemin ; la fin recharge la scène.
 func _full_to_end() -> void:
 	var hn: Haunt = haunt
 	var am: Node = house.rooms["amis"]
@@ -181,15 +185,32 @@ func _full_to_end() -> void:
 	await at.until(func() -> bool: return acte2.p4_issue != "", 60.0)
 	Engine.time_scale = 1.0
 	print("P4 : %s · point %s · objets %s · peur %.1f" % [acte2.p4_issue, Game.load_checkpoint().get("checkpoint"), _items(), Game.peur])
-	# on va dans le couloir et on attend la fin provisoire (elle recharge la scène) ; le miroir, qui
-	# continue seul après « fui », a fini avant qu'on relève le monde
+	# on va dans le couloir et on attend la convocation (C3) ; le miroir, qui continue seul après
+	# « fui », a fini avant qu'on relève le monde
 	player.global_position = Vector3(4.0, 0, 0.0)
 	await at.until(func() -> bool: return not (sb.mirror as SmartMirror).p4_running, 40.0)
+	await at.until(func() -> bool: return bool(Game.flag("convocation", false)), 60.0)
+	await at.until(func() -> bool: return at.has_said("nestor", Acte2.N11), 40.0)
+	await at.until(func() -> bool: return not hn.is_busy(), 20.0)
+	await at.wait(0.5)
+	_check("convocation : C3 écrit, O4", Game.load_checkpoint().get("checkpoint") == "C3" and room.convoking and Game.objective_text == Acte2.O4,
+		"%s · « %s »" % [Game.load_checkpoint().get("checkpoint"), Game.objective_text])
 	Engine.set_meta(ETAPE, 2)
 	Engine.set_meta(MEMO, {"monde": _world(), "objets": _items(), "flags": Game.flags.duplicate(true), "peur": Game.peur})
-	print("monde à la fin : ", _world())
-	await at.until(func() -> bool: return acte2.end_card_shown, 90.0)
-	print("carte de fin 0.3.1 affichée ; on attend le rechargement")
+	print("monde à la convocation : ", _world())
+	# on répond à l'ordinateur ; séance 2 « Confirmer » ; la fin de la version recharge la scène
+	player.global_position = Vector3(1.2, 0, -1.0)
+	player.set_look(0.0, -0.3)
+	await at.wait(0.5)
+	room.terminal.turbo = true
+	room.pc_it.used.emit(room.pc_it)
+	await at.until(func() -> bool: return acte2.seance != null and Game.phase == "seated", 10.0)
+	await at.until(func() -> bool: return not room.terminal._choice.is_empty(), 120.0)
+	await at.wait(0.8)
+	if not room.terminal._choice.is_empty():
+		room.terminal._choice.picked = 0
+	await at.until(func() -> bool: return acte2.end_card_shown, 120.0)
+	print("carte « FIN DE LA VERSION 0.3 » affichée ; on attend le rechargement")
 	await at.wait(60.0)
 	print("PAS DE RECHARGEMENT ?")
 	_end()
@@ -232,7 +253,7 @@ func _absorbe_2() -> void:
 # ------------------------------------------------------------------ cas « nouvelle »
 
 func _nouvelle_2() -> void:
-	print("scène rechargée (fin 0.3.1) · drapeaux encore en mémoire : %d" % Game.flags.size())
+	print("scène rechargée (fin de la version 0.3) · drapeaux encore en mémoire : %d" % Game.flags.size())
 	await at.wait(1.0)
 	print("monde à l'écran-titre : ", _world())
 	_press("Nouvelle partie")
@@ -271,7 +292,8 @@ func _fin_continuer_2() -> void:
 	print("REPRISE %s · objets %s · peur %.1f · objectif « %s » / « %s »" % [d.get("checkpoint"), _items(), Game.peur, Game.objective_text, Game.objective_sub])
 	print("monde : ", _world())
 	_check("reprise après la fin : même monde", same_world(memo.get("monde", {}), _world()), "%s / %s" % [memo.get("monde"), _world()])
-	_check("reprise après la fin : fin_031", bool(Game.flag("fin_031", false)) and Game.phase == "room", "")
+	_check("reprise après la fin : C3, fin_v03, l'ordinateur appelle", d.get("checkpoint") == "C3" and bool(Game.flag("fin_v03", false))
+		and room.convoking and Game.objective_text == Acte2.O4 and Game.phase == "room", "%s · « %s »" % [d.get("checkpoint"), Game.objective_text])
 	await at.wait(8.0)
 	print("8 s plus tard : phase %s · carte %s · objectif « %s »" % [Game.phase, acte2.end_card_shown, Game.objective_text])
 	# deuxième rechargement : ABSORBÉ, puis « Continuer » encore
