@@ -7,7 +7,15 @@ extends HouseRoom
 ## Repère : intérieur x 3.3 → 4.7, z −7.3 → 6.3, sol y = 0, plafond 2.6.
 ## Portes : mur x = 3.25 en z −3.6 (P2), 1.4 (P1), 3.4 (P3) ; mur x = 4.75 en z −4.6 (P4), −1.2 (P5),
 ## 1.35 (P6, vitrée, s'ouvre dans le couloir), 4.4 (P7). Fenêtre F8 au bout sud (mur z = 6.35).
-## Fonctions publiques : flicker(secondes), set_dim(k), chain_lights(), track(cible), look_at_player_once().
+## Fonctions publiques : flicker(secondes), set_dim(k), chain_lights(), track(cible), look_at_player_once(),
+## set_switch(on, quiet, keep_level) (l'interrupteur : coupe ou rend le courant aux trois ampoules),
+## unplug_nestor(quiet) (avec le tournevis), photo() (await : image de CAM 1, prête à imprimer), restore().
+## Propriétés : nestor (Nestor, « nestor »), feed_cam (FeedCam « CAM 1 COULOIR », sur la tête de la
+## caméra dôme), switch_on, nestor_unplugged.
+## Ampoules L1 à L3 : smart_bulbs (SmartBulb « ampoule_couloir_1 » à « _3 »).
+## Caméra dôme : cam_led_on (LED éteinte 5 s quand on fixe l'objectif 3 s). Radiateur : RADIATOR_POS.
+## Événements Haunt.story_event : « lumiere » {room: "couloir", on}, « nestor_debranche »,
+## « camera_led_eteinte ».
 
 const XW := 3.312        # face du papier peint, mur ouest (côté chambres)
 const XE := 4.688        # face du papier peint, mur est (côté salle de bain, escalier, bureau)
@@ -18,10 +26,18 @@ const LIGHT_Z := [-5.0, -0.5, 4.0]
 const LIGHT_ENERGY := 0.35
 const BULB_GLOW := 2.6
 const CAM_POS := Vector3(4.0, 2.6, -7.1)   # assez loin du mur pour ne pas mordre sur la corniche
+const RADIATOR_POS := Vector3(4.62, 0.45, -2.9)   # centre du radiateur (§ 5.2) : les S.O.S. d'Albert
+const STARE_SEC := 3.0           # fixer l'objectif de la caméra dôme 3 s…
+const STARE_DEG := 10.0          # (à moins de 10° du centre du regard)
+const LED_OFF_SEC := 5.0         # … et sa LED s'éteint 5 s
+const TXT_CAMERA := "Une caméra. LED rouge. Elle tourne quand tu bouges."
+const TXT_CAMERA_LED := "Elle a éteint sa lumière. Elle sait que tu sais."
+const TXT_PORTRAIT := "Mamie et Papi, 1996, surexposés. Ils rient. Tu ne les as jamais vus rire comme ça."
 
 var house: House
 var rng := RandomNumberGenerator.new()
-var bulbs: Array[OmniLight3D] = []
+var bulbs: Array[OmniLight3D] = []          # les lumières de L1, L2, L3 (celles des SmartBulb)
+var smart_bulbs: Array[SmartBulb] = []     # L1, L2, L3 : « ampoule_couloir_1 » à « _3 », du nord au sud
 var bulb_mats: Array[StandardMaterial3D] = []
 var shade_mats: Array[StandardMaterial3D] = []
 var dim := 1.0
@@ -35,8 +51,20 @@ var cam_led: OmniLight3D
 var _cam_rest := Vector2(-0.42, PI)   # (tangage, lacet) au repos : vers le sud, vers le bas
 var _cam_once := false
 var _motor_t := 0.0
+var cam_led_mat: StandardMaterial3D
+var cam_led_on := true           # la LED rouge de la caméra dôme (éteinte 5 s quand on la fixe 3 s)
+var _stare_t := 0.0
+var _led_off_t := 0.0
 
 var thermostat: Device
+var nestor: Nestor
+var nestor_it: Interactable
+var nestor_plug: Node3D
+var nestor_unplugged := false
+var switch_on := true            # l'interrupteur mural des trois ampoules
+var switch_rocker: Node3D
+var switch_it: Interactable
+var feed_cam: FeedCam
 var smoke_led: StandardMaterial3D
 var phone_led: StandardMaterial3D
 var _cable_mat: StandardMaterial3D
@@ -57,7 +85,7 @@ func furnish(h: House) -> void:
 	_glass.roughness = 0.18
 	_glass.metallic_specular = 0.45
 	_runner()
-	_radiator(-5.6)
+	_radiator(RADIATOR_POS.z)
 	_console()
 	_plant()
 	_frames()
@@ -67,6 +95,10 @@ func furnish(h: House) -> void:
 	_thermostat()
 	_smoke_detector()
 	_traces()
+	_nestor()
+	_switch()
+	_network_cable()
+	_feed_cam()
 
 
 # ------------------------------------------------------------------ outils
@@ -568,16 +600,17 @@ func _runner() -> void:
 		_mesh(fp, Vector3(0, 0.0022, s * (l / 2.0 + 0.026)), fr, Vector3(0, 0.0 if s > 0.0 else PI, 0), holder)
 
 
-## Radiateur en fonte à colonnes, peint crème (la peinture s'écaille), avec sa tête thermostatique
-## connectée toute neuve. Contre le mur ouest, centré en z.
+## Radiateur en fonte à colonnes (1 m, 0,6 m de haut, centré en y 0,45), peint crème (la peinture
+## s'écaille), avec sa tête thermostatique connectée toute neuve. Contre le mur est (§ 5.2), centré en z :
+## c'est lui qui transmet les S.O.S. d'Albert.
 func _radiator(z: float) -> void:
-	var n := 12
+	var n := 16
 	var step := 0.062
 	var l := n * step
 	var depth := 0.15
-	var x := XW + DADO + 0.04 + depth / 2.0
+	var x := XE - DADO - 0.04 - depth / 2.0
 	var paint := _m(Color(0.6, 0.56, 0.48), 0.55, 0.25)
-	var y0_ := 0.13
+	var y0_ := RADIATOR_POS.y - 0.3
 	var hh := 0.6
 	for i in n:
 		var zz := z - l / 2.0 + step * (i + 0.5)
@@ -591,11 +624,11 @@ func _radiator(z: float) -> void:
 	# tuyau d'arrivée qui sort du parquet, robinet, tête connectée blanche
 	var pipe := _m(Color(0.5, 0.47, 0.4), 0.45, 0.5)
 	var pz := z + l / 2.0 + 0.045
-	_mesh(_cyl(0.011, 0.011, y0_ + hh - 0.06, 8), Vector3(x - 0.03, (y0_ + hh - 0.06) / 2.0, pz), pipe)
-	_mesh(_cyl(0.011, 0.011, 0.06, 8), Vector3(x - 0.03, y0_ + hh - 0.06, pz - 0.03), pipe, Vector3(PI / 2.0, 0, 0))
-	_mesh(_cyl(0.016, 0.016, 0.04, 10), Vector3(x - 0.03, y0_ + hh - 0.04, pz), _m(Color(0.55, 0.45, 0.22), 0.35, 0.7))
-	_mesh(_cyl(0.026, 0.026, 0.075, 16), Vector3(x - 0.03, y0_ + hh + 0.02, pz), _new_white)
-	var led := _no_gi(_mesh(_sphere(0.0035, 6), Vector3(x - 0.03 + 0.024, y0_ + hh + 0.035, pz), _glow(Color(0.2, 1.0, 0.35), 2.5)))
+	_mesh(_cyl(0.011, 0.011, y0_ + hh - 0.06, 8), Vector3(x + 0.03, (y0_ + hh - 0.06) / 2.0, pz), pipe)
+	_mesh(_cyl(0.011, 0.011, 0.06, 8), Vector3(x + 0.03, y0_ + hh - 0.06, pz - 0.03), pipe, Vector3(PI / 2.0, 0, 0))
+	_mesh(_cyl(0.016, 0.016, 0.04, 10), Vector3(x + 0.03, y0_ + hh - 0.04, pz), _m(Color(0.55, 0.45, 0.22), 0.35, 0.7))
+	_mesh(_cyl(0.026, 0.026, 0.075, 16), Vector3(x + 0.03, y0_ + hh + 0.02, pz), _new_white)
+	var led := _no_gi(_mesh(_sphere(0.0035, 6), Vector3(x + 0.03 - 0.024, y0_ + hh + 0.035, pz), _glow(Color(0.2, 1.0, 0.35), 2.5)))
 	led.name = "LedVanne"
 	_collider(Vector3(depth + 0.04, y0_ + hh + 0.08, l + 0.1), Vector3(x, (y0_ + hh + 0.08) / 2.0, z + 0.02))
 
@@ -609,7 +642,9 @@ func _plant() -> void:
 # ------------------------------------------------------------------ la console et le téléphone
 
 func _console() -> void:
-	var cz := -1.1
+	var cz := -1.0          # § 5.2 : console en (3.52, 0, −1.0) ; Nestor au milieu, la base du téléphone en z −0.8
+	var phz := cz + 0.2     # base du téléphone sans fil
+	var taz := cz - 0.2     # boîtier de téléassistance
 	var depth := 0.38
 	var cx := XW + DADO + 0.01 + depth / 2.0
 	var table := prop("sideTable", Vector3(cx, 0, cz), 90.0, Vector3(0.9, 0.8, depth))
@@ -620,14 +655,14 @@ func _console() -> void:
 	lace.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
 	lace.roughness = 1.0
 	var lq := PlaneMesh.new()
-	lq.size = Vector2(0.34, 0.34)
+	lq.size = Vector2(0.3, 0.3)
 	# (pas de _grimy ici : détail + transparence découpée bloque le rendu avec llvmpipe)
-	_mesh(lq, Vector3(cx + 0.02, top + 0.0015, cz - 0.16), lace, Vector3(0, 0.3, 0))
+	_mesh(lq, Vector3(cx + 0.02, top + 0.0015, phz + 0.04), lace, Vector3(0, 0.3, 0))
 	# téléphone sans fil sur sa base : combiné debout, petite antenne, LED verte
 	var ph := Node3D.new()
 	ph.name = "Telephone"
 	add_child(ph)
-	ph.position = Vector3(cx + 0.02, top + 0.003, cz - 0.16)
+	ph.position = Vector3(cx + 0.02, top + 0.003, phz)
 	ph.rotation.y = PI / 2.0 - 0.25
 	var grey := _m(Color(0.16, 0.16, 0.17), 0.45)
 	_box(Vector3(0.12, 0.032, 0.15), Vector3(0, 0.016, 0), grey, false, ph)
@@ -644,7 +679,7 @@ func _console() -> void:
 	var ta := Node3D.new()
 	ta.name = "Teleassistance"
 	add_child(ta)
-	ta.position = Vector3(cx + 0.03, top, cz + 0.24)
+	ta.position = Vector3(cx + 0.03, top, taz)
 	ta.rotation.y = PI / 2.0 + 0.08
 	_box(Vector3(0.16, 0.045, 0.11), Vector3(0, 0.0225, 0), _new_white, false, ta)
 	_mesh(_cyl(0.026, 0.028, 0.014, 16), Vector3(0, 0.052, 0.005), _glow(Color(0.7, 0.06, 0.05), 0.25), Vector3.ZERO, ta)
@@ -659,13 +694,14 @@ func _console() -> void:
 	var p_sock := _socket(Vector3(XW + DADO, 0.24, cz + 0.76), Vector3.RIGHT)
 	_plug(p_sock)
 	var bx := XW + DADO + 0.012
-	_cable([Vector3(cx - 0.03, top + 0.004, cz - 0.16), Vector3(bx + 0.02, top + 0.004, cz - 0.1),
+	_cable([Vector3(cx - 0.03, top + 0.004, phz), Vector3(bx + 0.02, top + 0.004, phz + 0.06),
 		Vector3(bx + 0.02, top + 0.004, cz + 0.43), Vector3(bx, top - 0.03, cz + 0.5), Vector3(bx + 0.01, 0.262, cz + 0.62)],
 		Vector3.RIGHT, false, _m(Color(0.62, 0.62, 0.6), 0.5))
-	_cable([Vector3(cx - 0.04, top + 0.004, cz + 0.24), Vector3(bx + 0.03, top + 0.004, cz + 0.3),
+	_cable([Vector3(cx - 0.04, top + 0.004, taz), Vector3(bx + 0.03, top + 0.004, taz + 0.06),
 		Vector3(bx + 0.03, top + 0.004, cz + 0.44), Vector3(bx + 0.006, top - 0.02, cz + 0.52), Vector3(bx + 0.01, 0.262, cz + 0.76)],
 		Vector3.RIGHT, false)
-	_look("Regarder le téléphone", Vector3(0.3, 0.3, 0.3), Vector3(cx + 0.02, top + 0.12, cz - 0.16),
+	# (boîte basse et étroite : elle ne doit pas masquer Nestor, juste derrière, au joueur qui arrive du sud)
+	_look("Regarder le téléphone", Vector3(0.18, 0.12, 0.18), Vector3(cx + 0.02, top + 0.06, phz),
 		"Le sans-fil de Mamie. Sous la base, l'étiquette de la téléassistance : « En cas de chute, ne bougez pas. On vous voit. »")
 	# la chaise du téléphone, de l'autre côté
 	prop("chair", Vector3(XW + DADO + 0.222, 0, cz - 0.9), 90.0 + 5.0, Vector3(0.4, 0.86, 0.4))
@@ -716,37 +752,43 @@ func _frames() -> void:
 	var w := Vector3.RIGHT     # accrochés au mur ouest, ils regardent vers +x
 	var e := Vector3.LEFT      # mur est, vers -x
 	# bout nord, mur est : Papi au labo, la plage
-	_frame(Vector3(XE, 1.66, -6.78), e, Vector2(0.34, 0.27), _photo("labo"), "noir", 0.0, 0.03)
-	_frame(Vector3(XE, 1.6, -6.12), e, Vector2(0.3, 0.38), _photo("aieule"), "dore", -0.025)
-	# au-dessus de la console : le mariage, Noël, la photo de classe
-	_frame(Vector3(XW, 1.72, -1.48), w, Vector2(0.26, 0.34), _photo("mariage"), "dore", 0.02, 0.025)
+	_frame(Vector3(XE, 1.66, -6.3), e, Vector2(0.34, 0.27), _photo("labo"), "noir", 0.0, 0.03)
+	# mur ouest, entre le portrait et la porte des grands-parents : l'arrière-grand-mère
+	_frame(Vector3(XW, 1.6, -5.6), w, Vector2(0.3, 0.38), _photo("aieule"), "dore", -0.025)
+	# mur ouest, de part et d'autre de la console : le mariage, la photo de classe ; Noël au-dessus
+	_frame(Vector3(XW, 1.72, -2.0), w, Vector2(0.26, 0.34), _photo("mariage"), "dore", 0.02, 0.025)
 	_frame(Vector3(XW, 1.5, -1.0), w, Vector2(0.36, 0.28), _photo("noel"), "pin", -0.015)
-	_frame(Vector3(XW, 1.78, -0.62), w, Vector2(0.2, 0.25), _photo("ecole"), "bois", 0.04)
-	# mur est, entre la salle de bain et la lingerie : le jardin, et la trace d'un cadre décroché
-	_frame(Vector3(XE, 1.58, -3.15), e, Vector2(0.42, 0.32), _photo("jardin"), "pin", 0.0, 0.03)
+	_frame(Vector3(XW, 1.66, 0.2), w, Vector2(0.2, 0.25), _photo("ecole"), "bois", 0.04)
+	# mur est, au-dessus du radiateur : la trace d'un cadre décroché
 	_decal(_ghost_texture(), Vector3(XE, 1.62, -2.5), Vector3.LEFT, Vector3.UP, 0.34, 0.41, 0.06)
 	_mesh(_cyl(0.003, 0.003, 0.02, 6), Vector3(XE - 0.01, 1.83, -2.5), mats.metal, Vector3(0, 0, PI / 2.0))
-	# bout sud, mur ouest : la plage
-	_frame(Vector3(XW, 1.6, 5.1), w, Vector2(0.4, 0.31), _photo("plage"), "bois", 0.03, 0.03)
+	# bout sud, mur ouest : la plage ; mur est, près de la fenêtre : le jardin
+	_frame(Vector3(XW, 1.6, 5.2), w, Vector2(0.4, 0.31), _photo("plage"), "bois", 0.03, 0.03)
+	_frame(Vector3(XE, 1.58, 5.6), e, Vector2(0.42, 0.32), _photo("jardin"), "pin", 0.0, 0.03)
 	# mur est, entre l'escalier et le bureau
-	_frame(Vector3(XE, 1.62, 2.9), e, Vector2(0.3, 0.38), _photo("ecole"), "dore", -0.03)
+	_frame(Vector3(XE, 1.62, 2.6), e, Vector2(0.3, 0.38), _photo("ecole"), "dore", -0.03)
 
 
+## Le portrait « 1996 » au bout nord (§ 5.2) : image 0,6 × 0,8 (portrait_1996.png, surexposé, sans
+## visages) dans un cadre doré.
 func _portrait() -> void:
 	var c := Vector3(4.0, 1.6, ZN)
-	_frame(c, Vector3.BACK, Vector2(0.66, 0.84), _family(), "dore", 0.0)
+	_frame(c, Vector3.BACK, Vector2(0.72, 0.92), load("res://assets/images/portrait_1996.png"), "dore", 0.0)
 	# le cordon, le clou
-	_mesh(_cyl(0.004, 0.004, 0.02, 6), Vector3(4.0, 2.12, ZN + 0.01), mats.metal, Vector3(PI / 2.0, 0, 0))
-	_cable([Vector3(3.85, 2.02, ZN + 0.008), Vector3(4.0, 2.12, ZN + 0.008), Vector3(4.15, 2.02, ZN + 0.008)],
+	_mesh(_cyl(0.004, 0.004, 0.02, 6), Vector3(4.0, 2.16, ZN + 0.01), mats.metal, Vector3(PI / 2.0, 0, 0))
+	_cable([Vector3(3.85, 2.05, ZN + 0.008), Vector3(4.0, 2.16, ZN + 0.008), Vector3(4.15, 2.05, ZN + 0.008)],
 		Vector3.BACK, false, _m(Color(0.3, 0.25, 0.15), 0.8), 0.0015)
-	_look("Regarder le portrait", Vector3(0.7, 0.9, 0.1), c + Vector3(0, 0, 0.05),
-		"Mamie, Papi, et ta mère à six ans. Papi a mis une cravate, une fois dans sa vie. Ta mère regarde à côté de l'objectif.")
+	_look("Regarder le portrait", Vector3(0.76, 0.96, 0.1), c + Vector3(0, 0, 0.05), TXT_PORTRAIT)
 
 
 # ------------------------------------------------------------------ plafond : ampoules connectées
 
+## L1, L2, L3 : tulipes des années 70 et, dedans, les ampoules connectées du fournisseur d'énergie
+## (SmartBulb « ampoule_couloir_1 » à « _3 », du nord au sud) : Haunt.move les fait vaciller quand elle
+## passe ; le couloir les pilote (flicker, set_dim, chain_lights) par leur niveau.
 func _ceiling_lights() -> void:
-	for z in LIGHT_Z:
+	for li in LIGHT_Z.size():
+		var z: float = LIGHT_Z[li]
 		var top := Vector3(4.0, 2.6, z)
 		_mesh(_cyl(0.05, 0.055, 0.022), top + Vector3(0, -0.011, 0), _m(Color(0.7, 0.66, 0.58), 0.6))
 		_mesh(_cyl(0.0035, 0.0035, 0.22, 6), top + Vector3(0, -0.13, 0), _plain(Color(0.12, 0.08, 0.05), 0.8))
@@ -764,24 +806,28 @@ func _ceiling_lights() -> void:
 		var bm := _glow(Color(1.0, 0.78, 0.5), BULB_GLOW)
 		bulb_mats.append(bm)
 		_no_gi(_mesh(_sphere(0.032), top + Vector3(0, -0.37, 0), bm))
-		var l := OmniLight3D.new()
-		l.name = "Ampoule"
-		l.light_color = Color(1.0, 0.74, 0.46)
-		l.light_energy = LIGHT_ENERGY
-		l.omni_range = 4.0
-		l.omni_attenuation = 1.2
-		l.light_volumetric_fog_energy = 0.6
-		l.shadow_enabled = true
-		l.shadow_bias = 0.04
-		l.position = top + Vector3(0, -0.36, 0)
-		add_child(l)
-		bulbs.append(l)
+		var sb := SmartBulb.new()
+		sb.name = "L%d" % (li + 1)
+		sb.device_id = "ampoule_couloir_%d" % (li + 1)
+		sb.room_id = "couloir"
+		sb.energy = LIGHT_ENERGY
+		sb.light_range = 4.0
+		sb.bulb_glow = BULB_GLOW
+		sb.show_bulb = false          # (l'ampoule visible est celle de la tulipe)
+		add_child(sb)
+		sb.position = top + Vector3(0, -0.345, 0)
+		sb.build()
+		sb.add_glow_material(bm, BULB_GLOW)
+		sb.add_glow_material(sm, 0.35)
+		smart_bulbs.append(sb)
+		bulbs.append(sb.light)
 
 
 func _apply_bulb(i: int, k: float) -> void:
-	bulbs[i].light_energy = LIGHT_ENERGY * k
-	bulb_mats[i].emission_energy_multiplier = BULB_GLOW * k
-	shade_mats[i].emission_energy_multiplier = 0.35 * k
+	if not switch_on:
+		k = 0.0                  # interrupteur coupé : plus de courant, rien ne s'allume
+	# (l'ampoule connectée applique le niveau à sa lumière, à l'ampoule et à la tulipe)
+	smart_bulbs[i].set_level(k)
 
 
 func _apply_all() -> void:
@@ -876,7 +922,8 @@ func _camera() -> void:
 	var lens := _plain(Color(0.03, 0.04, 0.08), 0.05)
 	lens.metallic_specular = 1.0
 	_mesh(_cyl(0.011, 0.011, 0.003, 16), Vector3(0, 0, -0.048), lens, Vector3(PI / 2.0, 0, 0), cam_pivot)
-	_no_gi(_mesh(_sphere(0.0045, 8), Vector3(0.021, 0.012, -0.036), _glow(Color(1.0, 0.06, 0.04), 7.0), Vector3.ZERO, cam_pivot))
+	cam_led_mat = _glow(Color(1.0, 0.06, 0.04), 7.0)
+	_no_gi(_mesh(_sphere(0.0045, 8), Vector3(0.021, 0.012, -0.036), cam_led_mat, Vector3.ZERO, cam_pivot))
 	cam_led = OmniLight3D.new()
 	cam_led.name = "LedCamera"
 	cam_led.light_color = Color(1.0, 0.08, 0.05)
@@ -911,7 +958,7 @@ func _camera() -> void:
 	_plug(sock)
 	var it := _interactable("Regarder la caméra", Vector3(0.24, 0.2, 0.24), CAM_POS + Vector3(0, -0.07, 0), self, LAYER_INTERACT, 2.8)
 	it.used.connect(func(_i: Interactable) -> void:
-		Game.hint("La caméra de l'assurance. Papi a collé un bout de scotch sur le micro. Pas sur l'objectif.", 4.5)
+		Game.hint(TXT_CAMERA, 4.5)
 		look_at_player_once())
 
 
@@ -943,6 +990,7 @@ func _aim_of(target: Node3D) -> Vector2:
 func _process(delta: float) -> void:
 	if cam_pivot == null:
 		return
+	_update_cam_led(delta)
 	var want := _cam_rest
 	if cam_target and is_instance_valid(cam_target):
 		want = _aim_of(cam_target)
@@ -965,6 +1013,36 @@ func _process(delta: float) -> void:
 			_cam_once = false
 			_cam_rest = Vector2(cam_pivot.rotation.x, cam_pivot.rotation.y)
 			cam_target = null
+
+
+## LED de la caméra dôme : si le joueur, dans le couloir, fixe l'objectif STARE_SEC secondes, elle
+## s'éteint LED_OFF_SEC secondes (indice « Elle a éteint sa lumière… », événement « camera_led_eteinte »).
+func _update_cam_led(delta: float) -> void:
+	if _led_off_t > 0.0:
+		_led_off_t -= delta
+		if _led_off_t <= 0.0:
+			_set_cam_led(true)
+		return
+	var p: Node3D = house.player if house else null
+	var watching := p != null and house.current == self and p.has_method("looking_at_point") \
+		and bool(p.call("looking_at_point", cam_pivot.global_position, STARE_DEG, 9.0))
+	_stare_t = _stare_t + delta if watching else 0.0
+	if _stare_t >= STARE_SEC:
+		_stare_t = 0.0
+		_led_off_t = LED_OFF_SEC
+		_set_cam_led(false)
+		Game.hint(TXT_CAMERA_LED, 4.0)
+		var hn := Haunt.of(get_tree())
+		if hn:
+			hn.story_event("camera_led_eteinte")
+
+
+func _set_cam_led(on: bool) -> void:
+	cam_led_on = on
+	if cam_led_mat:
+		cam_led_mat.emission_energy_multiplier = 7.0 if on else 0.0
+	if cam_led:
+		cam_led.light_energy = 0.08 if on else 0.0
 
 
 # ------------------------------------------------------------------ thermostat, détecteur de fumée
@@ -1031,3 +1109,195 @@ func _traces() -> void:
 	# moisissure dans l'angle nord-ouest, sous le plafond
 	_decal(mold, Vector3(XW, 2.25, -6.95), Vector3.RIGHT, Vector3.UP, 0.9, 0.7, 0.2)
 	_decal(mold, Vector3(3.55, 2.3, ZN), Vector3.BACK, Vector3.UP, 0.6, 0.6, 0.2, Color(1, 1, 1, 0.6))
+
+
+# ------------------------------------------------------------------ Nestor, sur la console
+
+const NESTOR_POS := Vector2(3.52, -1.0)   # (x, z) ; posé sur le plateau de la console
+const TXT_NESTOR := "L'enceinte de la téléassistance. Un anneau de lumière, %s selon la jauge."
+const TXT_NESTOR_DEBRANCHE := "La prise est débranchée. L'anneau reste allumé : batterie interne, dix heures, dit l'étiquette."
+const TXT_CABLE := "Ton câble. Quinze mètres, de la box du bureau jusqu'à la chambre. Scotché par toi, cet après-midi."
+
+
+## L'enceinte Nestor, entre le téléphone et le boîtier de téléassistance ; son câble blanc descend
+## derrière la console jusqu'à une prise que l'installateur a fermée d'un cache vissé.
+func _nestor() -> void:
+	var table: Node3D = props.get("sideTable")
+	var top := 0.8
+	if table:
+		top = (table.get_meta("size") as Vector3).y
+	nestor = Nestor.new()
+	nestor.name = "Nestor"
+	nestor.device_id = "nestor"
+	nestor.room_id = "couloir"
+	add_child(nestor)
+	nestor.position = Vector3(NESTOR_POS.x, top, NESTOR_POS.y)
+	nestor.rotation.y = PI / 2.0      # face avant vers le couloir (+x)
+	nestor.build()
+	# câble : de l'arrière de l'enceinte au bord du plateau, puis le long du mur jusqu'à la prise
+	var bx := XW + DADO + 0.012
+	var sz := NESTOR_POS.y - 0.42
+	_cable([Vector3(NESTOR_POS.x - 0.05, top + 0.004, NESTOR_POS.y), Vector3(bx + 0.04, top + 0.004, NESTOR_POS.y - 0.02),
+		Vector3(bx + 0.04, top + 0.004, NESTOR_POS.y - 0.25), Vector3(bx + 0.01, top - 0.02, NESTOR_POS.y - 0.3),
+		Vector3(bx + 0.006, 0.4, sz), Vector3(bx + 0.006, 0.28, sz)], Vector3.RIGHT, false)
+	var sock := _socket(Vector3(XW + DADO, 0.24, sz), Vector3.RIGHT)
+	nestor_plug = Node3D.new()
+	nestor_plug.name = "FicheNestor"
+	sock.add_child(nestor_plug)
+	_box(Vector3(0.036, 0.042, 0.03), Vector3(0, 0, 0.03), _new_white, false, nestor_plug)
+	# le cache-prise vissé de l'installateur (il faut un tournevis)
+	var cover := _plain(Color(0.85, 0.85, 0.83, 1.0), 0.35)
+	_box(Vector3(0.09, 0.1, 0.004), Vector3(0, 0, 0.047), cover, false, nestor_plug)
+	_mesh(_cyl(0.004, 0.004, 0.003, 8), Vector3(0, 0.04, 0.05), mats.metal, Vector3(PI / 2.0, 0, 0), nestor_plug)
+	_mesh(_cyl(0.004, 0.004, 0.003, 8), Vector3(0, -0.04, 0.05), mats.metal, Vector3(PI / 2.0, 0, 0), nestor_plug)
+	nestor_it = _interactable("Regarder l'enceinte", Vector3(0.14, 0.22, 0.14), Vector3(NESTOR_POS.x, top + 0.09, NESTOR_POS.y), self, LAYER_INTERACT, 2.2)
+	nestor_it.used.connect(func(_i: Interactable) -> void:
+		if not nestor_unplugged and Game.has_item("tournevis"):
+			unplug_nestor()
+		elif nestor_unplugged:
+			Game.hint(TXT_NESTOR_DEBRANCHE, 5.0)
+		else:
+			Game.hint(TXT_NESTOR % nestor.ring_color_name(), 4.5))
+	Game.inventory_changed.connect(_update_nestor_label)
+	_update_nestor_label()
+
+
+func _update_nestor_label() -> void:
+	if nestor_it == null or not is_instance_valid(nestor_it):
+		return
+	nestor_it.label = "Débrancher l'enceinte" if Game.has_item("tournevis") and not nestor_unplugged else "Regarder l'enceinte"
+
+
+## Débrancher Nestor (avec le tournevis) : la fiche sort, l'anneau reste allumé (batterie interne).
+func unplug_nestor(quiet := false) -> void:
+	if nestor_unplugged:
+		return
+	nestor_unplugged = true
+	Game.set_flag("nestor_debranche", true)
+	if nestor_plug:
+		nestor_plug.visible = false
+	_update_nestor_label()
+	if quiet:
+		return
+	Sfx.play_at("metalClick", nestor.global_position, -10.0, 0.9, 1.5)
+	Game.hint(TXT_NESTOR_DEBRANCHE, 5.5)
+	var hn := Haunt.of(get_tree())
+	if hn:
+		hn.story_event("nestor_debranche")
+
+
+# ------------------------------------------------------------------ l'interrupteur des trois ampoules
+
+const SWITCH_POS := Vector3(3.31, 1.1, 0.75)
+
+
+func _switch() -> void:
+	var holder := Node3D.new()
+	holder.name = "Interrupteur"
+	add_child(holder)
+	holder.position = Vector3(XW, SWITCH_POS.y, SWITCH_POS.z)
+	holder.rotation.y = PI / 2.0      # face +x
+	_box(Vector3(0.082, 0.082, 0.006), Vector3(0, 0, 0.003), _m(Color(0.5, 0.47, 0.4), 0.5), false, holder)
+	_box(Vector3(0.074, 0.074, 0.01), Vector3(0, 0, 0.005), _m(Color(0.66, 0.62, 0.53), 0.5), false, holder)
+	for sy in [-1.0, 1.0]:
+		_mesh(_cyl(0.003, 0.003, 0.002, 8), Vector3(0, sy * 0.028, 0.0105), mats.metal, Vector3(PI / 2.0, 0, 0), holder)
+	switch_rocker = Node3D.new()
+	switch_rocker.position = Vector3(0, 0, 0.011)
+	holder.add_child(switch_rocker)
+	_box(Vector3(0.034, 0.042, 0.008), Vector3(0, 0, 0.003), _m(Color(0.7, 0.67, 0.58), 0.45), false, switch_rocker)
+	switch_rocker.rotation.x = -0.16 if switch_on else 0.16
+	switch_it = _interactable("Éteindre la lumière", Vector3(0.12, 0.14, 0.14), Vector3(XW + 0.05, SWITCH_POS.y, SWITCH_POS.z), self, LAYER_INTERACT, 2.0)
+	switch_it.used.connect(func(_i: Interactable) -> void:
+		set_switch(not switch_on)
+		var hn := Haunt.of(get_tree())
+		if hn:
+			hn.story_event("lumiere", {"room": "couloir", "on": switch_on}))
+
+
+## L'interrupteur mural : coupé, plus aucune ampoule ne s'allume (ni chain_lights, ni flicker) ;
+## remis, les ampoules connectées repartent à pleine puissance (comme toutes les ampoules connectées
+## après une coupure), jusqu'à ce qu'elle les baisse.
+## keep_level : ne pas remettre les ampoules à pleine puissance (rechargement d'une sauvegarde).
+func set_switch(on: bool, quiet := false, keep_level := false) -> void:
+	switch_on = on
+	Game.set_flag("interrupteur_couloir", on)
+	if switch_rocker:
+		switch_rocker.rotation.x = -0.16 if on else 0.16
+	if switch_it:
+		switch_it.label = "Éteindre la lumière" if on else "Allumer la lumière"
+	for n in find_children("*", "", true, false):
+		if n is SmartBulb:
+			(n as SmartBulb).set_powered(on)
+	if on and not keep_level:
+		_chain_id += 1
+		_flicker_id += 1
+		if _dim_tw:
+			_dim_tw.kill()
+		dim = 1.0
+	_apply_all()
+	if not quiet:
+		Sfx.play_at("metalClick", Vector3(XW, SWITCH_POS.y, SWITCH_POS.z), -10.0, 1.3, 1.5)
+
+
+# ------------------------------------------------------------------ le câble réseau d'Alexandre
+
+## Le câble blanc d'Alexandre : il sort sous la porte de la chambre (P1), longe la plinthe ouest,
+## traverse le couloir sur le tapis et passe sous la porte du bureau (P7). Scotch gris aux endroits
+## du plan (z 1.6, 2.6, 3.6 et x 4.0). La suite, dans le bureau, est posée par bureau.gd.
+func _network_cable() -> void:
+	var xw := XW + DADO + 0.04   # devant la plinthe (le plan dit 3.34 : la plinthe est là)
+	var z := 4.15
+	var y := 0.008
+	var yr := 0.0105             # sur le tapis
+	var pts := [Vector3(3.26, 0.012, 1.0), Vector3(3.3, y, 1.0), Vector3(xw, y, 1.0), Vector3(xw, y, z),
+		Vector3(3.585, y, z), Vector3(3.6, yr, z), Vector3(4.4, yr, z), Vector3(4.415, y, z),
+		Vector3(4.68, y, z), Vector3(4.69, 0.015, z), Vector3(4.81, 0.015, z)]
+	var mat := _plain(Color(0.92, 0.92, 0.9), 0.35)
+	_cable(pts, Vector3.UP, false, mat, 0.003)
+	var grey := _plain(Color(0.66, 0.66, 0.64), 0.35, 0.3)
+	for p in [Vector3(xw, y, 1.6), Vector3(xw, y, 2.6), Vector3(xw, y, 3.6), Vector3(4.0, yr, z)]:
+		var along := Vector3.BACK if p.z != z else Vector3.RIGHT
+		var t := MeshInstance3D.new()
+		var tb := BoxMesh.new()
+		tb.size = Vector3(0.055, 0.0074, 0.036)
+		t.mesh = tb
+		t.material_override = grey
+		t.transform = Transform3D(Basis(Vector3.UP.cross(along).normalized(), Vector3.UP, along), p + Vector3(0, -0.0006, 0))
+		t.rotate_object_local(Vector3.UP, rng.randf_range(-0.15, 0.15))
+		add_child(t)
+	var it := _interactable("Regarder le câble", Vector3(0.16, 0.1, 1.0), Vector3(xw + 0.02, 0.05, 2.4), self, LAYER_INTERACT, 2.0)
+	it.used.connect(func(_i: Interactable) -> void: Game.hint(TXT_CABLE, 5.0))
+
+
+# ------------------------------------------------------------------ CAM 1, dans la caméra dôme
+
+## Le flux de la caméra dôme (CAM 1 COULOIR, 160 × 90, 6 images/s, fov 80°) : posé sur la tête mobile,
+## il suit ses mouvements. Coupé tant qu'on ne regarde pas son image (console du bureau).
+func _feed_cam() -> void:
+	if cam_pivot == null:
+		return
+	feed_cam = FeedCam.new()
+	feed_cam.name = "CamFlux1"
+	feed_cam.title = "CAM 1 COULOIR"
+	feed_cam.fov = 80.0
+	feed_cam.ir = 1.2
+	cam_pivot.add_child(feed_cam)
+	feed_cam.position = Vector3(0, 0, -0.055)
+	feed_cam.build()
+
+
+## Une image de CAM 1, telle que l'imprimante la sort (await couloir.photo()).
+func photo() -> Image:
+	if feed_cam == null:
+		return null
+	return await feed_cam.capture_still("CAM 1")
+
+
+# ------------------------------------------------------------------ sauvegarde
+
+## Réapplique l'état après un chargement (interrupteur, enceinte débranchée). Le niveau des ampoules
+## (set_dim) appartient au scénario.
+func restore() -> void:
+	set_switch(bool(Game.flag("interrupteur_couloir", true)), true, true)
+	if Game.flag("nestor_debranche", false):
+		unplug_nestor(true)
