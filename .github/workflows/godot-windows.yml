@@ -61,6 +61,9 @@ jobs:
           mkdir -p "$out"
           ~/godot/godot --headless --path godot --export-release "Windows Desktop" "$out/DontPlay.exe"
           test -f "$out/DontPlay.exe"
+          # Les données du jeu sont à part (DontPlay.pck) : un .exe qui les contient
+          # ressemble davantage, pour les antivirus, à un programme « emballé » suspect.
+          test -f "$out/DontPlay.pck"
           cp CREDITS.md "$out/CREDITS.md"
           cp godot/LISEZMOI.txt "$out/LISEZMOI.txt"
           cd "$GITHUB_WORKSPACE/build" && zip -qr DontPlay-windows.zip DontPlay
