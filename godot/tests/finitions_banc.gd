@@ -194,6 +194,8 @@ func _c5() -> void:
 	# option coupée : les dialogues et les pensées s'affichent, les sons non
 	Game.sound_captions = false
 	hud.clear_subtitles()
+	# (le premier bourdonnement est sous-titré même sans l'option, § 6.4 : vérifié à part ci-dessous)
+	haunt._hum_captioned = true
 	var n_sub := hud.subtitle_log.size()
 	haunt.say("a", "Bonsoir, {name}.")
 	haunt.say("b", "{name} ?", "Mamie")
@@ -242,6 +244,19 @@ func _c5() -> void:
 	check("C5 tous entre crochets", texts.size() == 6 and texts.all(func(x: String) -> bool: return x.begins_with("[") and x.ends_with("]")), str(texts))
 	await wait(7.0)
 	check("C5 le son s'efface", not hud.snd_lbl.visible and hud.current_caption == "", hud.snd_lbl.text)
+	hud.clear_subtitles()
+	# § 6.4 : sans l'option, le premier bourdonnement d'une session s'affiche une fois, pas les suivants
+	Game.sound_captions = false
+	haunt._hum_captioned = false
+	var n_cap := hud.caption_log.size()
+	haunt.move("a", "b", 0.3)
+	await wait(0.2)
+	haunt.move("b", "a", 0.3)
+	await wait(0.2)
+	check("C5 sans l'option : premier bourdonnement sous-titré une fois (§ 6.4)",
+		hud.caption_log.size() == n_cap + 1 and hud.caption_log[n_cap].text == Haunt.HUM_CAPTION,
+		str(hud.caption_log.slice(n_cap)))
+	await wait(7.0)
 	hud.clear_subtitles()
 	Game.sound_captions = keep
 	# l'option est gardée dans settings.cfg (aller-retour par un Game neuf)

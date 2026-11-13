@@ -66,7 +66,9 @@ const TIMES_PATH_TEST := "user://journal_autotest.txt"   # l'autotest n'écrase 
 
 var devices := {}                 # device_id -> Connected
 var journal: Array = []           # [{t, ev, …}]
-var _hum_captioned := false       # le premier bourdonnement est sous-titré même sans l'option (§ 6.4)
+## Le premier bourdonnement est sous-titré même sans l'option (§ 6.4). Haunt est recréé à chaque
+## chargement : c'est le premier de la session (après « Continuer », il l'est de nouveau, exprès).
+var _hum_captioned := false
 var inhabited_id := ""            # l'appareil où elle est
 var room_id := ""                 # pièce du joueur (dernier room_changed)
 var step_id := ""                 # étape du scénario (pour les indices)

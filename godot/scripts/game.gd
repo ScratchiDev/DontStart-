@@ -132,14 +132,23 @@ var _quitting := false
 ## réveillent jamais et la fenêtre se fige. On arrête le rendu (plus aucune compilation demandée), puis
 ## une tâche « barrière » de basse priorité passe après toutes celles déjà en file : quand elle a fini,
 ## la file est vide et la sortie ne peut plus se bloquer.
+## Pendant cette attente (en général une fraction de seconde), le jeu ne tourne plus : arbre en pause,
+## entrées ignorées, son coupé. Au-delà de 15 s, sortie forcée (la partie est déjà sauvegardée).
 func quit_game(code := 0) -> void:
 	if _quitting:
 		return
 	_quitting = true
 	RenderingServer.render_loop_enabled = false
+	get_tree().paused = true
+	get_viewport().gui_disable_input = true
+	AudioServer.set_bus_mute(0, true)
 	var id := WorkerThreadPool.add_task(func() -> void: pass, false, "barrière avant la sortie")
 	var t0 := Time.get_ticks_msec()
-	while not WorkerThreadPool.is_task_completed(id) and Time.get_ticks_msec() - t0 < 15000:
+	while not WorkerThreadPool.is_task_completed(id):
+		if Time.get_ticks_msec() - t0 > 15000:
+			push_warning("Sortie : la file de tâches ne se vide pas, sortie forcée")
+			OS.kill(OS.get_process_id())
+			return
 		await get_tree().process_frame
 	WorkerThreadPool.wait_for_task_completion(id)
 	get_tree().quit(code)

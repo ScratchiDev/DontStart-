@@ -262,6 +262,13 @@ func _set_step(id: String) -> void:
 		haunt.step(id)
 
 
+## Après les coups frappés à P2 : l'étape du moment (« convocation » si le modem chante déjà), sauf
+## pendant la séance 2, la fin ou ABSORBÉ, qui gardent la leur (et leur indice).
+func _restore_step() -> void:
+	if not (_seance2_on or _ending or _absorbing):
+		_set_step(_step())
+
+
 func _flag(id: String) -> bool:
 	return bool(Game.flag(id, false))
 
@@ -372,7 +379,7 @@ func on_door_tried(id: String) -> void:
 			if n == 1:
 				_p2_first()
 			elif not _p2_waiting:
-				_set_step(_step())   # (« convocation » si le modem chante déjà)
+				_restore_step()
 				_refresh_objective()
 		"P3", "P5", "P6", "P7":
 			pass   # messages du § 5.1, affichés par la porte (house.gd, DOORS_V03)
@@ -391,7 +398,7 @@ func _p2_first() -> void:
 	await _wait(2.6)
 	await haunt.say_lines("nestor", [N5, N6] if _p4_done() else [N5, N6, N7])
 	_p2_waiting = false
-	_set_step(_step())
+	_restore_step()
 	_refresh_objective()
 	haunt.end_scene()
 
