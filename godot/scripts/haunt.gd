@@ -66,6 +66,7 @@ const TIMES_PATH_TEST := "user://journal_autotest.txt"   # l'autotest n'écrase 
 
 var devices := {}                 # device_id -> Connected
 var journal: Array = []           # [{t, ev, …}]
+var _hum_captioned := false       # le premier bourdonnement est sous-titré même sans l'option (§ 6.4)
 var inhabited_id := ""            # l'appareil où elle est
 var room_id := ""                 # pièce du joueur (dernier room_changed)
 var step_id := ""                 # étape du scénario (pour les indices)
@@ -309,7 +310,10 @@ func move(from_id: String, to_id: String, sec := 1.2) -> void:
 	var pa := a.speak_pos()
 	var pb := b.speak_pos()
 	Sfx.hum_move(pa, pb, sec)
-	sound_caption(HUM_CAPTION)
+	# § 6.4 : le bourdonnement est toujours sous-titré à sa première occurrence (sinon il n'est pas
+	# compris) ; ensuite, seulement avec l'option « Sous-titres des sons » (C5)
+	sound_caption(HUM_CAPTION, not _hum_captioned)
+	_hum_captioned = true
 	for n in get_tree().get_nodes_in_group("connecte"):
 		var bulb := n as SmartBulb
 		if bulb and bulb.is_inside_tree() and _seg_dist(bulb.global_position, pa, pb) < BULB_RADIUS:

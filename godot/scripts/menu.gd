@@ -117,7 +117,7 @@ func _build_title() -> Control:
 	v.add_child(continue_btn)
 	v.add_child(_button("Nouvelle partie", func() -> void: _show(hero_box)))
 	v.add_child(_button("Options", func() -> void: show_options("title")))
-	v.add_child(_button("Quitter", func() -> void: get_tree().quit()))
+	v.add_child(_button("Quitter", func() -> void: Game.quit_game()))
 	var foot := _text("ZQSD/WASD marcher · souris regarder · E agir · F lampe · Tab inventaire\nMaj courir · C s'accroupir · Échap menu", Color(0.5, 0.49, 0.44), FONT_SMALL, false)
 	foot.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	foot.position = Vector2(44, -46)
@@ -176,7 +176,7 @@ func _build_pause() -> Control:
 	v.add_child(_text("PAUSE", GREEN, FONT_HEAD, false))
 	v.add_child(_button("Reprendre", func() -> void: resume_requested.emit()))
 	v.add_child(_button("Options", func() -> void: show_options("pause")))
-	v.add_child(_button("Quitter le jeu", func() -> void: get_tree().quit()))
+	v.add_child(_button("Quitter le jeu", func() -> void: Game.quit_game()))
 	return v
 
 

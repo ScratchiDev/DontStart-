@@ -12,8 +12,10 @@ extends "res://scripts/main.gd"
 ## scènes : coupé par le rechargement, fini avant, sans le filtre d'atténuation), « p_conv », « p_blink »,
 ## « p_shape » (un morceau de room.convocation dans les deux scènes), « q_c3 », « q_voix », « q_silence »,
 ## « q_scene » (le drapeau et C3 seuls, ou avec N10 et N11, le silence, une scène écrite ; la scène 2
-## reprend convoquée). Dernière ligne : « SORTIE <cas> : quit() demandé » ; si le processus ne se
-## termine pas ensuite, le blocage est reproduit.
+## reprend convoquée), « conv_vite » (« Continuer » puis quitter 0,3 s après), « fermer » (comme
+## « conv », mais par la fermeture de la fenêtre). Dernière ligne : « SORTIE <cas> : quit() demandé » ;
+## si le processus ne se termine pas ensuite, le blocage est reproduit. (Avant Game.quit_game, « conv »
+## bloquait à chaque fois en rendu ; corrigé : voir game.gd, quit_game.)
 
 const META := "autotest032_sortie_etape"
 var at: Autotest
@@ -109,6 +111,11 @@ func _run() -> void:
 	await at.wait(1.0)
 	if cas != "sans_reprise" and not cas.begins_with("piece_"):
 		menu.continue_btn.pressed.emit()
+		if cas == "conv_vite":
+			# (quitter 0,3 s après « Continuer » : la vue neuve compile encore ses pipelines)
+			await at.wait(0.3)
+			_quit()
+			return
 		await at.wait(2.5)
 		print("SORTIE %s : reprise, modem %s, objectif « %s »" % [cas, room.convoking, Game.objective_text])
 		if cas.begins_with("son_"):
@@ -163,4 +170,8 @@ func _modem_seul() -> void:
 
 func _quit() -> void:
 	print("SORTIE %s : quit() demandé" % cas)
-	get_tree().quit(0)
+	if cas == "fermer":
+		# la croix de la fenêtre / Alt+F4 (auto_accept_quit est faux : Game._notification quitte)
+		get_tree().root.propagate_notification(NOTIFICATION_WM_CLOSE_REQUEST)
+	else:
+		Game.quit_game(0)

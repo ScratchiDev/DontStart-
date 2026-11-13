@@ -372,7 +372,7 @@ func on_door_tried(id: String) -> void:
 			if n == 1:
 				_p2_first()
 			elif not _p2_waiting:
-				_set_step("explorer")
+				_set_step(_step())   # (« convocation » si le modem chante déjà)
 				_refresh_objective()
 		"P3", "P5", "P6", "P7":
 			pass   # messages du § 5.1, affichés par la porte (house.gd, DOORS_V03)
@@ -391,7 +391,7 @@ func _p2_first() -> void:
 	await _wait(2.6)
 	await haunt.say_lines("nestor", [N5, N6] if _p4_done() else [N5, N6, N7])
 	_p2_waiting = false
-	_set_step("explorer")
+	_set_step(_step())
 	_refresh_objective()
 	haunt.end_scene()
 
@@ -602,10 +602,12 @@ func _p4() -> void:
 	_set_step("p4")
 	var issue: String = await sdb.run_p4()
 	p4_issue = issue
-	_p4_busy = false
+	# (_p4_busy reste vrai jusqu'à C2 : la convocation, que le miroir peut déclencher dès la fin du P4,
+	# attend ce drapeau, sinon C2 pourrait être écrit après C3 et l'écraser)
 	# la jauge du P4 (+10, +16 ou +12) a pu atteindre 100 : la séquence ABSORBÉ joue déjà. Aucun point
 	# de passage n'est écrit à 100 : « Continuer » reprend le point d'avant, avec sa jauge (§ 5.5, B15).
 	if _absorbing or Game.phase == "end":
+		_p4_busy = false
 		return
 	Game.set_flag("p4_reel_fait", true)
 	# (elle ne s'installe pas dans le miroir : « habite » garde Nestor ou la console)
@@ -616,9 +618,12 @@ func _p4() -> void:
 	while (haunt.is_busy() or (_in_doorway() and t < 8.0)) and t < 60.0 and not _absorbing:
 		await _wait(0.25)
 		t += 0.25
-	if _absorbing or Game.phase == "end":
+	# (convocation déjà commencée : C3, plus récent, est écrit ; ne pas l'écraser par C2)
+	if _absorbing or Game.phase == "end" or _flag("convocation"):
+		_p4_busy = false
 		return
 	_checkpoint("C2")
+	_p4_busy = false
 	_set_step(_step())
 	_refresh_objective()
 	_check_convocation()

@@ -130,10 +130,10 @@ func finish() -> void:
 	print("%d vérifications, %d échec(s)" % [checks, failures])
 	if failures == 0:
 		print("AUTOTEST OK")
-		get_tree().quit(0)
+		Game.quit_game(0)
 	else:
 		print("AUTOTEST ÉCHEC %d" % failures)
-		get_tree().quit(1)
+		Game.quit_game(1)
 
 
 func wait(sec: float) -> void:
@@ -2505,6 +2505,7 @@ func check_c4_calm(tag: String) -> void:
 
 ## C5, option coupée : chaque son important est passé par Haunt.sound_caption (journal « son ») sans
 ## jamais s'afficher ; les dialogues de l'entité (N8 à N11) et les pensées du héros, toujours.
+## Seule exception (§ 6.4) : le premier bourdonnement, sous-titré une fois même sans l'option.
 func check_c5_off(tag: String) -> void:
 	var hn: Haunt = main.haunt
 	var missing := []
@@ -2512,9 +2513,18 @@ func check_c5_off(tag: String) -> void:
 		if hn.count("son", "text", s) < 1:
 			missing.append(s)
 	check("C5 %s : les sons importants sont signalés" % tag, missing.is_empty(), "jamais signalés : %s" % [missing])
-	check("C5 %s : option coupée, aucun son entre crochets" % tag, not Game.sound_captions and hud.caption_log.is_empty()
-		and hn.count("son", "shown", true) == 0 and not hud.snd_lbl.visible,
-		"%d affichés : %s" % [hud.caption_log.size(), hud.caption_log.slice(0, 3)])
+	var others: Array = hud.caption_log.filter(func(e: Dictionary) -> bool: return e.text != Haunt.HUM_CAPTION)
+	var hums: int = hud.caption_log.size() - others.size()
+	var hum_shown := 0
+	for e in hn.journal:
+		if e.get("ev") == "son" and e.get("text") == Haunt.HUM_CAPTION and e.get("shown") == true:
+			hum_shown += 1
+	check("C5 %s : option coupée, aucun son entre crochets" % tag, not Game.sound_captions and others.is_empty()
+		and hn.count("son", "shown", true) == hum_shown and (hud.snd_lbl.text == Haunt.HUM_CAPTION or not hud.snd_lbl.visible),
+		"%d affichés : %s" % [others.size(), others.slice(0, 3)])
+	check("C5 %s : le premier bourdonnement est sous-titré une seule fois (§ 6.4)" % tag,
+		hums == 1 and hum_shown == 1 and hn.count("son", "text", Haunt.HUM_CAPTION) >= 1,
+		"%d affiché(s), %d au journal" % [hums, hum_shown])
 	var shown := []
 	for e in hud.subtitle_log:
 		if e.get("kind") == "elle":

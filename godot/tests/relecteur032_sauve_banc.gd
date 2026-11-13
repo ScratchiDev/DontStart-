@@ -215,7 +215,7 @@ func _stage_b() -> void:
 		await get_tree().create_timer(1.0, true).timeout
 		print("SAUVE FINI %d vérifications, %d échec(s) (quitter après la reprise de C3)" % [n_ok + n_ko, n_ko])
 		Engine.remove_meta(META)
-		get_tree().quit(0)
+		Game.quit_game(0)   # (ce que fait le bouton « Quitter le jeu » du menu de pause)
 		return
 	# ABSORBÉ hors séance, juste après la convocation (au couloir, à C3)
 	var before := FileAccess.get_file_as_string(Game.save_path())

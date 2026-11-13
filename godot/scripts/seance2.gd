@@ -228,6 +228,10 @@ func _confirmation() -> void:
 			opts.append(OPTIONS[i])
 		# au bout de 8 s, le pire : le proche (s'il n'est pas proposé, elle le garde)
 		var worst := others.find(PRIX.find("proche"))
+		# (un temps avant le second choix : un double appui sur « 2 » ne le tranche pas à l'aveugle)
+		await T.wait(0.5)
+		if T.aborted:
+			return
 		var r2: int = await T.pick(opts, 8.0, worst, Callable(), 0.0)
 		if T.aborted:
 			return

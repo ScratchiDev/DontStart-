@@ -113,6 +113,38 @@ func _enter_tree() -> void:
 	apply_settings()
 
 
+func _ready() -> void:
+	# Alt+F4 ou la croix de la fenêtre : la même sortie que « Quitter » (voir quit_game)
+	get_tree().auto_accept_quit = false
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		quit_game()
+
+
+var _quitting := false
+
+## Quitte le jeu (menu « Quitter », fermeture de la fenêtre, fin de l'autotest).
+## Contourne un blocage de Godot 4.7.2 : si l'on quitte pendant que des compilations de pipelines de
+## basse priorité attendent dans la file du WorkerThreadPool (les premières secondes après l'affichage
+## d'une vue neuve, par exemple juste après « Continuer »), la sortie attend des fils qui ne se
+## réveillent jamais et la fenêtre se fige. On arrête le rendu (plus aucune compilation demandée), puis
+## une tâche « barrière » de basse priorité passe après toutes celles déjà en file : quand elle a fini,
+## la file est vide et la sortie ne peut plus se bloquer.
+func quit_game(code := 0) -> void:
+	if _quitting:
+		return
+	_quitting = true
+	RenderingServer.render_loop_enabled = false
+	var id := WorkerThreadPool.add_task(func() -> void: pass, false, "barrière avant la sortie")
+	var t0 := Time.get_ticks_msec()
+	while not WorkerThreadPool.is_task_completed(id) and Time.get_ticks_msec() - t0 < 15000:
+		await get_tree().process_frame
+	WorkerThreadPool.wait_for_task_completion(id)
+	get_tree().quit(code)
+
+
 func _setup_input() -> void:
 	# Touches physiques : « W » ici est la touche en haut à gauche, donc Z sur un clavier AZERTY.
 	_keys("move_forward", [KEY_W, KEY_UP])
@@ -325,7 +357,9 @@ func add_stress(v: float, at_least := 0.0) -> void:
 	stress = clampf(maxf(stress + v, at_least), 0.0, 1.0)
 
 
-## Baisse du stress pendant « delta » secondes (décroissance du § 5.5, réglée pour C4).
+## Baisse du stress pendant « delta » secondes. Écart au § 5.5 (« −0,08 par seconde »), à faire
+## valider par l'auteur : (0,04 + 0,15 × stress) par seconde, plus rapide quand le cœur bat fort, pour
+## que C4 tienne avec de la marge (depuis le maximum, le cœur se tait en 9 s au lieu de 11,7 s).
 static func stress_after(s: float, delta: float, mult := 1.0) -> float:
 	return maxf(0.0, s - (STRESS_DECAY + STRESS_DECAY_K * s) * mult * delta)
 
