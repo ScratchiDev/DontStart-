@@ -24,6 +24,9 @@ var mouse_sensitivity := 0.0022
 var master_volume := 0.85
 var fullscreen := true
 var high_quality := true
+## Style rétro (pixels) : image 640×360 agrandie sans lissage, palette réduite et tramage (l'aspect des
+## versions 0.1 à 0.3). Désactivé : rendu net à la résolution de l'écran (main.gd, _apply_video).
+var style_retro := false
 var reduced_scares := false   # le visage reste sur l'écran, sons de sursaut plus bas, pas de secousse
 var soft_flashes := false     # éclairs adoucis, pas de flash plein écran
 var whispers := false         # chuchotements par la synthèse vocale de Windows (désactivés par défaut, C7)
@@ -206,6 +209,7 @@ func _load_settings() -> void:
 	master_volume = cfg.get_value("audio", "master_volume", master_volume)
 	fullscreen = cfg.get_value("video", "fullscreen", fullscreen)
 	high_quality = cfg.get_value("video", "high_quality", high_quality)
+	style_retro = cfg.get_value("video", "style_retro", style_retro)
 	reduced_scares = cfg.get_value("accessibilite", "sursauts_reduits", reduced_scares)
 	soft_flashes = cfg.get_value("accessibilite", "eclairs_adoucis", soft_flashes)
 	whispers = cfg.get_value("audio", "chuchotements", whispers)
@@ -219,6 +223,7 @@ func save_settings() -> void:
 	cfg.set_value("audio", "master_volume", master_volume)
 	cfg.set_value("video", "fullscreen", fullscreen)
 	cfg.set_value("video", "high_quality", high_quality)
+	cfg.set_value("video", "style_retro", style_retro)
 	cfg.set_value("accessibilite", "sursauts_reduits", reduced_scares)
 	cfg.set_value("accessibilite", "eclairs_adoucis", soft_flashes)
 	cfg.set_value("audio", "chuchotements", whispers)

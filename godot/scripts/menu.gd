@@ -1,6 +1,6 @@
 extends CanvasLayer
 ## Avertissement (premier lancement), écran-titre (« Continuer » s'il existe une sauvegarde), choix du
-## héros, menu pause et options (sensibilité, volume, plein écran, qualité, accessibilité, son).
+## héros, menu pause et options (sensibilité, volume, plein écran, qualité, style rétro, accessibilité, son).
 ## Tourne même quand le jeu est en pause. Police VT323 aux seules tailles nettes (multiples de 10 px :
 ## en 12 à 16 px, son « M » se lit « N »).
 
@@ -196,6 +196,9 @@ func _slider(label: String, min_v: float, max_v: float, value: float, cb: Callab
 
 func _build_options() -> Control:
 	var v := _vbox(44)
+	# (huit réglages : lignes resserrées pour que « Retour » tienne dans les 360 px de haut)
+	v.add_theme_constant_override("separation", 2)
+	v.position.y -= 6
 	v.add_child(_text("OPTIONS", GREEN, FONT_HEAD, false))
 	v.add_child(_slider("Sensibilité de la souris", 0.0006, 0.006, Game.mouse_sensitivity, func(x: float) -> void:
 		Game.mouse_sensitivity = x))
@@ -216,6 +219,13 @@ func _build_options() -> Control:
 		Game.high_quality = on
 		Game.apply_settings())
 	v.add_child(hq)
+	var sr := CheckBox.new()
+	sr.text = "Style rétro (pixels)"
+	sr.button_pressed = Game.style_retro
+	sr.toggled.connect(func(on: bool) -> void:
+		Game.style_retro = on
+		Game.apply_settings())
+	v.add_child(sr)
 	var rs := CheckBox.new()
 	rs.text = "Sursauts réduits"
 	rs.button_pressed = Game.reduced_scares

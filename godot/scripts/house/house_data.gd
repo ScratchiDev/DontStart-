@@ -14,12 +14,12 @@ const F1_H := 2.6
 const F1_ROOMS := {
 	"mere":     {"rect": [-3.2, 3.2, -2.6, 2.6], "title": "Chambre de ta mère", "existe": true},
 	"gp":       {"rect": [-3.2, 3.2, -7.3, -2.7], "title": "Chambre d'Henriette et Albert", "wall": "floral", "floor": "parquet"},
-	"amis":     {"rect": [-3.2, 3.2, 2.7, 6.3], "title": "Chambre d'amis", "wall": "stripes", "floor": "moquette"},
+	"amis":     {"rect": [-3.2, 3.2, 2.7, 6.3], "title": "Chambre d'amis", "wall": "floral_blue", "floor": "moquette"},
 	"couloir":  {"rect": [3.3, 4.7, -7.3, 6.3], "title": "Couloir", "wall": "stripes_dark", "floor": "parquet"},
 	"sdb":      {"rect": [4.8, 9.2, -7.3, -4.0], "title": "Salle de bain", "wall": "paint", "floor": "carrelage", "dado": "faience"},
 	"lingerie": {"rect": [4.8, 9.2, -3.9, -0.5], "title": "Lingerie", "wall": "paint", "floor": "carrelage", "dado": "none"},
 	"escalier": {"rect": [4.8, 9.2, -0.4, 1.9], "title": "Cage d'escalier", "wall": "stripes_dark", "floor": "parquet"},
-	"bureau":   {"rect": [4.8, 9.2, 2.0, 6.3], "title": "Bureau", "wall": "stripes", "floor": "moquette"},
+	"bureau":   {"rect": [4.8, 9.2, 2.0, 6.3], "title": "Bureau", "wall": "olive", "floor": "moquette"},
 }
 
 ## Murs : axis "x" = mur parallèle à z, placé en x = at, de z = from à z = to (et inversement pour "z").

@@ -91,9 +91,7 @@ func _ready() -> void:
 
 	crosshair = ColorRect.new()
 	crosshair.color = Color(1, 1, 1, 0.45)
-	crosshair.set_anchors_preset(Control.PRESET_CENTER)
-	crosshair.size = Vector2(2, 2)
-	crosshair.position = Vector2(-1, -1)
+	_crosshair_size(2.0)
 	crosshair.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(crosshair)
 
@@ -584,13 +582,22 @@ func set_prompt(it: Interactable) -> void:
 		prompt.text = "[E] " + it.label
 		prompt.visible = true
 		crosshair.color = Color(GREEN, 0.9)
-		crosshair.size = Vector2(3, 3)
-		crosshair.position = Vector2(-1.5, -1.5)
+		_crosshair_size(3.0)
 	else:
 		prompt.visible = false
 		crosshair.color = Color(1, 1, 1, 0.45)
-		crosshair.size = Vector2(2, 2)
-		crosshair.position = Vector2(-1, -1)
+		_crosshair_size(2.0)
+
+
+## Le réticule, carré de « s » px centré sur l'écran : ancré au centre, décalages autour de l'ancre.
+## (En Godot 4, « position » se compte depuis le coin du parent : le réticule partait en haut à gauche
+## dès que le HUD avait sa vraie taille.)
+func _crosshair_size(s: float) -> void:
+	crosshair.set_anchors_preset(Control.PRESET_CENTER)
+	crosshair.offset_left = -s / 2.0
+	crosshair.offset_top = -s / 2.0
+	crosshair.offset_right = s / 2.0
+	crosshair.offset_bottom = s / 2.0
 
 
 func show_hint(text: String, seconds := 3.5) -> void:

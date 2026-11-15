@@ -12,6 +12,15 @@ Le code du jeu RUNTIME est original. Les ressources ci-dessous sont libres de dr
 - **Furniture Kit** par [Kenney](https://kenney.nl) — licence **CC0 1.0** (domaine public). `godot/assets/models/kenney/`.
 - **Lee Perry-Smith head scan** par Lee Perry-Smith / Infinite-Realities — licence **CC BY 3.0**. Distribué avec les exemples de [three.js](https://github.com/mrdoob/three.js). `godot/assets/models/face/`.
 
+## Modèles et matières photoréalistes (Poly Haven, ambientCG)
+
+Tous sous licence **CC0 1.0** (domaine public), téléchargés depuis [Poly Haven](https://polyhaven.com) et [ambientCG](https://ambientcg.com) (glTF et textures en 1k, 2k pour les grandes surfaces). Le détail (page source, fichiers, nombre de triangles) est dans `godot/assets/ASSETS_CC0.md`, une ligne par asset.
+
+- Modèles Poly Haven (`godot/assets/models/polyhaven/`) : `boombox`, `bleach_bottle`, `cardboard_box_01`, `Chandelier_02`, `ClassicNightstand_01`, `desk_lamp_arm_01`, `dining_chair_02`, `drain_cleaner`, `fancy_picture_frame_01`, `GothicBed_01`, `GothicCabinet_01`, `GothicCommode_01`, `jug_01`, `ornate_mirror_01`, `painted_wooden_cabinet`, `painted_wooden_chair_01`, `painted_wooden_nightstand`, `painted_wooden_shelves`, `painted_wooden_stool`, `plunger`, `potted_plant_04`, `Rockingchair_01`, `side_table_tall_01`, `Television_01`, `vintage_grandfather_clock_01`, `vintage_suitcase`, `wall_clock`, `wicker_basket_02`, `wooden_table_02`.
+- Matières Poly Haven (`godot/assets/textures/`) : `herringbone_parquet`, `stair_planks`, `floor_tiles_06`, `decrepit_wallpaper`, `terlenka`.
+- Matières ambientCG (`godot/assets/textures/`) : `PaintedPlaster017`, `PaintedWood009C`, `Wood027`, `Tiles133B`, `Carpet016`, `Fabric045`.
+- Les papiers peints, le damier et les cartes ORM (occlusion, rugosité) sont retravaillés à partir de ces textures ; le tapis du couloir (`runner_couloir.png`) et le masque de la lampe de poche (`flashlight_cookie.png`) sont générés pour le jeu.
+
 ## Textures
 
 - `wall_plaster_dirty_*`, `hospital_floor_*`, `wall_brick_*`, `asphalt_wet_*` (asphalte mouillé de la rue) : [ambientCG](https://ambientcg.com) — licence **CC0 1.0**, via le miroir [itz019/tls-textures](https://github.com/itz019/tls-textures). Redimensionnées en 1024 px (512 px pour l'asphalte).

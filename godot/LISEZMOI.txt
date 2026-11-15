@@ -19,7 +19,8 @@ l'ordinateur te rappelle). « Nouvelle partie » l'efface.
 
 Options (Échap > Options) : « Sous-titres des sons » (les sons importants écrits entre
 crochets), « Sursauts réduits », « Éclairs adoucis (photosensibilité) », « Chuchotements
-(synthèse Windows) » (désactivés au départ).
+(synthèse Windows) » (désactivés au départ), « Style rétro (pixels) » (l'image des
+premières versions : 640 × 360 agrandie, palette réduite).
 
 Lancer le jeu
 -------------

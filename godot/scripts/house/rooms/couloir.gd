@@ -1,6 +1,7 @@
 extends HouseRoom
 ## Le couloir du premier étage : long, étroit, resté dans les années 90 (tapis rouge élimé, radiateur
-## en fonte, console et téléphone sans fil, photos de famille), mais truffé d'appareils imposés de
+## en fonte, console et téléphone sans fil, photos de famille, horloge comtoise arrêtée à 3 h 12 au
+## fond, près de la chambre des grands-parents), mais truffé d'appareils imposés de
 ## l'extérieur : ampoules connectées du fournisseur d'énergie, caméra dôme de l'assurance, thermostat,
 ## détecteur de fumée, boîtier de téléassistance. Leurs câbles blancs, neufs, sont scotchés sur le
 ## vieux papier peint.
@@ -74,6 +75,9 @@ var _cable_mat: StandardMaterial3D
 var _tape_mat: StandardMaterial3D
 var _new_white: StandardMaterial3D
 var _glass: StandardMaterial3D
+var _lace: StandardMaterial3D
+var _photos := {}
+var _n_fancy := 0
 
 
 func furnish(h: House) -> void:
@@ -91,6 +95,7 @@ func furnish(h: House) -> void:
 	_radiator(RADIATOR_POS.z)
 	_console()
 	_plant()
+	_clock()
 	_frames()
 	_portrait()
 	_ceiling_lights()
@@ -317,12 +322,22 @@ func _develop(img: Image, warm := 0.16, sepia := false, vignette := 0.55, grain 
 			var vig := 1.0 - vignette * (u * u + v * v) * 2.0
 			var n := rng.randf_range(-grain, grain)
 			img.set_pixel(x, y, Color(clampf(c.r * vig + n, 0, 1), clampf(c.g * vig + n, 0, 1), clampf(c.b * vig + n, 0, 1)))
+	# un tirage un peu flou plutôt que des pavés de pixels : réduit puis agrandi ×2 (natif, rapide)
+	img.resize(int(w * 0.6), int(hh * 0.6), Image.INTERPOLATE_BILINEAR)
+	img.resize(w * 2, hh * 2, Image.INTERPOLATE_CUBIC)
 	img.generate_mipmaps()
 	return ImageTexture.create_from_image(img)
 
 
-## Photos de famille des années 90, dessinées pixel par pixel (pas de fichier image).
+## Photos de famille des années 90, dessinées pixel par pixel (pas de fichier image). Une seule
+## texture par photo (la photo de classe est accrochée deux fois).
 func _photo(kind: String) -> ImageTexture:
+	if not _photos.has(kind):
+		_photos[kind] = _draw_photo(kind)
+	return _photos[kind]
+
+
+func _draw_photo(kind: String) -> ImageTexture:
 	var img: Image
 	var skin := Color(0.82, 0.62, 0.5)
 	match kind:
@@ -553,6 +568,17 @@ func _lace_texture() -> ImageTexture:
 	return ImageTexture.create_from_image(img)
 
 
+## Matière du napperon (une seule, partagée par la console et la sellette).
+## (pas de _grimy ici : détail + transparence découpée bloque le rendu avec llvmpipe)
+func _lace_mat() -> StandardMaterial3D:
+	if _lace == null:
+		_lace = StandardMaterial3D.new()
+		_lace.albedo_texture = _lace_texture()
+		_lace.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+		_lace.roughness = 1.0
+	return _lace
+
+
 ## Trace laissée sur le papier peint par un cadre qu'on a décroché : le papier a jauni et noirci
 ## autour, pas dessous. On dessine le liseré sombre autour du rectangle resté propre.
 func _ghost_texture() -> ImageTexture:
@@ -575,6 +601,11 @@ func _ghost_texture() -> ImageTexture:
 
 # ------------------------------------------------------------------ sol : tapis, radiateur, plante
 
+## Le tapis du couloir, motif de _runner_texture() recalculé à 192 × 2976 px (outil de l'agent de
+## corrections : agents_gfx/corrections/tools/gen_runner.gd).
+const RUNNER_TEX := "res://assets/textures/runner_couloir.png"
+
+
 func _runner() -> void:
 	var z0 := -6.75
 	var z1 := 5.65
@@ -589,7 +620,13 @@ func _runner() -> void:
 	var pm := PlaneMesh.new()
 	pm.size = Vector2(w, l)
 	var mat := StandardMaterial3D.new()
-	mat.albedo_texture = _runner_texture(48, int(l * 60.0))
+	if ResourceLoader.exists(RUNNER_TEX):
+		# le motif d'origine recalculé à 4 × la résolution (240 px/m : net en 1080p), même trame
+		mat.albedo_texture = load(RUNNER_TEX)
+		for i in 48 * int(l * 60.0):
+			rng.randf()      # (même suite aléatoire qu'avant pour le reste du couloir)
+	else:
+		mat.albedo_texture = _runner_texture(48, int(l * 60.0))
 	mat.roughness = 1.0
 	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	_mesh(pm, Vector3(0, 0.0072, 0), _grimy(mat, 0.5), Vector3.ZERO, holder)
@@ -612,7 +649,8 @@ func _radiator(z: float) -> void:
 	var l := n * step
 	var depth := 0.15
 	var x := XE - DADO - 0.04 - depth / 2.0
-	var paint := _m(Color(0.6, 0.56, 0.48), 0.55, 0.25)
+	# fonte peinte en crème, écaillée : la peinture des portes (PaintedWood009C), plus jaune et plus sombre
+	var paint := Surfaces.grime(Surfaces.pbr("PaintedWood009C/PaintedWood009C", 0.6, Color(0.66, 0.6, 0.5), 0.5, false), 1.2)
 	var y0_ := RADIATOR_POS.y - 0.3
 	var hh := 0.6
 	for i in n:
@@ -636,10 +674,37 @@ func _radiator(z: float) -> void:
 	_collider(Vector3(depth + 0.04, y0_ + hh + 0.08, l + 0.1), Vector3(x, (y0_ + hh + 0.08) / 2.0, z + 0.02))
 
 
+## Sous la fenêtre du bout : la sellette et la plante grasse de Mamie, qu'elle arrose tous les
+## dimanches, sur un napperon (modèles Poly Haven, CC0).
 func _plant() -> void:
-	# sous la fenêtre du bout : la plante verte de Mamie, qu'elle arrose tous les dimanches
-	prop("pottedPlant", Vector3(4.02, 0.0, ZS - 0.24), 25.0, Vector3(0, 0.82, 0), true,
-		{"plant": Color(0.13, 0.2, 0.1)})
+	var c := Vector3(4.0, 0.0, ZS - 0.26)
+	var stand := model("side_table_tall_01", c, 20.0, Vector3.ZERO, true,
+		{"name": "Sellette", "tint": Color(0.62, 0.52, 0.44)})
+	var top := (stand.get_meta("size") as Vector3).y
+	var lq := PlaneMesh.new()
+	lq.size = Vector2(0.27, 0.27)
+	_mesh(lq, c + Vector3(0.01, top + 0.0015, 0.0), _lace_mat(), Vector3(0, 0.5, 0))
+	model("potted_plant_04", c + Vector3(0.0, top + 0.003, 0.0), 35.0, Vector3(0, 0.42, 0), false, {"name": "pottedPlant"})
+
+
+## L'horloge comtoise de Papi, au fond du couloir, à côté de la chambre des grands-parents (modèle Poly
+## Haven, CC0, à 90 % : 1,97 m). Elle s'est arrêtée à 3 h 12 : ses deux aiguilles sont des nœuds du
+## glTF, tournées depuis leur position d'origine (heures sur 312,7°, minutes sur 222,7°, en degrés
+## comptés dans le sens horaire depuis midi ; vu de face, une rotation positive autour de z tourne dans
+## le sens inverse).
+const CLOCK_Z := -6.25
+const CLOCK_HANDS := {"Hour": [312.68, 96.0], "Minute": [222.74, 72.0]}
+
+
+func _clock() -> void:
+	var depth := 0.426 * 0.9
+	var clk := model("vintage_grandfather_clock_01", Vector3(XW + DADO + 0.008 + depth / 2.0, 0, CLOCK_Z), 90.0,
+		Vector3(0, 1.97, 0), true, {"name": "Horloge", "tint": Color(0.8, 0.74, 0.68)})
+	for n in clk.find_children("*Hand*", "Node3D", true, false):
+		var nd := n as Node3D
+		for k in CLOCK_HANDS:
+			if String(nd.name).contains(k):
+				nd.rotation.z = deg_to_rad(float(CLOCK_HANDS[k][0]) - float(CLOCK_HANDS[k][1]))
 
 
 # ------------------------------------------------------------------ la console et le téléphone
@@ -652,15 +717,19 @@ func _console() -> void:
 	var cx := XW + DADO + 0.01 + depth / 2.0
 	var table := prop("sideTable", Vector3(cx, 0, cz), 90.0, Vector3(0.9, 0.8, depth))
 	var top := (table.get_meta("size") as Vector3).y
+	# (le Kenney est gardé : sa hauteur et sa place sont celles du § 5.2 ; un merisier foncé, ciré, plutôt
+	# que le bois clair des meubles neufs : le bois des meubles, Wood027, plus sombre)
+	var cherry := Surfaces.grime(Surfaces.pbr("Wood027/Wood027", 1.2, Color(0.46, 0.31, 0.24), 1.0, false))
+	for n in table.find_children("*", "MeshInstance3D", true, false):
+		var mi := n as MeshInstance3D
+		for i in mi.mesh.get_surface_count():
+			var sm := mi.mesh.surface_get_material(i)
+			if sm and sm.resource_name.to_lower() == "wood":
+				mi.set_surface_override_material(i, cherry)
 	# napperon au crochet
-	var lace := StandardMaterial3D.new()
-	lace.albedo_texture = _lace_texture()
-	lace.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
-	lace.roughness = 1.0
 	var lq := PlaneMesh.new()
 	lq.size = Vector2(0.3, 0.3)
-	# (pas de _grimy ici : détail + transparence découpée bloque le rendu avec llvmpipe)
-	_mesh(lq, Vector3(cx + 0.02, top + 0.0015, phz + 0.04), lace, Vector3(0, 0.3, 0))
+	_mesh(lq, Vector3(cx + 0.02, top + 0.0015, phz + 0.04), _lace_mat(), Vector3(0, 0.3, 0))
 	# téléphone sans fil sur sa base : combiné debout, petite antenne, LED verte
 	var ph := Node3D.new()
 	ph.name = "Telephone"
@@ -751,15 +820,58 @@ func _frame(pos: Vector3, facing: Vector3, size: Vector2, tex: Texture2D, style 
 	return holder
 
 
+## Cadre doré mouluré (fancy_picture_frame_01, Poly Haven, CC0 : 0,603 × 0,464, toile 0,539 × 0,400,
+## face avant +z, épaisseur 2 cm). « size » : taille extérieure voulue ; le grand côté est respecté, le
+## cadre est tourné d'un quart de tour s'il est plus haut que large. La toile du modèle est retirée : la
+## photo (quad) est posée à sa place, sous un verre ; « margin » : passe-partout crème.
+const FANCY := "fancy_picture_frame_01"
+const FANCY_SIZE := Vector2(0.603, 0.464)
+const FANCY_CANVAS := Vector2(0.539, 0.4)
+
+
+func _fancy_frame(pos: Vector3, facing: Vector3, size: Vector2, tex: Texture2D, tilt := 0.0, margin := 0.0) -> Node3D:
+	var holder := Node3D.new()
+	holder.name = "CadreDore"
+	add_child(holder)
+	holder.position = pos
+	holder.rotation = Vector3(0, atan2(facing.x, facing.z), tilt)
+	var portrait := size.y > size.x
+	var s := maxf(size.x, size.y) / FANCY_SIZE.x
+	var roll := Node3D.new()
+	holder.add_child(roll)
+	roll.rotation.z = PI / 2.0 if portrait else 0.0
+	_n_fancy += 1
+	var fr := model(FANCY, Vector3(0, -FANCY_SIZE.y * s / 2.0, 0.01 * s), 0.0, Vector3(FANCY_SIZE.x * s, 0, 0), false,
+		{"name": "CadreDore%d" % _n_fancy, "parent": roll})
+	for n in fr.find_children("*canvas*", "MeshInstance3D", true, false):
+		n.queue_free()
+	var canvas := FANCY_CANVAS * s
+	if portrait:
+		canvas = Vector2(canvas.y, canvas.x)
+	var z := 0.0047 * s + 0.001
+	var pic := StandardMaterial3D.new()
+	pic.albedo_texture = tex
+	pic.roughness = 0.8
+	pic.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	if margin > 0.0:
+		_quad(canvas, Vector3(0, 0, z), _m(Color(0.78, 0.74, 0.64), 0.9), 0.0, holder)
+		_quad(canvas - Vector2(2.0 * margin, 2.0 * margin), Vector3(0, 0, z + 0.001), pic, 0.0, holder)
+	else:
+		_quad(canvas, Vector3(0, 0, z), pic, 0.0, holder)
+	var g := _quad(canvas, Vector3(0, 0, z + 0.004), _glass, 0.0, holder)
+	g.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return holder
+
+
 func _frames() -> void:
 	var w := Vector3.RIGHT     # accrochés au mur ouest, ils regardent vers +x
 	var e := Vector3.LEFT      # mur est, vers -x
 	# bout nord, mur est : Papi au labo, la plage
 	_frame(Vector3(XE, 1.66, -6.3), e, Vector2(0.34, 0.27), _photo("labo"), "noir", 0.0, 0.03)
 	# mur ouest, entre le portrait et la porte des grands-parents : l'arrière-grand-mère
-	_frame(Vector3(XW, 1.6, -5.6), w, Vector2(0.3, 0.38), _photo("aieule"), "dore", -0.025)
+	_fancy_frame(Vector3(XW, 1.6, -5.6), w, Vector2(0.3, 0.38), _photo("aieule"), -0.025)
 	# mur ouest, de part et d'autre de la console : le mariage, la photo de classe ; Noël au-dessus
-	_frame(Vector3(XW, 1.72, -2.0), w, Vector2(0.26, 0.34), _photo("mariage"), "dore", 0.02, 0.025)
+	_fancy_frame(Vector3(XW, 1.72, -2.0), w, Vector2(0.26, 0.34), _photo("mariage"), 0.02, 0.022)
 	_frame(Vector3(XW, 1.5, -1.0), w, Vector2(0.36, 0.28), _photo("noel"), "pin", -0.015)
 	_frame(Vector3(XW, 1.66, 0.2), w, Vector2(0.2, 0.25), _photo("ecole"), "bois", 0.04)
 	# mur est, au-dessus du radiateur : la trace d'un cadre décroché
@@ -769,14 +881,14 @@ func _frames() -> void:
 	_frame(Vector3(XW, 1.6, 5.2), w, Vector2(0.4, 0.31), _photo("plage"), "bois", 0.03, 0.03)
 	_frame(Vector3(XE, 1.58, 5.6), e, Vector2(0.42, 0.32), _photo("jardin"), "pin", 0.0, 0.03)
 	# mur est, entre l'escalier et le bureau
-	_frame(Vector3(XE, 1.62, 2.6), e, Vector2(0.3, 0.38), _photo("ecole"), "dore", -0.03)
+	_fancy_frame(Vector3(XE, 1.62, 2.6), e, Vector2(0.3, 0.38), _photo("ecole"), -0.03)
 
 
 ## Le portrait « 1996 » au bout nord (§ 5.2) : image 0,6 × 0,8 (portrait_1996.png, surexposé, sans
 ## visages) dans un cadre doré.
 func _portrait() -> void:
 	var c := Vector3(4.0, 1.6, ZN)
-	_frame(c, Vector3.BACK, Vector2(0.72, 0.92), load("res://assets/images/portrait_1996.png"), "dore", 0.0)
+	_fancy_frame(c, Vector3.BACK, Vector2(0.72, 0.92), load("res://assets/images/portrait_1996.png"))
 	# le cordon, le clou
 	_mesh(_cyl(0.004, 0.004, 0.02, 6), Vector3(4.0, 2.16, ZN + 0.01), mats.metal, Vector3(PI / 2.0, 0, 0))
 	_cable([Vector3(3.85, 2.05, ZN + 0.008), Vector3(4.0, 2.16, ZN + 0.008), Vector3(4.15, 2.05, ZN + 0.008)],
@@ -958,12 +1070,13 @@ func _camera() -> void:
 	# son câble : au plafond jusqu'au coin, puis dans l'angle des murs, jusqu'à l'alimentation
 	var cy := 2.6 - 0.0035
 	_cable([Vector3(4.07, cy, CAM_POS.z), Vector3(4.56, cy, CAM_POS.z), Vector3(4.56, cy, -7.25)], Vector3.DOWN)
-	_cable([Vector3(4.683, 2.49, ZN + 0.005), Vector3(4.683, 1.19, ZN + 0.005), Vector3(4.665, 1.165, ZN + 0.005)], Vector3.BACK)
+	# (dans l'angle, mais à 3 mm des deux murs : à moitié dans le plâtre, il sortait en pointillés)
+	_cable([Vector3(4.676, 2.49, ZN + 0.009), Vector3(4.676, 1.19, ZN + 0.009), Vector3(4.66, 1.165, ZN + 0.009)], Vector3.BACK)
 	_box(Vector3(0.07, 0.11, 0.035), Vector3(4.645, 1.12, ZN + 0.0175), _new_white)
 	_no_gi(_box(Vector3(0.006, 0.006, 0.003), Vector3(4.66, 1.15, ZN + 0.036), _glow(Color(0.2, 0.6, 1.0), 3.0)))
-	var zc := ZN + 0.004
+	var zc := ZN + 0.008
 	_cable([Vector3(4.645, 1.065, zc), Vector3(4.645, 0.97, zc), Vector3(4.645, 0.97, ZN + 0.06),
-		Vector3(4.645, 0.913, ZN + 0.06), Vector3(4.645, 0.913, ZN + DADO + 0.004), Vector3(4.645, 0.3, ZN + DADO + 0.004),
+		Vector3(4.645, 0.913, ZN + 0.06), Vector3(4.645, 0.913, ZN + DADO + 0.008), Vector3(4.645, 0.3, ZN + DADO + 0.008),
 		Vector3(4.625, 0.262, ZN + DADO + 0.03)], Vector3.BACK)
 	var sock := _socket(Vector3(4.62, 0.24, ZN + DADO), Vector3.BACK)
 	_plug(sock)

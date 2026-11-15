@@ -123,7 +123,7 @@ func _make_room(id: String, d: Dictionary, y0: float, h: float) -> HouseRoom:
 	var floor_mat: Material = {"parquet": mats.floor, "moquette": mats.moquette, "carrelage": mats.carrelage}.get(d.get("floor", "parquet"), mats.floor)
 	var wall_mat: Material = {
 		"floral": mats.wall_floral, "stripes": mats.wall_stripes, "stripes_dark": mats.wall_stripes_dark,
-		"paint": mats.wall_paint,
+		"paint": mats.wall_paint, "floral_blue": mats.wall_floral_blue, "olive": mats.wall_olive,
 	}.get(d.get("wall", ""), mats.wall)
 	var style := {"dado_h": 0.92, "dado": mats.wainscot}
 	match d.get("dado", ""):
@@ -299,9 +299,19 @@ func _make_window(d: Dictionary, y0: float) -> void:
 	_box(Vector3(fw + 0.32, 0.035, 0.26), Vector3(0, d.y0 - 0.02, 0.1), mats.wood, false, holder)
 	if d.get("blind", false):
 		# store connecté baissé : lames grises, petite LED verte du moteur
+		# (lames qui se chevauchent, inclinées de 6° : les joints se lisent par l'ombre ; avec des fentes de
+		# 5 mm sur la vitre noire, elles crénelaient en tirets. Un seul maillage pour tout le store.)
 		var slat := _plain(Color(0.32, 0.33, 0.34), 0.6, 0.3)
+		var st := SurfaceTool.new()
+		var bm := BoxMesh.new()
+		bm.size = Vector3(fw, 0.054, 0.006)
 		for i in int(fh / 0.05):
-			_box(Vector3(fw, 0.045, 0.012), Vector3(0, d.y0 + 0.025 + i * 0.05, 0.03), slat, false, holder)
+			st.append_from(bm, 0, Transform3D(Basis(Vector3.RIGHT, deg_to_rad(6.0)), Vector3(0, d.y0 + 0.027 + i * 0.05, 0.03)))
+		var blind := MeshInstance3D.new()
+		blind.name = "Store"
+		blind.mesh = st.commit()
+		blind.material_override = slat
+		holder.add_child(blind)
 		var led := _plain(Color(0.1, 1.0, 0.3))
 		led.emission_enabled = true
 		led.emission = Color(0.1, 1.0, 0.3)
@@ -310,6 +320,9 @@ func _make_window(d: Dictionary, y0: float) -> void:
 		_box(Vector3(fw + 0.06, 0.1, 0.12), Vector3(0, d.y1 - 0.05, 0.04), _plain(Color(0.85, 0.85, 0.83), 0.5), false, holder)
 	elif d.get("frosted", false):
 		_box(Vector3(fw, fh, 0.01), Vector3(0, fy, -0.02), mats.frosted, false, holder)
+		# petits bois de la croisée (une vitre unie faisait panneau vide)
+		_box(Vector3(0.035, fh, 0.045), Vector3(0, fy, -0.005), p, false, holder)
+		_box(Vector3(fw, 0.035, 0.045), Vector3(0, fy + fh * 0.12, -0.005), p, false, holder)
 	else:
 		var gm := ShaderMaterial.new()
 		gm.shader = load("res://shaders/rain_glass.gdshader")

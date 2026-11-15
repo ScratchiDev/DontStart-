@@ -60,6 +60,12 @@ var modem: AudioStreamPlayer3D     # le chant en cours (ou null)
 var _modem_timer: Timer
 var _blink_tw: Tween
 var _screen_light_e := 0.32
+var _bulb_mat: StandardMaterial3D     # ampoules du lustre : elles brillent avec le plafonnier
+var _bulb_e := -1.0
+var _tape_mat: StandardMaterial3D
+var _furn_wood: StandardMaterial3D
+var _brass_mat: StandardMaterial3D
+var _key_mat: StandardMaterial3D
 
 
 func _ready() -> void:
@@ -166,16 +172,24 @@ func _build_furniture() -> void:
 	# bureau (mur du fond) : l'ordinateur est posé dessus dans _build_pc
 	var desk := prop("desk", Vector3(1.25, 0, -2.25), 0.0, Vector3(1.45, 0.76, 0.7))
 	desk_top = (desk.get_meta("size") as Vector3).y
-	prop("computerKeyboard", Vector3(pc_x, desk_top, -2.0), 0.0, Vector3(0.44, 0, 0), false)
+	_retint(desk)
+	_dress_desk(desk)
+	_build_keyboard(Vector3(pc_x, desk_top, -2.0))
 	prop("computerMouse", Vector3(1.62, desk_top, -2.02), -8.0, Vector3(0.065, 0, 0), false)
-	prop("books", Vector3(0.68, desk_top, -2.08), -14.0, Vector3(0.26, 0, 0), false)
+	_hide_meshes(prop("books", Vector3(0.68, desk_top, -2.08), -14.0, Vector3(0.26, 0, 0), false))
+	_book_stack(Vector3(0.68, desk_top, -2.08), deg_to_rad(-14.0))
 	prop("lampRoundTable", Vector3(0.6, desk_top, -2.42), 20.0, Vector3(0, 0.4, 0), false)
 	chair = prop("chairDesk", seat_pos, 180.0, Vector3(0.56, 0.95, 0.56), true, {"carpet": Color(0.08, 0.09, 0.12)})
-	prop("trashcan", Vector3(0.32, 0, -2.32), 0.0, Vector3(0, 0.36, 0))
-	var speaker := prop("speaker", Vector3(2.12, 0, -2.38), 0.0, Vector3(0, 0.78, 0))
-	var radio := prop("radio", Vector3(2.12, (speaker.get_meta("size") as Vector3).y, -2.38), 0.0, Vector3(0.36, 0, 0), false, {}, "Allumer la radio")
+	_build_bin(Vector3(0.32, 0, -2.32))
+	# enceinte colonne (le pied de la radio : même hauteur que l'enceinte Kenney d'avant, 0,78 m)
+	var stand_h := 0.78
+	_build_hifi(Vector3(2.12, 0, -2.38), stand_h)
+	var radio := prop("radio", Vector3(2.12, stand_h, -2.38), 0.0, Vector3(0.36, 0, 0), false, {}, "Allumer la radio")
 	radio.get_meta("interactable").used.connect(_on_radio)
+	_dress_radio(radio)
 	var shelf := prop("bookcaseOpen", Vector3(2.78, 0, -2.36), 0.0, Vector3(0.75, 1.8, 0.4))
+	_retint(shelf)
+	_dress_bookcase(shelf)
 	prop("televisionVintage", Vector3(2.78, (shelf.get_meta("size") as Vector3).y, -2.36), 0.0, Vector3(0.48, 0, 0), false)
 
 	# lit (mur de gauche, tête vers la fenêtre), chevet, réveil, nounours
@@ -184,7 +198,8 @@ func _build_furniture() -> void:
 	bed.get_meta("interactable").used.connect(func(_i: Interactable) -> void:
 		Game.hint("Pas maintenant. Tu n'as pas sommeil. Tu n'auras plus jamais sommeil."))
 	_build_duvet(bed)
-	prop("bear", Vector3(-2.35, 0.55, 2.25), -110.0, Vector3(0, 0.34, 0), false)
+	_dress_bed(bed)
+	_build_teddy(Vector3(-2.35, 0.43, 2.25), -110.0)
 	var night := prop("cabinetBedDrawerTable", Vector3(-2.92, 0, 0.3), 90.0, Vector3(0.48, 0.55, 0.42))
 	_build_clock(Vector3(-2.95, (night.get_meta("size") as Vector3).y, 0.32))
 
@@ -194,28 +209,44 @@ func _build_furniture() -> void:
 	wardrobe_it.used.connect(_on_wardrobe)
 	for n in wardrobe.find_children("door*", "Node3D", true, false):
 		wardrobe_doors.append(n as Node3D)
-	_box(Vector3(0.86, 0.02, 0.45), Vector3(-2.55, 1.02, -2.3), mats.wood_dark)
+	# l'étagère de la disquette, garnie d'un vieux papier d'étagère clair (la disquette noire s'y détache
+	# dans le rond de la lampe de poche)
+	_box(Vector3(0.86, 0.02, 0.45), Vector3(-2.55, 1.02, -2.3), _grimy(_plain(Color(0.6, 0.56, 0.47), 0.9), 1.5))
 	_build_floppy(Vector3(-2.42, 1.035, -2.22))
+	_dress_wardrobe(wardrobe)
 
 	# porte (mur de droite), fermée
 	_build_door(Vector3(W / 2.0, 0, 1.4))
 
-	# commode, photo encadrée (visages rayés), linge par terre
-	var dresser := prop("sideTableDrawers", Vector3(0.75, 0, 2.36), 180.0, Vector3(1.1, 0.8, 0.45))
+	# commode (bois peint, Poly Haven), photo encadrée (visages rayés), linge par terre. Le dessus reste
+	# à 0,80 m (la photo et son interaction sont posées dessus) ; dos contre le mur.
+	var dresser := model("painted_wooden_cabinet", Vector3(0.75, 0, 2.38), 180.0, Vector3(0, 0.8, 0), true,
+		{"fit": "y", "name": "sideTableDrawers"})
 	var dtop := (dresser.get_meta("size") as Vector3).y
 	_build_photo(Vector3(0.95, dtop, 2.42))
-	prop("plantSmall1", Vector3(0.38, dtop, 2.4), 0.0, Vector3(0, 0.26, 0), false)
-	prop("pillowLong", Vector3(1.6, 0.0, 1.9), 64.0, Vector3(0.55, 0, 0), false, {"carpet": Color(0.17, 0.2, 0.27)})
+	prop("plantSmall1", Vector3(0.5, dtop, 2.42), 0.0, Vector3(0, 0.26, 0), false)
+	# coussin tombé par terre (tissu tissé, comme les tapis) : gonflé au centre, cousu sur le pourtour
+	var cushion := MeshInstance3D.new()
+	cushion.name = "Coussin"
+	cushion.mesh = pillow_mesh(0.42, 0.42, 0.12)
+	cushion.material_override = _rug_mat(Color(0.26, 0.27, 0.32))
+	cushion.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+	cushion.position = Vector3(1.6, 0.05, 1.9)
+	cushion.rotation = Vector3(0.0, deg_to_rad(64.0), 0.05)
+	add_child(cushion)
 	# le reste
-	prop("coatRackStanding", Vector3(2.82, 0, 2.25), 0.0, Vector3(0, 1.75, 0))
-	prop("lampRoundFloor", Vector3(-1.45, 0, 2.32), 0.0, Vector3(0, 1.55, 0))
-	prop("cardboardBoxOpen", Vector3(-1.5, 0, -2.3), 18.0, Vector3(0, 0.42, 0))
-	prop("cardboardBoxClosed", Vector3(-1.05, 0, -2.36), -9.0, Vector3(0, 0.36, 0))
+	_build_coat_rack(Vector3(2.82, 0, 2.25))
+	_build_floor_lamp(Vector3(-1.45, 0, 2.32))
+	# cartons de déménagement (Poly Haven), contre le mur du fond
+	model("cardboard_box_01", Vector3(-1.6, 0, -2.35), 101.0, Vector3.ZERO, true, {"name": "Carton1"})
+	model("cardboard_box_01", Vector3(-1.07, 0, -2.4), 84.0, Vector3(0, 0.29, 0), true, {"name": "Carton2"})
 	prop("plantSmall2", Vector3(-W / 2.0 + 0.12, WIN_Y0, WIN_Z0 + 0.25), 0.0, Vector3(0, 0.3, 0), false)
 	prop("rugRectangle", Vector3(0.1, 0.004, 0.5), 0.0, Vector3(2.4, 0.01, 1.5), false,
 		{"carpet": Color(0.27, 0.11, 0.12), "carpetdarker": Color(0.14, 0.06, 0.07)})
-	var lamp := prop("lampSquareCeiling", Vector3(0.15, H - 0.38, 0.45), 0.0, Vector3(0, 0.38, 0), false)
+	# lustre (Poly Haven) : 0,5 m de haut (0,38 le rendait minuscule), le bas à 2,10 m du sol
+	var lamp := prop("lampSquareCeiling", Vector3(0.15, H - 0.5, 0.45), 0.0, Vector3(0, 0.5, 0), false)
 	lamp.position.y = H - (lamp.get_meta("size") as Vector3).y
+	_bulbs_glow(lamp)
 
 
 ## La porte de la chambre : fermée à clé de l'extérieur (par Albert) jusqu'à ce que la clé glisse dessous.
@@ -269,17 +300,17 @@ func _build_duvet(bed: Node3D) -> void:
 			var c := a + nx + 1
 			var d := c + 1
 			st.add_index(a)
-			st.add_index(c)
-			st.add_index(b)
 			st.add_index(b)
 			st.add_index(c)
+			st.add_index(b)
 			st.add_index(d)
+			st.add_index(c)
 	st.generate_normals()
 	var mi := MeshInstance3D.new()
 	mi.mesh = st.commit()
-	var m := _grimy(_plain(Color(0.3, 0.13, 0.14), 1.0), 0.8)
-	m.cull_mode = BaseMaterial3D.CULL_DISABLED
-	mi.material_override = m
+	# couvre-lit en laine tissée (la matière des tapis) ; faces avant vers le haut et vers l'extérieur
+	mi.material_override = _rug_mat(Color(0.3, 0.13, 0.14))
+	mi.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
 	add_child(mi)
 
 
@@ -347,6 +378,560 @@ func _build_floppy(pos: Vector3) -> void:
 	floppy_item = _interactable("Prendre la disquette", Vector3(0.5, 0.32, 0.42), Vector3(-2.55, pos.y + 0.12, -1.86))
 	floppy_item.enabled = false
 	floppy_item.used.connect(_on_floppy)
+
+
+# ------------------------------------------------------------------ habillage : meubles et objets réalistes
+# (purement décoratif : aucun objet interactif, aucune boîte d'interaction ni position utilisée par le jeu
+# ne change ; les collisions restent à la place des meubles Kenney qu'elles remplacent)
+
+## Pièces de décor fondues en un seul maillage (un seul appel de dessin) : [maillage, Transform3D]. Hors
+## de la cuisson VoxelGI (sauf gi), comme les modèles Poly Haven : la lumière rebondie les éclaire quand même.
+func _merged(parts: Array, mat: Material, parent: Node3D, gi := false) -> MeshInstance3D:
+	var st := SurfaceTool.new()
+	for p in parts:
+		st.append_from(p[0] as Mesh, 0, p[1] as Transform3D)
+	var mi := MeshInstance3D.new()
+	mi.mesh = st.commit()
+	mi.material_override = mat
+	if not gi:
+		mi.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+	parent.add_child(mi)
+	return mi
+
+
+func _bm(size: Vector3) -> BoxMesh:
+	var b := BoxMesh.new()
+	b.size = size
+	return b
+
+
+func _cm(r_top: float, r_bot: float, h: float, seg := 24, cap_top := true, cap_bottom := true, flip := false) -> CylinderMesh:
+	var c := CylinderMesh.new()
+	c.top_radius = r_top
+	c.bottom_radius = r_bot
+	c.height = h
+	c.radial_segments = seg
+	c.rings = 1
+	c.cap_top = cap_top
+	c.cap_bottom = cap_bottom
+	c.flip_faces = flip
+	return c
+
+
+func _sm(r: float, seg := 12) -> SphereMesh:
+	var s := SphereMesh.new()
+	s.radius = r
+	s.height = r * 2.0
+	s.radial_segments = seg
+	s.rings = maxi(seg / 2, 3)
+	return s
+
+
+static func _at(pos: Vector3, rot := Vector3.ZERO) -> Transform3D:
+	return Transform3D(Basis.from_euler(rot), pos)
+
+
+## Tige (cylindre) de a à b, de rayon r : [maillage, Transform3D] pour _merged.
+func _rod(a: Vector3, b: Vector3, r: float, seg := 8) -> Array:
+	var v := b - a
+	return [_cm(r, r, v.length(), seg), Transform3D(Basis(Quaternion(Vector3.UP, v.normalized())), (a + b) / 2.0)]
+
+
+## L'armoire de la disquette (Kenney, gardée : ses portes s'ouvrent, sa boîte d'interaction et l'étagère de
+## la disquette sont réglées sur elle) habillée en armoire de campagne : bois sombre ciré, portes à
+## panneaux moulurés (enfants des portes : ils tournent avec elles), corniche, ceinture, côté mouluré,
+## ferrures en laiton, et une vieille valise posée dessus. Rien ne change pour le jeu.
+func _dress_wardrobe(wardrobe: Node3D) -> void:
+	var wood := (mats.wood_dark as StandardMaterial3D).duplicate() as StandardMaterial3D
+	wood.albedo_color = Color(0.6, 0.47, 0.38)
+	var brass := _brass()
+	var inst: Node3D = null
+	for c in wardrobe.get_children():
+		if not (c is Interactable):
+			inst = c as Node3D
+	for n in wardrobe.find_children("*", "MeshInstance3D", true, false):
+		var mi := n as MeshInstance3D
+		for i in mi.mesh.get_surface_count():
+			var src := mi.mesh.surface_get_material(i)
+			var metal := src != null and src.resource_name.to_lower().begins_with("metal")
+			mi.set_surface_override_material(i, brass if metal else wood)
+	if inst == null:
+		return
+	var s := inst.scale
+	# portes : deux panneaux moulurés chacune, dans le repère de la porte (un nœud qui défait l'échelle
+	# du modèle : on y travaille en mètres ; la face avant de la porte est en z = 0)
+	for d in wardrobe_doors:
+		var dm := d as MeshInstance3D
+		if dm == null:
+			continue
+		var ab := dm.get_aabb()
+		var x0 := ab.position.x * s.x
+		var x1 := ab.end.x * s.x
+		var h := ab.size.y * s.y
+		var holder := Node3D.new()
+		holder.name = "Moulures"
+		holder.scale = Vector3(1.0 / s.x, 1.0 / s.y, 1.0 / s.z)
+		d.add_child(holder)
+		var parts := []
+		var cx := (x0 + x1) / 2.0
+		var pw := (x1 - x0) - 0.12
+		# panneau bas, panneau haut (la poignée Kenney, à 0,67-0,81 m du bas de la porte, reste entre les deux)
+		for r in [[0.09, 0.6], [0.88, h - 0.09]]:
+			var y0: float = r[0]
+			var y1: float = r[1]
+			var ph := y1 - y0
+			var cy := (y0 + y1) / 2.0
+			var fw := 0.024      # largeur de la moulure
+			parts.append([_bm(Vector3(pw, fw, 0.016)), _at(Vector3(cx, y1 - fw / 2.0, 0.008))])
+			parts.append([_bm(Vector3(pw, fw, 0.016)), _at(Vector3(cx, y0 + fw / 2.0, 0.008))])
+			parts.append([_bm(Vector3(fw, ph - 2.0 * fw, 0.016)), _at(Vector3(cx - pw / 2.0 + fw / 2.0, cy, 0.008))])
+			parts.append([_bm(Vector3(fw, ph - 2.0 * fw, 0.016)), _at(Vector3(cx + pw / 2.0 - fw / 2.0, cy, 0.008))])
+			# le panneau, en relief à l'intérieur du cadre (une gorge de 1,6 cm tout autour)
+			parts.append([_bm(Vector3(pw - 2.0 * fw - 0.032, ph - 2.0 * fw - 0.032, 0.009)), _at(Vector3(cx, cy, 0.0045))])
+		_merged(parts, wood, holder)
+	# caisse : corniche, ceinture sous les portes, côté visible mouluré (repère du meuble, en mètres)
+	var size: Vector3 = wardrobe.get_meta("size")
+	var fz := size.z / 2.0           # face avant
+	var bz := -size.z / 2.0          # dos (contre le mur)
+	var top := size.y
+	var cp := []
+	cp.append([_bm(Vector3(size.x + 0.02, 0.02, size.z + 0.01)), _at(Vector3(0, top - 0.01, 0.005))])
+	cp.append([_bm(Vector3(size.x + 0.05, 0.06, size.z + 0.025)), _at(Vector3(0, top + 0.03, (fz + 0.025 + bz) / 2.0))])
+	cp.append([_bm(Vector3(size.x + 0.1, 0.035, size.z + 0.05)), _at(Vector3(0, top + 0.0775, (fz + 0.05 + bz) / 2.0))])
+	cp.append([_bm(Vector3(size.x + 0.02, 0.06, 0.022)), _at(Vector3(0, 0.24, fz + 0.011))])
+	for sx in [-1.0, 1.0]:
+		var xf: float = sx * (size.x / 2.0 + 0.008)
+		cp.append([_bm(Vector3(0.016, 1.56, 0.024)), _at(Vector3(xf, 1.16, bz + 0.07))])
+		cp.append([_bm(Vector3(0.016, 1.56, 0.024)), _at(Vector3(xf, 1.16, fz - 0.07))])
+		cp.append([_bm(Vector3(0.016, 0.024, size.z - 0.164)), _at(Vector3(xf, 1.928, 0.0))])
+		cp.append([_bm(Vector3(0.016, 0.024, size.z - 0.164)), _at(Vector3(xf, 0.392, 0.0))])
+	_merged(cp, wood, wardrobe)
+	# une vieille valise, couchée sur la corniche (une des deux du modèle Poly Haven)
+	var case_ := _ph_instance("vintage_suitcase", {}) if ResourceLoader.exists(PH_PATH % ["vintage_suitcase", "vintage_suitcase"]) else null
+	if case_ == null:
+		return
+	for n in case_.get_children():
+		if String(n.name).contains("_02"):
+			n.free()
+	for g in case_.find_children("*", "GeometryInstance3D", true, false):
+		(g as GeometryInstance3D).gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+	var lay := Node3D.new()
+	lay.name = "Valise"
+	wardrobe.add_child(lay)
+	lay.add_child(case_)
+	case_.rotation.x = PI / 2.0      # couchée sur le dos, la poignée vers la pièce
+	var box := _aabb_in(case_, case_.transform)
+	case_.position -= Vector3(box.get_center().x, box.position.y, box.get_center().z)
+	lay.position = Vector3(0.03, top + 0.095, -0.02)
+	lay.rotation.y = deg_to_rad(-7.0)
+
+
+## Bois des meubles Kenney gardés (bureau, étagère) : noyer foncé ciré plutôt que le bois clair des
+## Kenney ; leurs poignées en laiton.
+func _retint(node: Node3D) -> void:
+	if _furn_wood == null:
+		_furn_wood = (mats.wood_dark as StandardMaterial3D).duplicate() as StandardMaterial3D
+		_furn_wood.albedo_color = Color(0.68, 0.53, 0.43)
+	for n in node.find_children("*", "MeshInstance3D", true, false):
+		var mi := n as MeshInstance3D
+		for i in mi.mesh.get_surface_count():
+			var src := mi.mesh.surface_get_material(i)
+			var key := src.resource_name.to_lower() if src else ""
+			if key.begins_with("wood"):
+				mi.set_surface_override_material(i, _furn_wood)
+			elif key.begins_with("metal"):
+				mi.set_surface_override_material(i, _brass())
+
+
+func _brass() -> StandardMaterial3D:
+	if _brass_mat == null:
+		_brass_mat = _plain(Color(0.5, 0.38, 0.18), 0.32, 0.9)
+	return _brass_mat
+
+
+## La bibliothèque ouverte (Kenney : montants carrés et planches épaisses) redessinée en noyer : côtés
+## fins, fond, tablettes à chant mouluré aux hauteurs du Kenney (0,27 · 0,76 · 1,25 : decor.gd y range
+## les livres et les cassettes), socle en retrait, dessus à 1,80 m (la télévision y est posée), bandeau.
+func _dress_bookcase(shelf: Node3D) -> void:
+	var size: Vector3 = shelf.get_meta("size")
+	var c := shelf.position
+	var w := size.x
+	var hh := size.y
+	var d := size.z
+	var t := 0.022
+	var zf := c.z + d / 2.0           # façade (+z)
+	var zb := c.z - d / 2.0           # dos
+	var wi := w - 2.0 * t
+	var parts := []
+	for sx in [-1.0, 1.0]:
+		parts.append([_bm(Vector3(t, hh, d)), Transform3D(Basis(), Vector3(c.x + sx * (w / 2.0 - t / 2.0), hh / 2.0, c.z))])
+		parts.append([_bm(Vector3(0.035, hh - 0.09, 0.018)), Transform3D(Basis(), Vector3(c.x + sx * (w / 2.0 - 0.0175), 0.09 + (hh - 0.09) / 2.0, zf - 0.006))])
+	parts.append([_bm(Vector3(wi, hh - 0.03, 0.01)), Transform3D(Basis(), Vector3(c.x, hh / 2.0, zb + 0.008))])
+	# socle en retrait, fond bas
+	parts.append([_bm(Vector3(wi, 0.075, 0.02)), Transform3D(Basis(), Vector3(c.x, 0.0375, zf - 0.03))])
+	parts.append([_bm(Vector3(wi, 0.02, d - 0.03)), Transform3D(Basis(), Vector3(c.x, 0.085, c.z))])
+	var levels := [0.27, 0.76, 1.25]
+	for y in levels:
+		parts.append([_bm(Vector3(wi, 0.02, d - 0.025)), Transform3D(Basis(), Vector3(c.x, y - 0.01, c.z - 0.005))])
+		parts.append([_bm(Vector3(wi, 0.032, 0.016)), Transform3D(Basis(), Vector3(c.x, y - 0.016, zf - 0.012))])
+	# dessus (à fleur de 1,80 m), bandeau et moulure sous le dessus
+	parts.append([_bm(Vector3(w + 0.016, 0.024, d + 0.012)), Transform3D(Basis(), Vector3(c.x, hh - 0.012, c.z + 0.006))])
+	parts.append([_bm(Vector3(wi, 0.05, 0.018)), Transform3D(Basis(), Vector3(c.x, hh - 0.049, zf - 0.008))])
+	parts.append([_bm(Vector3(w + 0.03, 0.016, d + 0.02)), Transform3D(Basis(), Vector3(c.x, hh - 0.032, c.z + 0.01))])
+	_merged(parts, _furn_wood, self, true).name = "BibliothequeNoyer"
+	_hide_meshes(shelf)
+
+
+## Le bureau (Kenney : pieds-blocs) redessiné en bureau de noyer : plateau à desk_top (le PC et le
+## clavier y sont posés), ceinture, deux tiroirs à boutons de laiton, pieds fuselés. Même emprise, même
+## collision (celle du Kenney).
+func _dress_desk(desk: Node3D) -> void:
+	var size: Vector3 = desk.get_meta("size")
+	var c := desk.position
+	var w := size.x
+	var d := size.z
+	var top := size.y
+	var parts := []
+	parts.append([_bm(Vector3(w, 0.03, d)), Transform3D(Basis(), Vector3(c.x, top - 0.015, c.z))])
+	# ceinture (dos, côtés, façade) sous le plateau
+	var ay := top - 0.03 - 0.055
+	parts.append([_bm(Vector3(w - 0.08, 0.11, 0.02)), Transform3D(Basis(), Vector3(c.x, ay, c.z - d / 2.0 + 0.05))])
+	for sx in [-1.0, 1.0]:
+		parts.append([_bm(Vector3(0.02, 0.11, d - 0.1)), Transform3D(Basis(), Vector3(c.x + sx * (w / 2.0 - 0.05), ay, c.z))])
+	parts.append([_bm(Vector3(w - 0.08, 0.11, 0.02)), Transform3D(Basis(), Vector3(c.x, ay, c.z + d / 2.0 - 0.05))])
+	# pieds fuselés (section carrée : cylindres à 4 côtés tournés de 45°)
+	var leg := _cm(0.026, 0.017, top - 0.03, 4)
+	for sx in [-1.0, 1.0]:
+		for sz in [-1.0, 1.0]:
+			parts.append([leg, Transform3D(Basis(Vector3.UP, PI / 4.0), Vector3(c.x + sx * (w / 2.0 - 0.055), (top - 0.03) / 2.0, c.z + sz * (d / 2.0 - 0.055)))])
+	_merged(parts, _furn_wood, self, true).name = "BureauNoyer"
+	# deux tiroirs dans la ceinture, de part et d'autre de la place des genoux
+	var dark := _furn_wood.duplicate() as StandardMaterial3D
+	dark.albedo_color = _furn_wood.albedo_color.darkened(0.25)
+	var fronts := []
+	var knobs := []
+	for sx in [-1.0, 1.0]:
+		var dx: float = c.x + sx * (w / 2.0 - 0.27)
+		fronts.append([_bm(Vector3(0.36, 0.085, 0.008)), Transform3D(Basis(), Vector3(dx, ay, c.z + d / 2.0 - 0.036))])
+		knobs.append([_sm(0.011, 10), Transform3D(Basis(), Vector3(dx, ay, c.z + d / 2.0 - 0.026))])
+	_merged(fronts, dark, self)
+	_merged(knobs, _brass(), self)
+	_hide_meshes(desk)
+
+
+## Trois livres empilés sur le bureau (à la place des pavés Kenney « books ») : reliures, pages.
+func _book_stack(at: Vector3, rot_y: float) -> void:
+	var holder := Node3D.new()
+	holder.name = "LivresBureau"
+	holder.position = at
+	holder.rotation.y = rot_y
+	add_child(holder)
+	var covers := [Color(0.3, 0.1, 0.09), Color(0.12, 0.18, 0.26), Color(0.2, 0.24, 0.15)]
+	var dims := [Vector3(0.18, 0.035, 0.25), Vector3(0.16, 0.028, 0.23), Vector3(0.15, 0.04, 0.21)]
+	var pages := _plain(Color(0.8, 0.76, 0.66), 0.9)
+	var y := 0.0
+	for k in 3:
+		var sz: Vector3 = dims[k]
+		var bk := Node3D.new()
+		bk.position = Vector3(0.01 * k, y, -0.01 * k)
+		bk.rotation.y = [0.0, 0.12, -0.08][k]
+		holder.add_child(bk)
+		var cover := _plain(covers[k], 0.7)
+		for yb in [0.0015, sz.y - 0.0015]:
+			_box(Vector3(sz.x, 0.003, sz.z), Vector3(0, yb, 0), cover, false, bk)
+		_box(Vector3(0.005, sz.y, sz.z), Vector3(-sz.x / 2.0 + 0.0025, sz.y / 2.0, 0), cover, false, bk)
+		_box(Vector3(sz.x - 0.009, sz.y - 0.006, sz.z - 0.008), Vector3(0.0005, sz.y / 2.0, 0), pages, false, bk)
+		y += sz.y
+
+
+## Le lit (objet interactif « Se coucher » : sa boîte et la couette restent réglées sur le Kenney) dessiné
+## en lit de fer ancien : tête et pied à barreaux en fer peint noir, boules de laiton, sommier, matelas
+## au drap blanc, oreiller. Le Kenney est caché (son nœud « cover » sert encore de repère à la couette).
+func _dress_bed(bed: Node3D) -> void:
+	var size: Vector3 = bed.get_meta("size")
+	for c in bed.get_children():
+		if not (c is Interactable):
+			(c as Node3D).visible = false
+	var hx := size.x / 2.0 - 0.025          # axe des montants
+	var hz := size.z / 2.0 - 0.012
+	var iron := _grimy(_plain(Color(0.055, 0.055, 0.06), 0.42, 0.55), 1.2)
+	var parts := []
+	var knobs := []
+	# tête (vers -z, côté fenêtre) et pied : montants, traverses, barreaux
+	for end in [[-hz, 1.02, 0.97, 0.56], [hz, 0.8, 0.75, 0.5]]:
+		var z: float = end[0]
+		var hp: float = end[1]
+		var r_top: float = end[2]
+		var r_mid: float = end[3]
+		for sx in [-1.0, 1.0]:
+			parts.append([_cm(0.019, 0.019, hp, 10), _at(Vector3(sx * hx, hp / 2.0, z))])
+			knobs.append([_sm(0.03, 10), _at(Vector3(sx * hx, hp + 0.022, z))])
+		for y in [r_top, r_mid, 0.26]:
+			parts.append(_rod(Vector3(-hx, y, z), Vector3(hx, y, z), 0.012 if y != r_top else 0.015, 8))
+		var n := 9
+		for k in n:
+			var x := lerpf(-hx, hx, float(k + 1) / float(n + 1))
+			parts.append(_rod(Vector3(x, r_mid, z), Vector3(x, r_top, z), 0.0065, 6))
+	# longerons
+	for sx in [-1.0, 1.0]:
+		parts.append([_bm(Vector3(0.03, 0.05, 2.0 * hz)), _at(Vector3(sx * hx, 0.255, 0))])
+	var holder := Node3D.new()
+	holder.name = "LitFer"
+	bed.add_child(holder)
+	_merged(parts, iron, holder)
+	_merged(knobs, _brass(), holder)
+	# sommier, matelas (drap blanc), oreiller
+	_merged([[_bm(Vector3(2.0 * hx - 0.04, 0.03, 2.0 * hz - 0.04)), _at(Vector3(0, 0.235, 0))]], mats.dark, holder)
+	var sheet := _grimy(_plain(Color(0.72, 0.7, 0.64), 1.0), 1.0)
+	_merged([[_bm(Vector3(2.0 * hx - 0.05, 0.15, 2.0 * hz - 0.05)), _at(Vector3(0, 0.3, 0))]], sheet, holder)
+	var pillow := MeshInstance3D.new()
+	pillow.mesh = _sm(0.5, 16)
+	pillow.material_override = sheet
+	pillow.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+	pillow.position = Vector3(0.02, 0.43, -hz + 0.25)
+	pillow.rotation = Vector3(-0.12, 0.05, 0.0)
+	pillow.scale = Vector3(0.66, 0.13, 0.34)
+	holder.add_child(pillow)
+
+
+## Clavier beige de l'ordinateur (à la place du Kenney, même place, 0,44 m) : socle légèrement incliné,
+## cinq rangées de touches et la barre d'espace.
+func _build_keyboard(at: Vector3) -> void:
+	var root := Node3D.new()
+	root.name = "Clavier"
+	root.position = at
+	add_child(root)
+	var tilt := Basis(Vector3.RIGHT, deg_to_rad(3.0))
+	_merged([[_bm(Vector3(0.44, 0.024, 0.17)), Transform3D(tilt, Vector3(0, 0.014, 0))]], mats.beige, root)
+	var keys := []
+	var pitch := 0.0255
+	var key := _bm(Vector3(0.021, 0.011, 0.021))
+	for r in 5:
+		var n := 15 if r < 4 else 0
+		var z := -0.06 + r * pitch
+		var x0 := -0.19 + (r % 2) * 0.006
+		for k in n:
+			keys.append([key, Transform3D(tilt, tilt * Vector3(x0 + k * pitch, 0.031, z))])
+	# rangée du bas : quelques touches et la barre d'espace
+	var zb := -0.06 + 4 * pitch
+	for x in [-0.19, -0.164, -0.138, 0.112, 0.138, 0.164, 0.19]:
+		keys.append([key, Transform3D(tilt, tilt * Vector3(x, 0.031, zb))])
+	keys.append([_bm(Vector3(0.2, 0.011, 0.021)), Transform3D(tilt, tilt * Vector3(-0.012, 0.031, zb))])
+	if _key_mat == null:
+		_key_mat = _grimy(_plain(Color(0.47, 0.45, 0.4), 0.55), 2.0)
+	_merged(keys, _key_mat, root)
+
+
+## Le nounours, assis sur la couette au pied du lit (sphères : peluche brune, museau clair, yeux et truffe).
+func _build_teddy(at: Vector3, rot_deg: float) -> void:
+	var root := Node3D.new()
+	root.name = "Nounours"
+	root.position = at
+	root.rotation_degrees.y = rot_deg
+	add_child(root)
+	var ball := _sm(0.5, 14)
+	var small := _sm(0.5, 8)
+	var sc := func(v: Vector3, p: Vector3, r := Vector3.ZERO) -> Array:
+		return [ball, Transform3D(Basis.from_euler(r).scaled_local(v), p)]
+	var fur := [
+		sc.call(Vector3(0.16, 0.19, 0.14), Vector3(0, 0.1, 0)),                       # ventre
+		sc.call(Vector3(0.135, 0.125, 0.12), Vector3(0, 0.255, 0.01)),                # tête
+		sc.call(Vector3(0.055, 0.055, 0.03), Vector3(-0.058, 0.32, 0.0)),             # oreilles
+		sc.call(Vector3(0.055, 0.055, 0.03), Vector3(0.058, 0.32, 0.0)),
+		sc.call(Vector3(0.05, 0.12, 0.05), Vector3(-0.085, 0.12, 0.035), Vector3(0.5, 0, 0.35)),   # bras
+		sc.call(Vector3(0.05, 0.12, 0.05), Vector3(0.085, 0.12, 0.035), Vector3(0.5, 0, -0.35)),
+		sc.call(Vector3(0.065, 0.06, 0.11), Vector3(-0.055, 0.03, 0.08)),             # jambes
+		sc.call(Vector3(0.065, 0.06, 0.11), Vector3(0.055, 0.03, 0.08)),
+	]
+	_merged(fur, _grimy(_plain(Color(0.36, 0.25, 0.16), 1.0), 2.0), root)
+	_merged([sc.call(Vector3(0.06, 0.048, 0.05), Vector3(0, 0.232, 0.066))], _grimy(_plain(Color(0.62, 0.5, 0.36), 1.0), 2.0), root)
+	_merged([[small, Transform3D(Basis().scaled(Vector3(0.026, 0.018, 0.018)), Vector3(0, 0.247, 0.092))],
+		[small, Transform3D(Basis().scaled(Vector3(0.016, 0.016, 0.016)), Vector3(-0.032, 0.272, 0.07))],
+		[small, Transform3D(Basis().scaled(Vector3(0.016, 0.016, 0.016)), Vector3(0.032, 0.272, 0.07))]],
+		_plain(Color(0.02, 0.02, 0.02), 0.3), root)
+
+
+## La radio (objet interactif : sa boîte reste celle du modèle Kenney) : un radiocassette réaliste
+## (Poly Haven) dessiné à sa place, dans la même boîte.
+func _dress_radio(radio: Node3D) -> void:
+	if not ResourceLoader.exists(PH_PATH % ["boombox", "boombox"]):
+		return
+	for c in radio.get_children():
+		if not (c is Interactable):
+			(c as Node3D).visible = false
+	var box: Vector3 = radio.get_meta("size")
+	model("boombox", Vector3.ZERO, 0.0, Vector3(box.x, box.y, 0.0), false, {"parent": radio, "name": "Radiocassette"})
+
+
+## Enceinte colonne (le pied de la radio) : caisse en bois plaqué sur un socle en retrait, toile noire.
+func _build_hifi(at: Vector3, h: float) -> void:
+	var root := Node3D.new()
+	root.name = "Enceinte"
+	root.position = at
+	add_child(root)
+	var w := 0.28
+	var d := 0.27
+	var plinth := 0.025
+	_merged([[_bm(Vector3(w, h - plinth, d)), _at(Vector3(0, plinth + (h - plinth) / 2.0, 0))]], mats.wood_dark, root)
+	_merged([[_bm(Vector3(w - 0.03, plinth, d - 0.03)), _at(Vector3(0, plinth / 2.0, 0))]], mats.black_plastic, root)
+	var cloth := _grimy(_plain(Color(0.035, 0.035, 0.04), 1.0), 1.6)
+	_merged([[_bm(Vector3(w - 0.03, h - plinth - 0.05, 0.01)), _at(Vector3(0, plinth + (h - plinth) / 2.0, d / 2.0 + 0.004))]], cloth, root)
+	_merged([[_bm(Vector3(0.05, 0.012, 0.004)), _at(Vector3(0, plinth + 0.05, d / 2.0 + 0.01))]], mats.metal, root)
+	_collider(Vector3(w, h, d), at + Vector3(0, h / 2.0, 0))
+
+
+## Corbeille à papier en tôle peinte, ouverte (on voit le fond et deux boulettes de papier).
+func _build_bin(at: Vector3) -> void:
+	var root := Node3D.new()
+	root.name = "Corbeille"
+	root.position = at
+	add_child(root)
+	var h := 0.3
+	var paint := _grimy(_plain(Color(0.13, 0.17, 0.15), 0.5, 0.4), 1.4)
+	var rim := TorusMesh.new()
+	rim.inner_radius = 0.118
+	rim.outer_radius = 0.131
+	rim.rings = 28
+	rim.ring_segments = 6
+	_merged([[_cm(0.125, 0.105, h, 28, false, true), _at(Vector3(0, h / 2.0, 0))],
+		[_cm(0.12, 0.1, h - 0.004, 28, false, false, true), _at(Vector3(0, h / 2.0 + 0.002, 0))],
+		[_cm(0.1, 0.1, 0.004, 28), _at(Vector3(0, 0.006, 0))],
+		[rim, _at(Vector3(0, h, 0))]], paint, root)
+	var paper := _grimy(_plain(Color(0.8, 0.78, 0.72), 1.0))
+	_merged([[_sm(0.042, 8), _at(Vector3(0.03, 0.05, 0.02), Vector3(0.4, 1.0, 0.2))],
+		[_sm(0.036, 8), _at(Vector3(-0.04, 0.045, -0.03), Vector3(1.0, 0.3, 0.7))]], paper, root)
+	_collider(Vector3(0.26, h, 0.26), at + Vector3(0, h / 2.0, 0))
+
+
+## Lampadaire (éteint) : pied en laiton bruni, abat-jour conique en tissu sur sa doublure (faces retournées :
+## vu d'en haut, on voit l'intérieur), croisillon, ampoule.
+func _build_floor_lamp(at: Vector3) -> void:
+	var root := Node3D.new()
+	root.name = "Lampadaire"
+	root.position = at
+	add_child(root)
+	var brass := _grimy(_plain(Color(0.36, 0.28, 0.17), 0.4, 0.85), 1.5)
+	var ys := 1.24           # bas de l'abat-jour
+	var hs := 0.3            # hauteur de l'abat-jour
+	var rt := 0.13
+	var rb := 0.21
+	var parts := [
+		[_cm(0.12, 0.15, 0.03, 32), _at(Vector3(0, 0.015, 0))],
+		[_cm(0.035, 0.05, 0.03, 16), _at(Vector3(0, 0.045, 0))],
+		[_cm(0.011, 0.011, ys + 0.1 - 0.06, 10), _at(Vector3(0, 0.06 + (ys + 0.1 - 0.06) / 2.0, 0))],
+		[_cm(0.017, 0.017, 0.03, 12), _at(Vector3(0, 0.62, 0))],
+		[_cm(0.019, 0.016, 0.05, 12), _at(Vector3(0, ys + 0.12, 0))],
+		[_sm(0.014, 8), _at(Vector3(0, ys + hs + 0.012, 0))],
+	]
+	var ring := TorusMesh.new()
+	ring.inner_radius = rt - 0.006
+	ring.outer_radius = rt - 0.001
+	ring.rings = 32
+	ring.ring_segments = 4
+	parts.append([ring, _at(Vector3(0, ys + hs - 0.004, 0))])
+	for k in 3:
+		var a := TAU * k / 3.0
+		parts.append(_rod(Vector3(0, ys + hs - 0.004, 0), Vector3(cos(a), 0, sin(a)) * (rt - 0.004) + Vector3(0, ys + hs - 0.004, 0), 0.0025, 4))
+	parts.append(_rod(Vector3(0, ys + 0.2, 0), Vector3(0, ys + hs, 0), 0.004, 6))
+	_merged(parts, brass, root)
+	var cloth := _grimy(_plain(Color(0.6, 0.52, 0.38), 1.0), 1.3)
+	var liner := _grimy(_plain(Color(0.66, 0.6, 0.48), 1.0), 1.3)
+	_merged([[_cm(rt, rb, hs, 40, false, false), _at(Vector3(0, ys + hs / 2.0, 0))]], cloth, root)
+	_merged([[_cm(rt - 0.003, rb - 0.003, hs - 0.002, 40, false, false, true), _at(Vector3(0, ys + hs / 2.0, 0))]], liner, root)
+	_merged([[_sm(0.032, 12), _at(Vector3(0, ys + 0.175, 0))]], _plain(Color(0.86, 0.84, 0.78), 0.3), root)
+	_collider(Vector3(0.3, ys + hs, 0.3), at + Vector3(0, (ys + hs) / 2.0, 0))
+
+
+## Portemanteau sur pied en bois sombre : fût tourné, quatre pieds, six patères à boule ; un long manteau
+## sombre accroché.
+func _build_coat_rack(at: Vector3) -> void:
+	var root := Node3D.new()
+	root.name = "PorteManteau"
+	root.position = at
+	root.rotation.y = 0.5
+	add_child(root)
+	var parts := [
+		[_cm(0.017, 0.023, 1.7, 12), _at(Vector3(0, 0.87, 0))],
+		[_sm(0.03, 10), _at(Vector3(0, 1.74, 0))],
+		[_cm(0.028, 0.028, 0.04, 12), _at(Vector3(0, 1.3, 0))],
+		[_cm(0.03, 0.03, 0.05, 12), _at(Vector3(0, 0.3, 0))],
+	]
+	for k in 4:
+		var a := TAU * k / 4.0 + PI / 4.0
+		var dir := Vector3(cos(a), 0, sin(a))
+		parts.append(_rod(Vector3(0, 0.3, 0) + dir * 0.02, dir * 0.27 + Vector3(0, 0.02, 0), 0.016, 8))
+		parts.append([_sm(0.02, 8), _at(dir * 0.27 + Vector3(0, 0.018, 0))])
+	var tips: Array[Vector3] = []
+	for k in 6:
+		var a := TAU * k / 6.0
+		var dir := Vector3(cos(a), 0, sin(a))
+		var y := 1.62 if k % 2 == 0 else 1.52
+		var p0 := dir * 0.018 + Vector3(0, y, 0)
+		var p1 := p0 + dir * 0.11 + Vector3(0, 0.075, 0)
+		parts.append(_rod(p0, p1, 0.008, 6))
+		parts.append([_sm(0.015, 8), _at(p1)])
+		tips.append(p1)
+	_merged(parts, mats.wood_dark, root)
+	# le manteau, pendu à la première patère (cône aplati, épaules arrondies)
+	var wool := _grimy(_plain(Color(0.085, 0.08, 0.075), 1.0), 1.2)
+	var dir0 := Vector3(1, 0, 0)
+	var coat := MeshInstance3D.new()
+	coat.mesh = _cm(0.085, 0.23, 0.98, 18)
+	coat.material_override = wool
+	coat.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+	coat.position = tips[0] + dir0 * 0.03 + Vector3(0, -0.04 - 0.49, 0)
+	coat.rotation = Vector3(0, PI / 2.0, 0.03)
+	coat.scale = Vector3(1.0, 1.0, 0.42)
+	root.add_child(coat)
+	var shoulders := MeshInstance3D.new()
+	shoulders.mesh = _sm(0.11, 12)
+	shoulders.material_override = wool
+	shoulders.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+	shoulders.position = tips[0] + dir0 * 0.03 + Vector3(0, -0.1, 0)
+	shoulders.rotation = Vector3(0, PI / 2.0, 0)
+	shoulders.scale = Vector3(1.25, 0.55, 0.5)
+	root.add_child(shoulders)
+	_collider(Vector3(0.5, 1.75, 0.5), at + Vector3(0, 0.875, 0))
+
+
+## Les ampoules du lustre brillent avec le plafonnier (au-dessus de 1, le halo de la lueur les entoure).
+func _bulbs_glow(lamp: Node3D) -> void:
+	_bulb_mat = _plain(Color(0.86, 0.82, 0.74), 0.25)
+	_bulb_mat.emission_enabled = true
+	_bulb_mat.emission = Color(1.0, 0.74, 0.42)
+	_bulb_mat.emission_energy_multiplier = 0.0
+	for n in lamp.find_children("*", "MeshInstance3D", true, false):
+		var mi := n as MeshInstance3D
+		# l'ampoule du plafonnier est au cœur du lustre : ses bras ne projettent pas d'ombre (sinon de
+		# grandes pales sombres au plafond ; et 21 000 triangles de moins dans les six faces de l'ombre)
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		for i in mi.mesh.get_surface_count():
+			var src := mi.mesh.surface_get_material(i)
+			if src and src.resource_name.to_lower().contains("bulb"):
+				mi.set_surface_override_material(i, _bulb_mat)
+
+
+func _process(_delta: float) -> void:
+	if _bulb_mat == null or ceiling_light == null:
+		return
+	var e := ceiling_light.light_energy if ceiling_light.is_visible_in_tree() else 0.0
+	if not is_equal_approx(e, _bulb_e):
+		_bulb_e = e
+		_bulb_mat.emission_energy_multiplier = e * 1.6
+
+
+## Bouts de ruban adhésif aux quatre coins d'une affiche (centre, taille, rotation du quad : face vers +z à 0).
+func _tape(center: Vector3, size: Vector2, rot_y: float) -> void:
+	if _tape_mat == null:
+		_tape_mat = _plain(Color(0.74, 0.7, 0.56), 0.5)
+	var b := Basis(Vector3.UP, rot_y)
+	var parts := []
+	for sx in [-1.0, 1.0]:
+		for sy in [-1.0, 1.0]:
+			var local := Vector3(sx * (size.x / 2.0 - 0.014), sy * (size.y / 2.0 - 0.014), 0.0012)
+			parts.append([_bm(Vector3(0.06, 0.022, 0.0008)), Transform3D(b * Basis(Vector3.BACK, sx * sy * 0.785), center + b * local)])
+	var mi := _merged(parts, _tape_mat, self)
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 
 # ------------------------------------------------------------------ l'ordinateur
@@ -486,12 +1071,14 @@ func insert_floppy() -> void:
 func _build_wall_things() -> void:
 	var back := -D / 2.0 + 0.006
 	_quad(Vector2(0.62, 0.89), Vector3(-0.55, 1.55, back), _image_mat("poster_choisis.png"))
+	_tape(Vector3(-0.55, 1.55, back), Vector2(0.62, 0.89), 0.0)
 	var note := _quad(Vector2(0.22, 0.275), Vector3(0.42, 1.42, back + 0.001), _image_mat("note.png"))
 	note.rotation.z = 0.06
 	var nit := _interactable("Lire le mot", Vector3(0.26, 0.31, 0.05), Vector3(0.42, 1.42, back + 0.02))
 	nit.used.connect(func(_i: Interactable) -> void: get_tree().call_group("hud", "read_paper",
 		"ne pas jouer\naprès minuit.\n\nsi l'écran te parle,\nne réponds pas.\n\n— M."))
 	_quad(Vector2(0.55, 0.55), Vector3(W / 2.0 - 0.006, 1.62, -0.9), _image_mat("poster_spectres.png"), -PI / 2.0)
+	_tape(Vector3(W / 2.0 - 0.006, 1.62, -0.9), Vector2(0.55, 0.55), -PI / 2.0)
 	# interrupteur
 	var sw_pos := Vector3(W / 2.0 - 0.01, 1.25, 0.72)
 	_box(Vector3(0.015, 0.11, 0.075), sw_pos, mats.paint)
@@ -536,9 +1123,27 @@ func _build_lights() -> void:
 	ceiling_light.global_position = Vector3(0.15, H - 0.45, 0.45)
 
 
+## Lueur de l'écran selon le style d'image (main.gd, _apply_video). Rétro : celle d'avant. Rendu net :
+## AgX relève ce vert ; plus pâle et de plus courte portée, elle éclaire le bureau et la chaise sans
+## repeindre le plafond en vert fluo. (L'énergie, elle, suit le scénario : _screen_light_e.)
+func set_screen_glow_style(retro: bool) -> void:
+	if screen_light == null:
+		return
+	screen_light.light_color = Color(0.36, 1.0, 0.42) if retro else Color(0.55, 0.92, 0.62)
+	screen_light.omni_range = 2.5 if retro else 1.9
+	screen_light.omni_attenuation = 1.8 if retro else 2.4
+	if screen_mat:
+		# l'écran : tube presque noir et vignette dans les coins seulement (en rendu net, l'ancienne vignette
+		# serrée dessinait une ellipse grise floue)
+		screen_mat.set_shader_parameter("base_glow", 0.035 if retro else 0.012)
+		screen_mat.set_shader_parameter("vig_outer", 0.62 if retro else 0.95)
+		screen_mat.set_shader_parameter("vig_inner", 0.18 if retro else 0.45)
+
+
 func _build_dust() -> void:
 	var p := GPUParticles3D.new()
-	p.amount = 260
+	p.amount = 150
+	p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	p.lifetime = 14.0
 	p.preprocess = 14.0
 	p.visibility_aabb = AABB(Vector3(-W / 2.0, 0, -D / 2.0), Vector3(W, H, D))
@@ -555,10 +1160,23 @@ func _build_dust() -> void:
 	pm.turbulence_noise_speed_random = 0.2
 	p.process_material = pm
 	var q := QuadMesh.new()
-	q.size = Vector2(0.007, 0.007)
+	q.size = Vector2(0.005, 0.005)
 	var dm := StandardMaterial3D.new()
 	dm.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
-	dm.albedo_color = Color(1, 0.95, 0.85, 0.6)
+	# un point rond et flou (pas un carré : en rendu net, un grain de 7 mm faisait 10 px à 50 cm)
+	var dot := GradientTexture2D.new()
+	dot.width = 32
+	dot.height = 32
+	dot.fill = GradientTexture2D.FILL_RADIAL
+	dot.fill_from = Vector2(0.5, 0.5)
+	dot.fill_to = Vector2(1.0, 0.5)
+	var gr := Gradient.new()
+	gr.set_color(0, Color(1, 1, 1, 1))
+	gr.set_color(1, Color(1, 1, 1, 0))
+	gr.add_point(0.35, Color(1, 1, 1, 0.55))
+	dot.gradient = gr
+	dm.albedo_texture = dot
+	dm.albedo_color = Color(1, 0.95, 0.85, 0.4)
 	dm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	dm.proximity_fade_enabled = true
 	dm.proximity_fade_distance = 0.3

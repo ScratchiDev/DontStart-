@@ -502,6 +502,28 @@ func t_since(ms: int) -> float:
 	return (Time.get_ticks_msec() - ms) / 1000.0
 
 
+## B5 : le délai du S.O.S. se compte depuis les coups à P2 (B4 : le premier appui), pas depuis le début
+## de use_at (approche, visée : quelques images, soit 1 à 2 s de jeu en rendu logiciel).
+var _knock_t := -1.0
+
+
+func _watch_knock() -> void:
+	_knock_t = -1.0
+	if not house.door_tried.is_connected(_on_door_tried_b5):
+		house.door_tried.connect(_on_door_tried_b5)
+
+
+func _on_door_tried_b5(id: String) -> void:
+	if id == "P2" and _knock_t < 0.0:
+		_knock_t = game_t
+		house.door_tried.disconnect(_on_door_tried_b5)
+
+
+## Temps de jeu depuis les coups à P2 (ou depuis « t0 » s'ils n'ont pas été vus).
+func _since_knock(t0: float) -> float:
+	return game_t - (_knock_t if _knock_t >= 0.0 else t0)
+
+
 ## Temps de jeu écoulé depuis « t0 » (secondes de jeu, lues sur game_t) : les délais du scénario
 ## (« moins de 3 s », « dans les 25 s ») se mesurent en temps de jeu, pas à l'horloge (rendu logiciel).
 func g_since(t0: float) -> float:
@@ -596,6 +618,7 @@ func run_floor() -> void:
 	await view(Vector3(4.0, 0, -3.2), -0.49, -0.05, "26b_p4_entrouverte", 1.0)
 	# --- étape 7 : P2, on frappe (B4)
 	var t_knock := game_t
+	_watch_knock()
 	await use_at(Vector3(4.1, 0, -3.6), PI / 2.0, -0.1, "Frapper à la porte", "32_p2")
 	# (trois coups de 0,42 s, puis le message : en rendu logiciel, les minuteries tombent à l'image près)
 	await until(func() -> bool: return acte2.last_door == "P2" and hud.hint_lbl.text == House.H_P2A, 6.0)
@@ -617,9 +640,9 @@ func run_floor() -> void:
 		"carte %s · fondu %.2f · phase %s" % [card, hud.fade.color.a, Game.phase])
 	# --- étape 8 : le S.O.S. (B5)
 	await until(func() -> bool: return hn.has_logged("sos"), 40.0)
-	var t_sos := g_since(t_knock)
-	print("B5 : S.O.S. %.1f s après le 1er appui sur P2 (%s)" % [t_sos, acte2.sos_source])
-	check("B5 S.O.S. dans les 25 s", hn.count("sos") == 1 and t_sos <= 27.0, "%.1f s après le 1er appui (%s)" % [t_sos, acte2.sos_source])
+	var t_sos := _since_knock(t_knock)
+	print("B5 : S.O.S. %.1f s après les coups à P2 (%.1f s depuis l'approche de la porte, %s)" % [t_sos, g_since(t_knock), acte2.sos_source])
+	check("B5 S.O.S. dans les 25 s", hn.count("sos") == 1 and t_sos <= 27.0, "%.1f s après les coups (%s)" % [t_sos, acte2.sos_source])
 	await until(func() -> bool: return has_said("nestor", Acte2.N9), 40.0)
 	await wait(0.3)
 	check("B5 N8 N9", said_in_order("nestor", [Acte2.N8, Acte2.N9]) and hud.subtitle_log.size() > 0, str(hn.said("nestor").slice(-2)))
@@ -1393,16 +1416,17 @@ func run_indices() -> void:
 	check("B13 mamie", e.get("text") == Acte2.HINT_MAMIE and e.get("dev") == "nestor", str(e))
 	# « explorer » : après la porte d'Henriette, la boîte à biscuits (Nestor ou babyphone)
 	var t_knock := game_t
+	_watch_knock()
 	await use_at(Vector3(4.1, 0, -3.6), PI / 2.0, -0.1, "Frapper à la porte")
 	# B5, l'autre déclencheur : loin du radiateur, le S.O.S. part 25 s après le premier appui
 	player.global_position = Vector3(4.0, 0, 2.2)
 	player.set_look(PI, -0.05)
 	await until(func() -> bool: return has_said("nestor", Acte2.N7), 40.0)
 	await until(func() -> bool: return hn.has_logged("sos"), 60.0)
-	var t_sos := g_since(t_knock)
-	print("B5 : S.O.S. %.1f s après le 1er appui sur P2 (%s)" % [t_sos, acte2.sos_source])
+	var t_sos := _since_knock(t_knock)
+	print("B5 : S.O.S. %.1f s après les coups à P2 (%.1f s depuis l'approche de la porte, %s)" % [t_sos, g_since(t_knock), acte2.sos_source])
 	check("B5 S.O.S. à 25 s (minuterie)", acte2.sos_source == "minuterie" and hn.count("sos") == 1 and t_sos >= 24.5 and t_sos <= 29.0,
-		"%.1f s après le 1er appui (%s)" % [t_sos, acte2.sos_source])
+		"%.1f s après les coups (%s)" % [t_sos, acte2.sos_source])
 	await until(func() -> bool: return not main.haunt.is_busy() and hn.has_logged("sos"), 60.0)
 	check("B5 N8 N9 (minuterie)", said_in_order("nestor", [Acte2.N8, Acte2.N9]), str(hn.said("nestor").slice(-2)))
 	await until(func() -> bool: return not main.haunt.is_busy(), 60.0)
@@ -1926,9 +1950,10 @@ func run_preview(id: String) -> void:
 	var lamp := OmniLight3D.new()
 	lamp.light_energy = 1.1
 	lamp.omni_range = r.rect.size.length() + 1.0
-	lamp.shadow_enabled = true
+	# (sans ombres, sous les suspensions : son ombre du fil des lustres sur le plafond passait pour un défaut)
+	lamp.shadow_enabled = false
 	main.add_child(lamp)
-	lamp.global_position = Vector3(c.x, r.y0 + r.h - 0.3, c.z)
+	lamp.global_position = Vector3(c.x, r.y0 + r.h - 0.6, c.z)
 	var inset := 0.35
 	var corners := [
 		Vector2(r.rect.position.x + inset, r.rect.position.y + inset),

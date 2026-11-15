@@ -284,54 +284,73 @@ func _walls() -> void:
 # ------------------------------------------------------------------ le sol
 
 func _floor() -> void:
-	# linge en tas au pied du lit
-	var sm := SphereMesh.new()
-	sm.radial_segments = 10
-	sm.rings = 6
-	for c in [[Vector3(-1.78, 0.05, 2.18), Vector3(0.36, 0.12, 0.26), Color(0.12, 0.17, 0.27)],
-			[Vector3(-1.62, 0.09, 2.26), Vector3(0.28, 0.1, 0.22), Color(0.3, 0.3, 0.3)],
-			[Vector3(-1.85, 0.11, 2.3), Vector3(0.22, 0.09, 0.2), Color(0.32, 0.08, 0.08)]]:
-		_mesh(sm, c[0], _m(c[2], 1.0), Vector3(0, rng.randf() * TAU, 0), c[1])
-	# chaussures près de la porte
-	for k in 2:
-		var shoe := Node3D.new()
-		shoe.position = Vector3(2.72 + k * 0.14, 0, 0.6 + k * 0.06)
-		shoe.rotation.y = 0.2 - k * 0.35
-		add_child(shoe)
-		var cap := CapsuleMesh.new()
-		cap.radius = 0.05
-		cap.height = 0.27
-		var body := MeshInstance3D.new()
-		body.mesh = cap
-		body.material_override = _m(Color(0.16, 0.1, 0.07), 0.6)
-		body.rotation.x = PI / 2.0
-		body.scale = Vector3(1.0, 1.0, 0.8)
-		body.position.y = 0.045
-		shoe.add_child(body)
-		_b(Vector3(0.1, 0.015, 0.28), Vector3(0, 0.008, 0), _m(Color(0.05, 0.05, 0.05), 0.8), 0.0, shoe)
-	# sac d'école contre le bureau
-	var bag := CapsuleMesh.new()
-	bag.radius = 0.16
-	bag.height = 0.42
-	_mesh(bag, Vector3(0.33, 0.2, -1.78), _m(Color(0.1, 0.14, 0.24), 0.95), Vector3(0, 0.4, 0.12), Vector3(1.0, 1.0, 0.55))
-	_mesh(sm, Vector3(0.37, 0.15, -1.68), _m(Color(0.09, 0.12, 0.2), 0.95), Vector3(0, 0.4, 0), Vector3(0.22, 0.14, 0.08))
-	# pile de livres par terre, près du lit
+	# linge au pied du lit : un panier à linge en osier (Poly Haven, déjà posé dans la salle de bain), un
+	# pull et une serviette pliés dessus. (Les sphères écrasées d'avant faisaient des galets.)
+	for k in 3:
+		rng.randf()      # (même suite aléatoire qu'avant pour le reste de la chambre)
+	var basket: Node3D = room._ph_instance("wicker_basket_02", {}) if ResourceLoader.exists(Builder.PH_PATH % ["wicker_basket_02", "wicker_basket_02"]) else null
+	if basket:
+		basket.name = "PanierLinge"
+		for g in basket.find_children("*", "GeometryInstance3D", true, false):
+			(g as GeometryInstance3D).gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+		var lid := basket.get_node_or_null("wicker_basket_02_lid") as Node3D
+		if lid:
+			lid.visible = false
+		add_child(basket)
+		basket.position = Vector3(-1.74, 0, 2.2)
+		basket.rotation.y = 0.5
+		basket.scale = Vector3.ONE * 1.75
+		var pull := MeshInstance3D.new()
+		pull.mesh = room.pillow_mesh(0.34, 0.27, 0.09)
+		pull.material_override = room._rug_mat(Color(0.14, 0.19, 0.3))
+		pull.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+		pull.position = Vector3(-1.74, 0.36, 2.2)
+		pull.rotation = Vector3(0.08, 0.35, -0.06)
+		add_child(pull)
+		var towel := MeshInstance3D.new()
+		towel.mesh = room.pillow_mesh(0.26, 0.2, 0.05)
+		towel.material_override = room._rug_mat(Color(0.42, 0.13, 0.12))
+		towel.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+		towel.position = Vector3(-1.7, 0.405, 2.17)
+		towel.rotation = Vector3(-0.1, 1.2, 0.12)
+		add_child(towel)
+	# (plus de chaussures en capsules ni de sac d'école en galet : pas de modèle CC0 léger, et ces formes
+	# lisses se voyaient dans la lueur de l'écran, dès la vue de départ)
+	# pile de livres par terre, près du lit : reliures, dos et tranches de pages
 	var y := 0.0
 	for k in 4:
 		var h := rng.randf_range(0.03, 0.05)
-		_b(Vector3(rng.randf_range(0.17, 0.22), h, rng.randf_range(0.24, 0.3)), Vector3(-1.85, y + h / 2.0, 0.42),
-			_m(BOOK_COLORS[rng.randi() % BOOK_COLORS.size()], 0.75), rng.randf_range(-0.4, 0.4))
+		var bw := rng.randf_range(0.17, 0.22)
+		var bd := rng.randf_range(0.24, 0.3)
+		var col: Color = BOOK_COLORS[rng.randi() % BOOK_COLORS.size()]
+		var rot := rng.randf_range(-0.4, 0.4)
+		_flat_book(Vector3(bw, h, bd), Vector3(-1.85, y, 0.42), col, rot)
 		y += h
 	# boulettes de papier à côté de la corbeille
 	var ball := SphereMesh.new()
-	ball.radius = 0.035
-	ball.height = 0.06
-	ball.radial_segments = 6
-	ball.rings = 4
-	for p in [Vector3(0.52, 0.03, -2.12), Vector3(0.64, 0.03, -1.97), Vector3(0.18, 0.03, -2.02)]:
-		_mesh(ball, p, _m(Color(0.82, 0.8, 0.74), 1.0), Vector3(rng.randf(), rng.randf(), rng.randf()))
+	ball.radius = 0.024
+	ball.height = 0.042
+	ball.radial_segments = 7
+	ball.rings = 5
+	for p in [Vector3(0.52, 0.02, -2.12), Vector3(0.64, 0.02, -1.97), Vector3(0.18, 0.02, -2.02)]:
+		_mesh(ball, p, _m(Color(0.82, 0.8, 0.74), 1.0), Vector3(rng.randf(), rng.randf(), rng.randf()), Vector3(1.0, 0.8, 0.9))
 	# une feuille tombée près du lit
 	_flat("paper_312.png", Vector2(0.21, 0.28), Vector3(-1.55, 0.006, 0.95), 0.7)
+
+
+## Livre posé à plat (taille x = largeur, y = épaisseur, z = hauteur du livre), pied à « at » : deux plats
+## de reliure qui débordent, le dos, et le bloc des pages en retrait, couleur papier.
+func _flat_book(size: Vector3, at: Vector3, col: Color, rot_y: float) -> void:
+	var bk := Node3D.new()
+	bk.position = at
+	bk.rotation.y = rot_y
+	add_child(bk)
+	var cover := _m(col, 0.7)
+	var board := 0.003
+	for yb in [board / 2.0, size.y - board / 2.0]:
+		_b(Vector3(size.x, board, size.z), Vector3(0, yb, 0), cover, 0.0, bk)
+	_b(Vector3(0.005, size.y, size.z), Vector3(-size.x / 2.0 + 0.0025, size.y / 2.0, 0), cover, 0.0, bk)
+	_b(Vector3(size.x - 0.009, size.y - 2.0 * board, size.z - 0.008), Vector3(0.0005, size.y / 2.0, 0), _m(Color(0.8, 0.76, 0.66), 0.9), 0.0, bk)
 
 
 # ------------------------------------------------------------------ les traces

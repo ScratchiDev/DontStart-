@@ -80,16 +80,25 @@ func build(b: Builder) -> void:
 		pane.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	else:
 		b._box(Vector3(w - 0.008, h - LEAF_GAP, t), Vector3(cx, (h + LEAF_GAP) / 2.0, 0), b.mats.door, false, leaf)
+	# panneaux moulurés sur les deux faces : cadre en saillie (12 mm), gorge plus sombre (4 mm de plus, la
+	# crasse des recoins), table en relief (6 mm de plus). Deux maillages par battant (un par matière) au
+	# lieu d'une boîte par pièce. (Avec 5 mm de relief, les ombres crénelaient en pointillés.)
+	var raised := []
+	var groove := []
 	for face_side in [-1.0, 1.0]:
 		var face: float = face_side * (t / 2.0 + 0.005)
+		var lf: float = face_side * t / 2.0
 		for py in [0.62, 1.58]:
 			if glass and py > 1.0:
 				continue
 			for pu in [0.24, w - 0.24]:
 				var ph := 0.78 if py < 1.0 else 0.66
-				b._box(Vector3(0.3, ph, 0.01), Vector3(dir * pu, py, face), b.mats.door, false, leaf)
-				b._box(Vector3(0.22, ph - 0.08, 0.006), Vector3(dir * pu, py, face + face_side * 0.007), b.mats.door, false, leaf)
+				raised.append([Vector3(0.3, ph, 0.012), Vector3(dir * pu, py, lf + face_side * 0.006)])
+				groove.append([Vector3(0.255, ph - 0.045, 0.004), Vector3(dir * pu, py, lf + face_side * 0.014)])
+				raised.append([Vector3(0.2, ph - 0.1, 0.006), Vector3(dir * pu, py, lf + face_side * 0.019)])
 		_knob(b, Vector3(dir * (w - 0.075), 1.0, face), face_side)
+	_panel_mesh(raised, b.mats.door)
+	_panel_mesh(groove, _groove_mat(b.mats.door))
 	# collision qui suit le battant (pousse le joueur au lieu de le traverser)
 	var body := AnimatableBody3D.new()
 	body.collision_layer = Builder.LAYER_WORLD
@@ -105,6 +114,35 @@ func build(b: Builder) -> void:
 	it.used.connect(_on_used)
 	Game.inventory_changed.connect(refresh_label)
 	refresh_label()
+
+
+## Boîtes [taille, centre] fondues en un maillage, enfant du battant.
+func _panel_mesh(boxes: Array, mat: Material) -> void:
+	if boxes.is_empty():
+		return
+	var st := SurfaceTool.new()
+	var bm := BoxMesh.new()
+	for bx in boxes:
+		st.append_from(bm, 0, Transform3D(Basis.from_scale(bx[0]), bx[1]))
+	var mi := MeshInstance3D.new()
+	mi.name = "Panneaux"
+	mi.mesh = st.commit()
+	mi.material_override = mat
+	leaf.add_child(mi)
+
+
+## La peinture des portes, assombrie dans les gorges (une copie par matière, partagée par les portes).
+static var _grooves := {}
+
+
+static func _groove_mat(m: Material) -> Material:
+	if not _grooves.has(m):
+		var g := m
+		if m is BaseMaterial3D:
+			g = (m as BaseMaterial3D).duplicate() as BaseMaterial3D
+			(g as BaseMaterial3D).albedo_color = (m as BaseMaterial3D).albedo_color.darkened(0.3)
+		_grooves[m] = g
+	return _grooves[m]
 
 
 func _knob(b: Builder, at: Vector3, face_side: float) -> void:

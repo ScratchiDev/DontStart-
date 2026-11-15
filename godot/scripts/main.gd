@@ -111,24 +111,13 @@ func _build_environment() -> void:
 	env.ambient_light_color = Color(0.07, 0.075, 0.1)
 	env.ambient_light_energy = 0.5
 	env.reflected_light_source = Environment.REFLECTION_SOURCE_DISABLED
-	env.tonemap_mode = Environment.TONE_MAPPER_ACES
-	env.tonemap_exposure = 1.05
 	env.glow_enabled = true
-	env.glow_intensity = 0.7
-	env.glow_bloom = 0.04
-	env.glow_hdr_threshold = 0.9
-	env.glow_blend_mode = Environment.GLOW_BLEND_MODE_SCREEN
 	env.volumetric_fog_enabled = true
-	env.volumetric_fog_density = 0.028
 	env.volumetric_fog_albedo = Color(0.72, 0.76, 0.85)
 	env.volumetric_fog_anisotropy = 0.55
 	env.volumetric_fog_length = 14.0
 	env.ssao_enabled = true
-	env.ssao_radius = 0.9
-	env.ssao_intensity = 1.8
 	env.adjustment_enabled = true
-	env.adjustment_contrast = 1.08
-	env.adjustment_saturation = 0.82
 	world.environment = env
 
 
@@ -167,8 +156,147 @@ func _apply_quality() -> void:
 	env.ssao_enabled = hq
 	room.screen_light.shadow_enabled = hq
 	room.ceiling_light.shadow_enabled = hq
-	RenderingServer.positional_soft_shadow_filter_set_quality(
-		RenderingServer.SHADOW_QUALITY_SOFT_MEDIUM if hq else RenderingServer.SHADOW_QUALITY_HARD)
+	_apply_video()
+
+
+## Rendu net (par défaut) ou « Style rétro (pixels) » (Game.style_retro), selon « Qualité élevée »
+## (Game.high_quality). Appelé au lancement et à chaque changement de réglage (Game.settings_changed).
+##  - net : la 3D est calculée à la résolution de la fenêtre (étirement « canvas_items » : l'interface,
+##    pensée en 640×360, est agrandie sans perdre sa mise en page), anticrénelage SMAA, AgX, SSAO,
+##    halo des ampoules et des écrans, brouillard volumétrique discret, filtre « pellicule » léger ;
+##    qualité basse : 3D à 75 % (FSR), FXAA, sans SSAO ni brouillard volumétrique ;
+##  - rétro : l'image d'avant, exactement (640×360 agrandie sans lissage, ACES, palette de 16 niveaux
+##    et tramage de Bayer, aberration chromatique).
+## Énergies des lumières : les mêmes dans les deux modes (l'exposition d'AgX compense ACES).
+func _apply_video() -> void:
+	var hq := Game.high_quality
+	var retro_on := Game.style_retro
+	var soft := software_renderer()
+	var win := get_tree().root
+	var vp := get_viewport()
+	if retro_on:
+		win.content_scale_mode = Window.CONTENT_SCALE_MODE_VIEWPORT
+		vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
+		vp.scaling_3d_scale = 1.0
+		vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_DISABLED
+		vp.use_debanding = false
+	else:
+		win.content_scale_mode = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
+		vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR if hq else Viewport.SCALING_3D_MODE_FSR
+		vp.scaling_3d_scale = 1.0 if hq else 0.75
+		if soft:
+			vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_DISABLED
+		else:
+			vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_SMAA if hq else Viewport.SCREEN_SPACE_AA_FXAA
+		vp.use_debanding = true
+	vp.msaa_3d = Viewport.MSAA_DISABLED
+	# (éclairage indirect des VoxelGI : à demi-résolution en rendu logiciel, -10 % par image)
+	RenderingServer.gi_set_use_half_resolution(soft)
+	# (filtrage anisotrope des sols, Surfaces.world_uv)
+	if soft:
+		vp.anisotropic_filtering_level = Viewport.ANISOTROPY_DISABLED
+	else:
+		vp.anisotropic_filtering_level = Viewport.ANISOTROPY_4X if hq else Viewport.ANISOTROPY_2X
+	if retro_on:
+		env.tonemap_mode = Environment.TONE_MAPPER_ACES
+		env.tonemap_exposure = 1.05
+		env.glow_intensity = 0.7
+		env.glow_strength = 1.0
+		env.glow_bloom = 0.04
+		env.glow_hdr_threshold = 0.9
+		env.glow_blend_mode = Environment.GLOW_BLEND_MODE_SCREEN
+		for i in 7:
+			env.set_glow_level(i, [0.0, 0.8, 0.4, 0.1, 0.0, 0.0, 0.0][i])
+		env.volumetric_fog_density = 0.028
+		env.ssao_radius = 0.9
+		env.ssao_intensity = 1.8
+		env.ssao_power = 1.5
+		env.ssao_detail = 0.5
+		env.ssao_light_affect = 0.0
+		env.ssil_enabled = false
+		env.adjustment_contrast = 1.08
+		env.adjustment_saturation = 0.82
+		env.ambient_light_energy = 0.5
+	else:
+		env.tonemap_mode = Environment.TONE_MAPPER_AGX
+		env.tonemap_exposure = AGX_EXPOSURE
+		env.glow_intensity = 0.55
+		env.glow_strength = 1.0
+		env.glow_bloom = 0.0
+		env.glow_hdr_threshold = 1.0
+		env.glow_blend_mode = Environment.GLOW_BLEND_MODE_SCREEN
+		for i in 7:
+			env.set_glow_level(i, [0.0, 0.5, 0.7, 0.5, 0.25, 0.0, 0.0][i])
+		env.volumetric_fog_density = 0.018
+		env.ssao_radius = 0.7
+		env.ssao_intensity = 1.6
+		env.ssao_power = 1.6
+		env.ssao_detail = 0.6
+		env.ssao_light_affect = 0.15
+		# (pas de SSIL : la VoxelGI des pièces fait déjà rebondir la lumière ; le SSIL coûtait ~7 % de
+		# l'image en rendu logiciel pour un gain à peine visible)
+		env.ssil_enabled = false
+		env.adjustment_contrast = 1.15
+		env.adjustment_saturation = 0.9
+		# (lumière ambiante plus basse qu'en rétro : la courbe d'AgX remontait le noir des pièces éclairées)
+		env.ambient_light_energy = 0.32
+	RenderingServer.positional_soft_shadow_filter_set_quality(_shadow_quality(hq, retro_on))
+	# lampe de poche : point chaud, anneau du réflecteur et halo (rendu net seulement)
+	player.flashlight.light_projector = null if retro_on else FLASH_COOKIE
+	if room.has_method("set_screen_glow_style"):
+		room.set_screen_glow_style(retro_on)
+	var m := retro_mat()
+	if m:
+		m.set_shader_parameter("levels", 16.0 if retro_on else 0.0)
+		m.set_shader_parameter("dither_strength", 1.0 if retro_on else 0.0)
+		m.set_shader_parameter("grain_mult", 1.0 if retro_on else 0.8)
+		m.set_shader_parameter("vignette", 0.85 if retro_on else 0.55)
+		m.set_shader_parameter("aberration", 0.0011 if retro_on else 0.00015)
+		# rendu net : nuits vraiment noires (AgX et le brouillard relèvent le noir), grain de pellicule
+		m.set_shader_parameter("black_point", 0.0 if retro_on else NET_BLACK_POINT)
+		m.set_shader_parameter("toe", 0.0 if retro_on else NET_TOE)
+		m.set_shader_parameter("grain_net", 0.0 if retro_on else 1.0)
+
+
+## Exposition d'AgX (rendu net) : réglée pour que les lumières de la maison donnent à peu près la
+## même luminosité qu'avec ACES (exposition 1,05) dans le style rétro (l'ACES de Godot multiplie
+## l'image par 1,8 avant la courbe ; AgX non). Les énergies des lumières restent donc celles d'avant ;
+## les ombres sont un peu moins écrasées qu'en rétro (plus de détails dans le noir).
+const AGX_EXPOSURE := 1.65
+## Pied de courbe du rendu net (retro_post.gdshader) : noir ramené à 0 et basses lumières enfoncées.
+const NET_BLACK_POINT := 0.03
+const NET_TOE := 0.3
+const FLASH_COOKIE := preload("res://assets/textures/flashlight_cookie.png")
+
+
+## Rendu logiciel (pas de carte graphique : llvmpipe/lavapipe de Mesa, SwiftShader, pilote de rendu de
+## base de Windows) : chaque passe plein écran et chaque lecture de texture coûtent cher au processeur.
+## Le rendu net s'y passe d'anticrénelage et de filtrage anisotrope, et calcule l'éclairage indirect à
+## demi-résolution. (Les autotests tournent ainsi : leurs minuteries suivent la durée des images.
+## « -- --rendu-complet » garde les réglages d'une vraie carte graphique, pour les captures de revue.)
+static var _soft := -1
+
+
+static func software_renderer() -> bool:
+	if _soft < 0:
+		var n := RenderingServer.get_video_adapter_name().to_lower()
+		_soft = 0
+		if not OS.get_cmdline_user_args().has("--rendu-complet"):
+			for k in ["llvmpipe", "lavapipe", "swiftshader", "basic render"]:
+				if n.contains(k):
+					_soft = 1
+	return _soft == 1
+
+
+static func _shadow_quality(hq: bool, retro: bool) -> RenderingServer.ShadowQuality:
+	if retro:
+		return RenderingServer.SHADOW_QUALITY_SOFT_MEDIUM if hq else RenderingServer.SHADOW_QUALITY_HARD
+	return RenderingServer.SHADOW_QUALITY_SOFT_MEDIUM if hq else RenderingServer.SHADOW_QUALITY_SOFT_LOW
+
+
+## La matière du filtre plein écran (Post/Retro).
+func retro_mat() -> ShaderMaterial:
+	return retro.material as ShaderMaterial if retro else null
 
 
 func _on_fear(v: float) -> void:

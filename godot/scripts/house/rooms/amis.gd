@@ -55,6 +55,8 @@ var lamp_light: OmniLight3D
 var lamp_shade: StandardMaterial3D
 var lamp_it: Interactable
 var lamp_on := false
+var _lamp_liner: StandardMaterial3D
+var _lamp_bulb: StandardMaterial3D
 
 var desk_top := 0.76
 var _tv_id := 0
@@ -89,6 +91,7 @@ func furnish(h: House) -> void:
 	_sewing()
 	_mannequin()
 	_boxes()
+	_covered_armchair()
 	_bucket()
 	_wardrobe()
 	_drapes()
@@ -145,6 +148,94 @@ func _rod(a: Vector3, b: Vector3, r: float, mat: Material, parent: Node3D = self
 	mi.transform = Transform3D(Basis(x, y, z), (a + b) / 2.0)
 	parent.add_child(mi)
 	return mi
+
+
+## Pièces de décor fondues en un seul maillage (un seul appel de dessin) : [maillage, Transform3D]. Hors
+## de la cuisson VoxelGI, comme les modèles Poly Haven (la lumière rebondie les éclaire quand même).
+func _merged(parts: Array, mat: Material, parent: Node3D = self) -> MeshInstance3D:
+	var st := SurfaceTool.new()
+	for p in parts:
+		st.append_from(p[0] as Mesh, 0, p[1] as Transform3D)
+	var mi := MeshInstance3D.new()
+	mi.mesh = st.commit()
+	mi.material_override = mat
+	mi.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+	parent.add_child(mi)
+	return mi
+
+
+func _cm(r_top: float, r_bot: float, hh: float, seg := 24, cap_top := true, cap_bottom := true, flip := false) -> CylinderMesh:
+	var c := CylinderMesh.new()
+	c.top_radius = r_top
+	c.bottom_radius = r_bot
+	c.height = hh
+	c.radial_segments = seg
+	c.rings = 1
+	c.cap_top = cap_top
+	c.cap_bottom = cap_bottom
+	c.flip_faces = flip
+	return c
+
+
+func _sm(r: float, seg := 12) -> SphereMesh:
+	var s := SphereMesh.new()
+	s.radius = r
+	s.height = r * 2.0
+	s.radial_segments = seg
+	s.rings = maxi(seg / 2, 3)
+	return s
+
+
+static func _at(pos: Vector3, rot := Vector3.ZERO, scl := Vector3.ONE) -> Transform3D:
+	return Transform3D(Basis.from_euler(rot).scaled(scl), pos)
+
+
+## Tige de a à b (rayon r) : [maillage, Transform3D] pour _merged.
+func _rod_part(a: Vector3, b: Vector3, r: float, seg := 8) -> Array:
+	var v := b - a
+	return [_cm(r, r, v.length(), seg), Transform3D(Basis(Quaternion(Vector3.UP, v.normalized())), (a + b) / 2.0)]
+
+
+const LINEN := "res://assets/textures/terlenka/terlenka_%s_1k.jpg"
+
+## Toile de coton fine (terlenka, Poly Haven, CC0) posée dans le monde (triplanaire, « meters » mètres par
+## répétition), teintée, avec la crasse de la maison : la housse du fauteuil, le buste du mannequin.
+func _linen(tint: Color, meters := 0.6) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_texture = load(LINEN % "diff")
+	m.albedo_color = tint
+	m.normal_enabled = true
+	m.normal_texture = load(LINEN % "nor_gl")
+	m.roughness = 1.0
+	m.roughness_texture = load(LINEN % "arm")
+	m.roughness_texture_channel = BaseMaterial3D.TEXTURE_CHANNEL_GREEN
+	Surfaces.world_uv(m, meters)
+	return _grimy(m, 1.1)
+
+
+## Une partie d'un modèle Poly Haven (les maillages dont le nom commence par « keep » : une des deux
+## valises du glTF, par exemple), matières corrigées comme par model(), orientée par « basis » (avant du
+## modèle vers +z), pied en « pos », centrée en x et z. Méta « size » : sa boîte posée (repère du nœud).
+func _ph_part(ph_id: String, keep: String, pos: Vector3, basis: Basis, node_name: String, solid := false) -> Node3D:
+	var holder := Node3D.new()
+	holder.name = node_name
+	add_child(holder)
+	var inst := _ph_instance(ph_id, {})
+	for n in inst.find_children("*", "MeshInstance3D", true, false):
+		if is_instance_valid(n) and not String(n.name).begins_with(keep):
+			n.free()
+	for g in inst.find_children("*", "GeometryInstance3D", true, false):
+		(g as GeometryInstance3D).gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+	holder.add_child(inst)
+	inst.transform = Transform3D(basis, Vector3.ZERO)
+	var box := _aabb_in(inst, inst.transform)
+	inst.position = -Vector3(box.get_center().x, box.position.y, box.get_center().z)
+	holder.position = pos
+	holder.set_meta("size", box.size)
+	holder.set_meta("ph_id", ph_id)
+	if solid:
+		_collider(box.size * Vector3(0.96, 1.0, 0.96), Vector3(0, box.size.y / 2.0, 0), holder)
+	return holder
 
 
 func _hint(text: String) -> void:
@@ -372,56 +463,6 @@ func _rug_texture(w: int, hh: int) -> ImageTexture:
 	return ImageTexture.create_from_image(img)
 
 
-## Chromo encadré au-dessus de la télé : lac de montagne, chalet, sapins. Jauni.
-func _painting() -> ImageTexture:
-	var img := Image.create_empty(64, 48, false, Image.FORMAT_RGB8)
-	for y in 48:
-		for x in 64:
-			var c: Color
-			if y < 20:
-				c = Color(0.55, 0.66, 0.8).lerp(Color(0.86, 0.8, 0.7), y / 20.0)
-			else:
-				c = Color(0.25, 0.4, 0.45).lerp(Color(0.16, 0.26, 0.3), (y - 20) / 28.0)
-			img.set_pixel(x, y, c)
-	# montagnes, neige
-	for x in 64:
-		var m1 := 20.0 - 12.0 * maxf(0.0, 1.0 - absf(x - 20.0) / 18.0) - 6.0 * maxf(0.0, 1.0 - absf(x - 46.0) / 14.0)
-		for y in range(int(m1), 21):
-			var snow := y < m1 + 3.0 and m1 < 14.0
-			img.set_pixel(x, y, Color(0.9, 0.9, 0.92) if snow else Color(0.35, 0.38, 0.45))
-		# reflet dans le lac
-		for y in range(21, int(21 + (21 - m1) * 0.5)):
-			img.set_pixel(x, y, img.get_pixel(x, y).lerp(Color(0.35, 0.4, 0.48), 0.5))
-	# rive, sapins, chalet
-	for x in 64:
-		for y in range(38, 48):
-			img.set_pixel(x, y, Color(0.22, 0.32, 0.16).darkened((y - 38) * 0.03))
-	for k in 7:
-		var tx := 4 + k * 4 + (k % 2) * 2
-		for y in range(26, 40):
-			var half := (y - 26) * 0.18
-			for x in range(int(tx - half), int(tx + half) + 1):
-				if x >= 0 and x < 64:
-					img.set_pixel(x, y, Color(0.1, 0.2, 0.12))
-	for y in range(31, 39):
-		for x in range(44, 54):
-			img.set_pixel(x, y, Color(0.55, 0.35, 0.2))
-	for y in range(27, 31):
-		for x in range(42 + (31 - y), 56 - (31 - y)):
-			img.set_pixel(x, y, Color(0.4, 0.16, 0.12))
-	img.set_pixel(47, 34, Color(0.95, 0.85, 0.5))
-	img.set_pixel(50, 34, Color(0.95, 0.85, 0.5))
-	# jauni, grain, vignette
-	for y in 48:
-		for x in 64:
-			var c := img.get_pixel(x, y).lerp(Color(0.9, 0.78, 0.55), 0.2) * 0.85
-			var vig := 1.0 - 0.6 * (pow((x + 0.5) / 64.0 - 0.5, 2.0) + pow((y + 0.5) / 48.0 - 0.5, 2.0)) * 2.0
-			var n := rng.randf_range(-0.03, 0.03)
-			img.set_pixel(x, y, Color(clampf(c.r * vig + n, 0, 1), clampf(c.g * vig + n, 0, 1), clampf(c.b * vig + n, 0, 1)))
-	img.generate_mipmaps()
-	return ImageTexture.create_from_image(img)
-
-
 ## Fond de boîte à couture : des boutons de toutes les couleurs.
 func _buttons_texture() -> ImageTexture:
 	var img := Image.create_empty(64, 64, false, Image.FORMAT_RGB8)
@@ -568,11 +609,13 @@ func _bed() -> void:
 			st.add_index(d)
 			st.add_index(c)
 	st.generate_normals()
+	# bâche de peintre en polyéthylène épais, opaque et laiteuse : froissée (le relief de la surface),
+	# satinée. (Transparente, elle faisait bloc de gélatine : pas d'occlusion ni d'ombre reçue dans la passe
+	# transparente, et une ombre pleine quand même.)
 	var tarp := StandardMaterial3D.new()
-	tarp.albedo_color = Color(0.72, 0.75, 0.78, 0.32)
-	tarp.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	tarp.roughness = 0.1
-	tarp.metallic_specular = 0.9
+	tarp.albedo_color = Color(0.6, 0.64, 0.68)
+	tarp.roughness = 0.42
+	tarp.metallic_specular = 0.6
 	var mi := _no_gi(_mesh(st.commit(), Vector3.ZERO, tarp))
 	mi.name = "Bache"
 	# deux bandes de scotch brun pour la tenir à la tête de lit
@@ -610,8 +653,8 @@ func _nightstand() -> void:
 	for s in [-1.0, 1.0]:
 		_mesh(_sphere(0.017, 10), Vector3(s * 0.028, 0.1, -0.004), brass, Vector3.ZERO, clock)
 		_rod(Vector3(s * 0.025, 0.0, 0.0), Vector3(s * 0.03, 0.025, 0.0), 0.004, brass, clock, 6)
-	_mesh(_cyl(0.028, 0.025, 0.09, 14), Vector3(1.0, top + 0.048, 6.06), _plain(Color(0.7, 0.75, 0.75), 0.1))
-	_mesh(_cyl(0.025, 0.022, 0.04, 14), Vector3(1.0, top + 0.024, 6.06), _plain(Color(0.25, 0.3, 0.28), 0.05))
+	_no_gi(_mesh(_cyl(0.028, 0.025, 0.09, 14), Vector3(1.005, top + 0.048, 6.035), mats.glass))
+	_mesh(_cyl(0.0255, 0.0225, 0.04, 14), Vector3(1.005, top + 0.024, 6.035), _plain(Color(0.2, 0.24, 0.22), 0.05))
 	# le câble du chargeur : blanc, neuf, scotché le long du lambris jusqu'à la prise
 	var bz := ZS - DADO - 0.003
 	var back := babyphone.to_global(Vector3(0, 0.02, -0.03))
@@ -622,16 +665,69 @@ func _nightstand() -> void:
 
 # ------------------------------------------------------------------ le lampadaire (éteint)
 
+## Lampadaire des années 60 (remplace le Kenney « lampRoundFloor », même place, même clé dans props) :
+## socle lesté et fût en laiton bruni, abat-jour conique en toile (sa doublure, plus claire, et
+## l'ampoule s'allument avec lui : set_lamp). La toile laisse passer la lumière (pas d'ombre portée).
 func _floor_lamp() -> void:
-	var lp := prop("lampRoundFloor", Vector3(-1.6, 0, 6.0), 0.0, Vector3(0.0, 1.6, 0.0), true)
-	lamp_shade = _plain(Color(0.78, 0.66, 0.48), 0.9)
+	var at := Vector3(-1.6, 0, 6.0)
+	var lp := Node3D.new()
+	lp.name = "lampRoundFloor"
+	add_child(lp)
+	lp.position = at
+	lp.rotation.y = 0.4
+	var ys := 1.22        # bas de l'abat-jour
+	var hs := 0.3         # hauteur de l'abat-jour
+	var rt := 0.125
+	var rb := 0.205
+	var brass := _grimy(_plain(Color(0.36, 0.28, 0.17), 0.4, 0.85), 1.5)
+	var parts := [
+		[_cm(0.125, 0.15, 0.028, 32), _at(Vector3(0, 0.014, 0))],
+		[_cm(0.03, 0.06, 0.04, 16), _at(Vector3(0, 0.048, 0))],
+		[_cm(0.011, 0.011, ys + 0.12 - 0.068, 10), _at(Vector3(0, 0.068 + (ys + 0.12 - 0.068) / 2.0, 0))],
+		[_cm(0.016, 0.016, 0.03, 12), _at(Vector3(0, 0.66, 0))],
+		[_cm(0.019, 0.016, 0.05, 12), _at(Vector3(0, ys + 0.12, 0))],
+		# l'interrupteur à molette, sous la douille
+		[_cm(0.006, 0.006, 0.05, 8), _at(Vector3(0.03, ys + 0.105, 0), Vector3(0, 0, PI / 2.0))],
+		[_cm(0.009, 0.009, 0.012, 10), _at(Vector3(0.058, ys + 0.105, 0), Vector3(0, 0, PI / 2.0))],
+	]
+	_merged(parts, brass, lp)
+	# l'armature du haut de l'abat-jour (cercle, croisillon, tige, bouton) : autour de l'ampoule, sans
+	# ombre portée (sinon un grand cercle sombre au plafond quand la lampe est allumée)
+	var ring := TorusMesh.new()
+	ring.inner_radius = rt - 0.006
+	ring.outer_radius = rt - 0.001
+	ring.rings = 32
+	ring.ring_segments = 4
+	var top_parts := [[ring, _at(Vector3(0, ys + hs - 0.004, 0))], [_sm(0.012, 8), _at(Vector3(0, ys + hs + 0.014, 0))]]
+	for k in 3:
+		var a := TAU * k / 3.0 + 0.5
+		top_parts.append(_rod_part(Vector3(0, ys + hs - 0.004, 0), Vector3(cos(a), 0, sin(a)) * (rt - 0.004) + Vector3(0, ys + hs - 0.004, 0), 0.0025, 4))
+	top_parts.append(_rod_part(Vector3(0, ys + 0.2, 0), Vector3(0, ys + hs, 0), 0.004, 6))
+	_merged(top_parts, brass, lp).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	lamp_shade = _plain(Color(0.6, 0.48, 0.33), 1.0)
 	lamp_shade.emission_enabled = true
-	lamp_shade.emission = Color(1.0, 0.7, 0.4)
+	lamp_shade.emission = Color(1.0, 0.68, 0.38)
 	lamp_shade.emission_energy_multiplier = 0.0
-	_retint(lp, {"lamp": lamp_shade, "metal": _m(Color(0.45, 0.38, 0.25), 0.4, 0.6)})
-	for mi in lp.find_children("*", "MeshInstance3D", true, false):
-		var g := mi as MeshInstance3D
-		g.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+	_lamp_liner = _plain(Color(0.7, 0.62, 0.48), 1.0)
+	_lamp_liner.emission_enabled = true
+	_lamp_liner.emission = Color(1.0, 0.74, 0.45)
+	_lamp_liner.emission_energy_multiplier = 0.0
+	_lamp_bulb = _plain(Color(0.86, 0.84, 0.78), 0.3)
+	_lamp_bulb.emission_enabled = true
+	_lamp_bulb.emission = Color(1.0, 0.8, 0.55)
+	_lamp_bulb.emission_energy_multiplier = 0.0
+	for p in [[_cm(rt, rb, hs, 40, false, false), lamp_shade], [_cm(rt - 0.003, rb - 0.003, hs - 0.002, 40, false, false, true), _lamp_liner],
+			[_sm(0.03, 12), _lamp_bulb]]:
+		var mi := MeshInstance3D.new()
+		mi.mesh = p[0]
+		mi.material_override = p[1]
+		mi.position.y = ys + 0.17 if p[1] == _lamp_bulb else ys + hs / 2.0
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mi.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+		lp.add_child(mi)
+	_collider(Vector3(0.34, ys + hs, 0.34), Vector3(0, (ys + hs) / 2.0, 0), lp)
+	lp.set_meta("size", Vector3(rb * 2.0, ys + hs + 0.03, rb * 2.0))
+	props["lampRoundFloor"] = lp
 	Builder.tag(lp, "analogique")
 	lamp_light = OmniLight3D.new()
 	lamp_light.name = "Lampadaire"
@@ -657,12 +753,20 @@ func set_lamp(on: bool) -> void:
 	lamp_on = on
 	Game.set_flag("amis_lampadaire", on)
 	if lamp_light:
-		lamp_light.light_energy = 0.55 if on else 0.0
-		lamp_light.shadow_enabled = on
-		lamp_shade.emission_energy_multiplier = 0.9 if on else 0.0
-		lamp_it.label = "Éteindre le lampadaire" if on else "Allumer le lampadaire"
+		_apply_lamp()
 		if is_inside_tree():
 			Sfx.play_at("metalClick", lamp_light.global_position + Vector3(0, -0.6, 0), -18.0, 0.8)
+
+
+## Lumière, abat-jour, doublure et ampoule du lampadaire selon lamp_on (au-dessus de 1, l'ampoule et
+## l'intérieur de l'abat-jour ont leur halo).
+func _apply_lamp() -> void:
+	lamp_light.light_energy = 0.55 if lamp_on else 0.0
+	lamp_light.shadow_enabled = lamp_on
+	lamp_shade.emission_energy_multiplier = 0.9 if lamp_on else 0.0
+	_lamp_liner.emission_energy_multiplier = 1.5 if lamp_on else 0.0
+	_lamp_bulb.emission_energy_multiplier = 3.5 if lamp_on else 0.0
+	lamp_it.label = "Éteindre le lampadaire" if lamp_on else "Allumer le lampadaire"
 
 
 # ------------------------------------------------------------------ le meuble télé et le vieux téléviseur
@@ -670,6 +774,10 @@ func set_lamp(on: bool) -> void:
 func _tv() -> void:
 	var cab := prop("cabinetTelevision", TV_POS, 0.0, Vector3(1.0, 0.42, 0.32), true)
 	var ctop := (cab.get_meta("size") as Vector3).y
+	# (le meuble Kenney, gardé pour la hauteur de la télé : un bois sombre et ciré, des années 70)
+	var teak := (mats.wood_dark as StandardMaterial3D).duplicate() as StandardMaterial3D
+	teak.albedo_color = Color(0.5, 0.38, 0.3)
+	_retint(cab, {"wood": teak, "wooddark": teak})
 	# napperon sous la télé, cassettes VHS à côté
 	_box(Vector3(0.64, 0.003, 0.3), Vector3(TV_POS.x, ctop + 0.0015, TV_POS.z + 0.01), _m(Color(0.86, 0.82, 0.72), 0.95))
 	var vhs := _m(Color(0.07, 0.07, 0.075), 0.5)
@@ -878,7 +986,11 @@ func _hide_antenna() -> void:
 # ------------------------------------------------------------------ le coin couture
 
 func _sewing() -> void:
-	var desk := prop("desk", DESK_POS, 90.0, Vector3(1.1, 0.76, 0.55), true)
+	# la table de couture : une vieille table en bois (Poly Haven, wooden_table_02, la même que celle du
+	# bureau : chargée une fois pour la maison), à la hauteur exacte du bureau Kenney qu'elle remplace
+	# (« fit y » : la boîte à biscuits, la machine restent où elles étaient) ; plus profonde (0,67 m), elle
+	# est poussée de 2,4 cm vers la pièce pour que son plateau ne rentre pas dans le lambris
+	var desk := model("wooden_table_02", DESK_POS + Vector3(0.024, 0, 0), 90.0, Vector3(1.1, 0.76, 0.55), true, {"fit": "y", "name": "desk"})
 	desk_top = (desk.get_meta("size") as Vector3).y
 	var chair := prop("chair", Vector3(-2.3, 0, 3.45), -90.0 + 6.0, Vector3(0.42, 0.88, 0.42), true)
 	chair.name = "ChaiseCouture"
@@ -916,10 +1028,28 @@ func _sewing_machine(at: Vector3) -> void:
 	var cream := _m(Color(0.74, 0.7, 0.58), 0.35)
 	var brown := _m(Color(0.32, 0.22, 0.15), 0.4)
 	_box(Vector3(0.4, 0.045, 0.2), Vector3(0, 0.0225, 0), brown, false, sm)
-	_box(Vector3(0.38, 0.03, 0.18), Vector3(0, 0.06, 0), cream, false, sm)
-	_box(Vector3(0.09, 0.2, 0.13), Vector3(0.13, 0.17, -0.01), cream, false, sm)
-	_box(Vector3(0.34, 0.075, 0.11), Vector3(0.0, 0.275, -0.01), cream, false, sm)
-	_box(Vector3(0.08, 0.13, 0.115), Vector3(-0.15, 0.235, -0.01), cream, false, sm)
+	# le bâti en fonte émaillée, aux formes arrondies : plateau, colonne, bras, tête
+	var arm := CapsuleMesh.new()
+	arm.radius = 0.042
+	arm.height = 0.37
+	arm.radial_segments = 16
+	arm.rings = 4
+	var col := CapsuleMesh.new()
+	col.radius = 0.052
+	col.height = 0.25
+	col.radial_segments = 16
+	col.rings = 4
+	var head := CapsuleMesh.new()
+	head.radius = 0.048
+	head.height = 0.17
+	head.radial_segments = 16
+	head.rings = 4
+	var slab := BoxMesh.new()
+	slab.size = Vector3(0.38, 0.03, 0.18)
+	_merged([[slab, _at(Vector3(0, 0.06, 0))],
+		[col, _at(Vector3(0.13, 0.17, -0.01), Vector3.ZERO, Vector3(0.95, 1.0, 1.25))],
+		[arm, _at(Vector3(0.0, 0.272, -0.01), Vector3(0, 0, PI / 2.0), Vector3(1.0, 1.0, 1.25))],
+		[head, _at(Vector3(-0.15, 0.225, -0.01), Vector3.ZERO, Vector3(0.95, 1.0, 1.2))]], cream, sm)
 	_rod(Vector3(-0.16, 0.17, 0.035), Vector3(-0.16, 0.085, 0.035), 0.004, _chrome, sm, 6)
 	_box(Vector3(0.03, 0.006, 0.03), Vector3(-0.16, 0.079, 0.035), _chrome, false, sm)
 	_mesh(_cyl(0.05, 0.05, 0.022, 20), Vector3(0.19, 0.22, -0.01), _chrome, Vector3(0, 0, PI / 2.0), sm)
@@ -1091,7 +1221,7 @@ func _mannequin() -> void:
 	mq.position = Vector3(-2.6, 0, 5.9)
 	mq.rotation.y = 1.95      # il « regarde » la porte
 	var wood := _m(Color(0.25, 0.17, 0.11), 0.5)
-	var linen := _m(Color(0.66, 0.6, 0.48), 0.95)
+	var linen := _linen(Color(0.86, 0.9, 0.82))
 	# trépied
 	for k in 3:
 		var a := TAU * k / 3.0 + 0.3
@@ -1193,10 +1323,109 @@ func _boxes() -> void:
 	prop("cardboardBoxClosed", Vector3(2.75, 0, 6.0), -97.0, Vector3(0.4, 0.38, 0.4), true, tint)
 
 
+# ------------------------------------------------------------------ le fauteuil sous sa housse
+
+const ARMCHAIR_POS := Vector3(1.95, 0, 5.74)
+
+## Entre le chevet et les cartons, une bergère sous un drap de coton : un champ de hauteurs posé sur
+## l'assise, le dossier et les accoudoirs (comme la bâche du lit), qui tombe droit jusqu'au sol et y
+## fait un ourlet froissé ; des plis verticaux sur les côtés. Opaque : rien n'est modelé dessous.
+func _covered_armchair() -> void:
+	var holder := Node3D.new()
+	holder.name = "FauteuilHousse"
+	add_child(holder)
+	holder.position = ARMCHAIR_POS
+	holder.rotation.y = PI + 0.12      # dos au pignon, tourné un peu vers le lit
+	# repère du fauteuil, avant vers +z : [rectangle (x, z), hauteur du dessus]
+	var supports := [
+		[Rect2(-0.25, -0.2, 0.5, 0.55), 0.47],      # coussin d'assise
+		[Rect2(-0.3, -0.37, 0.6, 0.12), 0.88],      # dossier
+		[Rect2(-0.16, -0.37, 0.32, 0.1), 0.99],     # chapeau du dossier (bergère)
+		[Rect2(-0.38, -0.3, 0.09, 0.6), 0.65],      # accoudoirs
+		[Rect2(0.29, -0.3, 0.09, 0.6), 0.65],
+	]
+	var x0 := -0.45
+	var z0 := -0.46
+	var step := 0.025
+	var nx := 37
+	var nz := 39
+	var hmap := PackedFloat32Array()
+	hmap.resize(nx * nz)
+	for j in nz:
+		for i in nx:
+			var p := Vector2(x0 + i * step, z0 + j * step)
+			var hv := 0.0
+			for s in supports:
+				var r: Rect2 = s[0]
+				var dx := maxf(0.0, maxf(r.position.x - p.x, p.x - r.end.x))
+				var dz := maxf(0.0, maxf(r.position.y - p.y, p.y - r.end.y))
+				var dist := sqrt(dx * dx + dz * dz)
+				hv = maxf(hv, float(s[1]) - (6.0 * dist + 45.0 * dist * dist))
+			hmap[j * nx + i] = hv
+	# lissage (deux passes) : le drap arrondit les arêtes
+	for _pass in 2:
+		var sm := hmap.duplicate()
+		for j in range(1, nz - 1):
+			for i in range(1, nx - 1):
+				var acc := 0.0
+				for dj in [-1, 0, 1]:
+					for di in [-1, 0, 1]:
+						acc += hmap[(j + dj) * nx + (i + di)]
+				sm[j * nx + i] = acc / 9.0
+		hmap = sm
+	var folds := FastNoiseLite.new()
+	folds.seed = 41
+	folds.frequency = 7.0
+	var crinkle := FastNoiseLite.new()
+	crinkle.seed = 43
+	crinkle.frequency = 16.0
+	crinkle.fractal_octaves = 2
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for j in nz:
+		for i in nx:
+			var px := x0 + i * step
+			var pz := z0 + j * step
+			var hv := hmap[j * nx + i]
+			var gx := (hmap[j * nx + mini(i + 1, nx - 1)] - hmap[j * nx + maxi(i - 1, 0)]) / (2.0 * step)
+			var gz := (hmap[mini(j + 1, nz - 1) * nx + i] - hmap[maxi(j - 1, 0) * nx + i]) / (2.0 * step)
+			var g := Vector2(gx, gz)
+			var steep := clampf(g.length() / 6.0, 0.0, 1.0)
+			var out := -g.normalized() if g.length() > 0.001 else Vector2.ZERO
+			# plis verticaux sur les flancs, ourlet froissé au sol, grain fin sur le dessus
+			var f := folds.get_noise_3d(px, hv * 0.12, pz) * 0.03 * steep
+			var y := hv + crinkle.get_noise_2d(px, pz) * 0.006 * (1.0 - steep)
+			if hv < 0.04:
+				y = maxf(y, 0.004) + absf(folds.get_noise_2d(px * 1.3, pz * 1.3)) * 0.035 * (1.0 - hv / 0.04)
+			st.set_uv(Vector2(px, pz))
+			st.add_vertex(Vector3(px + out.x * f, y, pz + out.y * f))
+	for j in nz - 1:
+		for i in nx - 1:
+			var a := j * nx + i
+			var b := a + 1
+			var c := a + nx
+			var d := c + 1
+			st.add_index(a)
+			st.add_index(b)
+			st.add_index(c)
+			st.add_index(b)
+			st.add_index(d)
+			st.add_index(c)
+	st.generate_normals()
+	st.generate_tangents()
+	var mi := MeshInstance3D.new()
+	mi.name = "Housse"
+	mi.mesh = st.commit()
+	mi.material_override = _linen(Color(0.9, 0.95, 0.98), 0.5)
+	mi.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+	holder.add_child(mi)
+	_collider(Vector3(0.8, 1.0, 0.78), Vector3(0, 0.5, 0.0), holder)
+
+
 # ------------------------------------------------------------------ la fuite du toit et le seau
 
 func _bucket() -> void:
-	var zinc := _m(Color(0.4, 0.41, 0.4), 0.5, 0.55)
+	var zinc := _m(Color(0.5, 0.51, 0.5), 0.45, 0.4)
 	var b := Node3D.new()
 	b.name = "Seau"
 	add_child(b)
@@ -1291,18 +1520,38 @@ func _process(delta: float) -> void:
 
 # ------------------------------------------------------------------ armoire, rideaux, murs, plafond
 
+## Contre le mur de ta mère (place de l'ancienne armoire Kenney, x 0,2 → 1,3) : le vieux buffet de cuisine
+## de Mamie, peinture blanche écaillée, monté ici quand elle a refait sa cuisine ; dessus, une valise à
+## plat et le carton à chapeau ; l'autre valise, couverte d'étiquettes de voyage, debout contre le mur.
 func _wardrobe() -> void:
-	# la grande armoire (les draps, les nappes) contre le mur de ta mère
-	var wd := prop("bookcaseClosedDoors", Vector3(0.75, 0, 3.02), 0.0, Vector3(1.1, 1.95, 0.5), true)
-	wd.name = "Armoire"
-	# un bois sombre et ciré : la texture de parquet des meubles, sur deux mètres de haut, faisait un
-	# mur de briques
-	var varnish := _m(Color(0.27, 0.17, 0.1), 0.5)
-	_retint(wd, {"wood": varnish, "wooddark": _m(Color(0.2, 0.13, 0.08), 0.5)})
-	var sz := wd.get_meta("size") as Vector3
-	# une valise et un carton à chapeau sur le dessus
-	_box(Vector3(0.6, 0.16, 0.4), Vector3(0.68, sz.y + 0.08, 3.0), _m(Color(0.3, 0.22, 0.16), 0.6))
-	_mesh(_cyl(0.13, 0.13, 0.17, 18), Vector3(0.95, sz.y + 0.16 + 0.085, 3.02), _m(Color(0.62, 0.55, 0.45), 0.8))
+	var back := ZN + DADO + 0.006
+	var bf := model("painted_wooden_cabinet", Vector3(0.75, 0, 3.02), 0.0, Vector3(1.1, 0.0, 0.0), true, {"name": "Buffet"})
+	var sz := bf.get_meta("size") as Vector3
+	bf.position.z = back + sz.z / 2.0
+	bf.rotation.y = 0.012
+	# valise à plat (couvercle en haut, poignée vers la pièce)
+	var flat := Basis(Vector3.UP, PI - 0.06) * Basis(Vector3.RIGHT, -PI / 2.0)
+	var v1 := _ph_part("vintage_suitcase", "vintage_suitcase_01", Vector3(0.68, sz.y, back + 0.3), flat, "ValiseDessus")
+	var vs := v1.get_meta("size") as Vector3
+	_hatbox(Vector3(0.82, sz.y + vs.y, back + 0.27))
+	# l'autre, debout contre le mur, entre le buffet et la porte (hors de la zone du battant, x < 2,25)
+	var up := Basis(Vector3.UP, 0.04)
+	_ph_part("vintage_suitcase", "vintage_suitcase_02", Vector3(1.76, 0, back + 0.125), up, "ValiseDebout", true)
+
+
+## Carton à chapeau rond, papier rose passé, ruban, couvercle un peu de travers.
+func _hatbox(at: Vector3) -> void:
+	var hb := Node3D.new()
+	hb.name = "CartonAChapeau"
+	add_child(hb)
+	hb.position = at
+	hb.rotation.y = 0.5
+	var paper := _grimy(_plain(Color(0.62, 0.5, 0.47), 0.85), 1.6)
+	var ribbon := _plain(Color(0.36, 0.22, 0.24), 0.6)
+	_merged([[_cm(0.15, 0.15, 0.15, 28, false, true), _at(Vector3(0, 0.075, 0))],
+		[_cm(0.156, 0.156, 0.035, 28), _at(Vector3(0.004, 0.152, 0), Vector3(0.03, 0, -0.02))]], paper, hb)
+	_merged([[_cm(0.152, 0.152, 0.022, 28, false, false), _at(Vector3(0, 0.05, 0))],
+		[_cm(0.1575, 0.1575, 0.012, 28, false, false), _at(Vector3(0.004, 0.152, 0), Vector3(0.03, 0, -0.02))]], ribbon, hb)
 
 
 func _drapes() -> void:
@@ -1334,38 +1583,30 @@ func _drapes() -> void:
 		_rod(Vector3(XW, 2.37, z + (0.05 if z < 4.0 else -0.05)), Vector3(x, 2.37, z + (0.05 if z < 4.0 else -0.05)), 0.006, _m(Color(0.42, 0.32, 0.2), 0.4, 0.5))
 
 
-func _frame(pos: Vector3, facing: Vector3, size: Vector2, tex: Texture2D) -> void:
-	var holder := Node3D.new()
-	holder.name = "Cadre"
-	add_child(holder)
-	holder.position = pos
-	holder.rotation = Vector3(0, atan2(facing.x, facing.z), 0.015)
-	var b := 0.04
-	var fm := _m(Color(0.5, 0.38, 0.17), 0.4, 0.55)
-	_box(Vector3(size.x, b, 0.03), Vector3(0, size.y / 2.0 - b / 2.0, 0.015), fm, false, holder)
-	_box(Vector3(size.x, b, 0.03), Vector3(0, -size.y / 2.0 + b / 2.0, 0.015), fm, false, holder)
-	_box(Vector3(b, size.y - 2.0 * b, 0.03), Vector3(-size.x / 2.0 + b / 2.0, 0, 0.015), fm, false, holder)
-	_box(Vector3(b, size.y - 2.0 * b, 0.03), Vector3(size.x / 2.0 - b / 2.0, 0, 0.015), fm, false, holder)
-	var pic := StandardMaterial3D.new()
-	pic.albedo_texture = tex
-	pic.roughness = 0.75
-	pic.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
-	_quad(size - Vector2(2.0 * b, 2.0 * b), Vector3(0, 0, 0.01), pic, 0.0, holder)
-
-
 func _walls() -> void:
-	# le chromo au-dessus de la télé
-	_frame(Vector3(TV_POS.x, 1.6, ZN), Vector3.BACK, Vector2(0.56, 0.44), _painting())
+	# au-dessus de la télé : un paysage à l'huile (moulin, pont, collines) dans un cadre doré, un peu de
+	# travers (Poly Haven, fancy_picture_frame_01, 0,60 × 0,46 m ; il remplace le chromo généré)
+	var pic := model("fancy_picture_frame_01", Vector3(TV_POS.x, 1.6 - 0.232, ZN + 0.012), 0.0, Vector3.ZERO, false, {"name": "Tableau"})
+	pic.rotation.z = 0.018
+	# entre la télé et le buffet, une pendule de cuisine à quartz, arrêtée (la pile est morte)
+	model("wall_clock", Vector3(-0.22, 1.5, ZN + 0.025), 0.0, Vector3.ZERO, false, {"name": "Pendule"})
 	# le crucifix et son brin de buis, au-dessus du lit
 	var cx := Node3D.new()
 	cx.name = "Crucifix"
 	add_child(cx)
 	cx.position = Vector3(0.0, 1.5, ZS)
 	cx.rotation.y = PI
-	var wood := _m(Color(0.3, 0.2, 0.12), 0.45)
+	# (bois sombre mat : à 0,45 de rugosité, la lampe de poche en faisait du plastique gris) ; un christ en
+	# laiton patiné, bras ouverts
+	var wood := _m(Color(0.22, 0.14, 0.08), 0.72)
 	_box(Vector3(0.032, 0.3, 0.018), Vector3(0, 0, 0.009), wood, false, cx)
 	_box(Vector3(0.17, 0.032, 0.018), Vector3(0, 0.06, 0.009), wood, false, cx)
-	_box(Vector3(0.012, 0.075, 0.008), Vector3(0, 0.02, 0.022), _plain(Color(0.6, 0.55, 0.42), 0.35, 0.6), false, cx)
+	_box(Vector3(0.04, 0.028, 0.004), Vector3(0, 0.14, 0.02), _m(Color(0.62, 0.58, 0.48), 0.8), false, cx)   # titulus
+	var brass := _plain(Color(0.52, 0.42, 0.24), 0.4, 0.8)
+	_box(Vector3(0.012, 0.075, 0.008), Vector3(0, 0.02, 0.022), brass, false, cx)
+	_box(Vector3(0.11, 0.008, 0.006), Vector3(0, 0.063, 0.021), brass, false, cx)
+	var head := _box(Vector3(0.011, 0.012, 0.009), Vector3(0, 0.068, 0.023), brass, false, cx)
+	head.rotation.x = 0.3
 	var buis := _m(Color(0.16, 0.24, 0.12), 0.9)
 	for k in 6:
 		var leaf := _box(Vector3(0.02, 0.009, 0.004), Vector3(0.03 + k * 0.012, 0.11 + (k % 2) * 0.012, 0.004), buis, false, cx)
@@ -1400,10 +1641,7 @@ func restore() -> void:
 	_update_antenna_label()
 	if bool(Game.flag("amis_lampadaire")) != lamp_on:
 		lamp_on = bool(Game.flag("amis_lampadaire"))
-		lamp_light.light_energy = 0.55 if lamp_on else 0.0
-		lamp_light.shadow_enabled = lamp_on
-		lamp_shade.emission_energy_multiplier = 0.9 if lamp_on else 0.0
-		lamp_it.label = "Éteindre le lampadaire" if lamp_on else "Allumer le lampadaire"
+		_apply_lamp()
 	if tv and tv.is_on:
 		tv.set_static(0.0)
 		tv.power_off(0.0)
