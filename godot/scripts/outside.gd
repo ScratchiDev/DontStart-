@@ -630,7 +630,7 @@ func _rain() -> void:
 	p.visibility_aabb = AABB(Vector3(-5, -6, -8), Vector3(10, 12, 16))
 	var pm := ParticleProcessMaterial.new()
 	pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
-	pm.emission_box_extents = Vector3(3.6, 0.2, 7.0)
+	pm.emission_box_extents = Vector3(3.3, 0.2, 7.0)
 	pm.direction = Vector3(0.08, -1, 0)
 	pm.spread = 3.0
 	pm.initial_velocity_min = 8.0
@@ -646,7 +646,9 @@ func _rain() -> void:
 	m.roughness = 0.2
 	q.material = m
 	p.draw_pass_1 = q
-	p.position = Vector3(-7.0, 5.0, -0.5)
+	# Bord est de la pluie : x = -7,4 + 3,3 = -4,1. Une goutte dérive au plus de 0,08 + tan 3° ≈ 0,13 m par mètre
+	# de chute : à hauteur de pièce (≤ 5,2 m de chute) elle reste à x ≤ -3,4, dehors (mur ouest à -3,25).
+	p.position = Vector3(-7.4, 5.0, -0.5)
 	add_child(p)
 
 
