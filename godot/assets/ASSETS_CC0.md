@@ -1,6 +1,7 @@
 # Assets CC0 téléchargés (Poly Haven, ambientCG)
 
 Tous sous licence CC0 1.0 (domaine public). Une ligne par asset : type, identifiant, page source, licence, fichiers.
+Les assets plus anciens (ciel `moonless_golf_1k.hdr`, asphalte `asphalt_wet_*`, meubles Kenney, sons) sont crédités dans CREDITS.md.
 
 - modèle Poly Haven `ph:painted_wooden_chair_01` — https://polyhaven.com/a/painted_wooden_chair_01 — CC0 — glTF 1k (https://dl.polyhaven.org/file/ph-assets/Models/gltf/1k/painted_wooden_chair_01/painted_wooden_chair_01_1k.gltf), 724 triangles, 0.5 Mo
 - modèle Poly Haven `ph:dining_chair_02` — https://polyhaven.com/a/dining_chair_02 — CC0 — glTF 1k (https://dl.polyhaven.org/file/ph-assets/Models/gltf/1k/dining_chair_02/dining_chair_02_1k.gltf), 22013 triangles, 0.9 Mo

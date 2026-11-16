@@ -14,7 +14,7 @@ Le code du jeu RUNTIME est original. Les ressources ci-dessous sont libres de dr
 
 ## Modèles et matières photoréalistes (Poly Haven, ambientCG)
 
-Tous sous licence **CC0 1.0** (domaine public), téléchargés depuis [Poly Haven](https://polyhaven.com) et [ambientCG](https://ambientcg.com) (glTF et textures en 1k, 2k pour les grandes surfaces). Le détail (page source, fichiers, nombre de triangles) est dans `godot/assets/ASSETS_CC0.md`, une ligne par asset.
+Tous sous licence **CC0 1.0** (domaine public), téléchargés depuis [Poly Haven](https://polyhaven.com) et [ambientCG](https://ambientcg.com) (glTF et textures en 1k, 2k pour les grandes surfaces). Le détail (page source, fichiers, nombre de triangles) est dans `godot/assets/ASSETS_CC0.md` (dans le zip du jeu : `licences/ASSETS_CC0.md`), une ligne par asset.
 
 - Modèles Poly Haven (`godot/assets/models/polyhaven/`) : `boombox`, `bleach_bottle`, `cardboard_box_01`, `Chandelier_02`, `ClassicNightstand_01`, `desk_lamp_arm_01`, `dining_chair_02`, `drain_cleaner`, `fancy_picture_frame_01`, `GothicBed_01`, `GothicCabinet_01`, `GothicCommode_01`, `jug_01`, `ornate_mirror_01`, `painted_wooden_cabinet`, `painted_wooden_chair_01`, `painted_wooden_nightstand`, `painted_wooden_shelves`, `painted_wooden_stool`, `plunger`, `potted_plant_04`, `Rockingchair_01`, `side_table_tall_01`, `Television_01`, `vintage_grandfather_clock_01`, `vintage_suitcase`, `wall_clock`, `wicker_basket_02`, `wooden_table_02`.
 - Matières Poly Haven (`godot/assets/textures/`) : `herringbone_parquet`, `stair_planks`, `floor_tiles_06`, `decrepit_wallpaper`, `terlenka`.
@@ -23,8 +23,7 @@ Tous sous licence **CC0 1.0** (domaine public), téléchargés depuis [Poly Have
 
 ## Textures
 
-- `wall_plaster_dirty_*`, `hospital_floor_*`, `wall_brick_*`, `asphalt_wet_*` (asphalte mouillé de la rue) : [ambientCG](https://ambientcg.com) — licence **CC0 1.0**, via le miroir [itz019/tls-textures](https://github.com/itz019/tls-textures). Redimensionnées en 1024 px (512 px pour l'asphalte).
-- `hardwood2_*` : textures de plancher des exemples de [three.js](https://github.com/mrdoob/three.js/tree/dev/examples/textures) (licence MIT du dépôt three.js).
+- `asphalt_wet_*` (asphalte mouillé de la rue) : [ambientCG](https://ambientcg.com) — licence **CC0 1.0**, via le miroir [itz019/tls-textures](https://github.com/itz019/tls-textures). Redimensionnée en 512 px.
 
 ## Ciel
 
@@ -41,4 +40,4 @@ Tous sous licence **CC0 1.0** (domaine public), téléchargés depuis [Poly Have
 
 ## Polices
 
-- VT323 (The VT323 Project Authors, Peter Hull), IBM Plex Mono (IBM Corp.), UnifrakturMaguntia (j. 'mach' wust, Peter Wiegel), Reenie Beanie (James Grieshaber) — via [Google Fonts](https://fonts.google.com), licence **SIL Open Font License 1.1**. Les textes de licence sont à côté des fichiers, dans `godot/assets/fonts/OFL-*.txt`.
+- VT323 (The VT323 Project Authors, Peter Hull), IBM Plex Mono (IBM Corp.), UnifrakturMaguntia (j. 'mach' wust, Peter Wiegel), Reenie Beanie (James Grieshaber) — via [Google Fonts](https://fonts.google.com), licence **SIL Open Font License 1.1**. Les textes de licence sont à côté des fichiers, dans `godot/assets/fonts/OFL-*.txt` (dans le zip du jeu : dossier `licences/`).

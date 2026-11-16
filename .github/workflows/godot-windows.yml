@@ -66,6 +66,11 @@ jobs:
           test -f "$out/DontPlay.pck"
           cp CREDITS.md "$out/CREDITS.md"
           cp godot/LISEZMOI.txt "$out/LISEZMOI.txt"
+          # La licence SIL OFL des polices doit accompagner chaque copie distribuée du jeu
+          mkdir -p "$out/licences"
+          cp godot/assets/fonts/OFL-*.txt "$out/licences/"
+          cp godot/assets/ASSETS_CC0.md "$out/licences/ASSETS_CC0.md"
+          test -f "$out/licences/OFL-VT323.txt"
           cd "$GITHUB_WORKSPACE/build" && zip -qr DontPlay-windows.zip DontPlay
           ls -la "$GITHUB_WORKSPACE/build"
 
