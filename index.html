@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RUNTIME</title>
+  <meta name="description" content="Une disquette trouvée dans un vide-grenier. Une chambre, la nuit. Un jeu qui choisit mal à ta place.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;700&family=Reenie+Beanie&family=UnifrakturMaguntia&family=VT323&display=swap">
+  <script type="module" crossorigin src="/DontStart-/assets/index-CPK84FZ2.js"></script>
+  <link rel="stylesheet" crossorigin href="/DontStart-/assets/index-KJ9WJoTn.css">
+</head>
+<body>
+  <canvas id="gl"></canvas>
+  <div id="css3d"></div>
+
+  <div id="hud" aria-live="polite">
+    <div id="objective"></div>
+    <div id="crosshair"></div>
+    <div id="prompt" hidden><b>E</b><span></span></div>
+    <div id="hand" hidden>
+      <div class="floppy"><div class="label"><strong>NE PAS JOUER</strong><em>runtime · 84</em></div><div class="hole"></div></div>
+    </div>
+    <div id="hint"></div>
+    <div id="paper" hidden><div class="sheet"></div><small>Échap pour reposer</small></div>
+    <div id="flash"></div>
+    <div id="fade"></div>
+  </div>
+
+  <div id="title">
+    <div class="desk">
+      <div class="floppy big">
+        <div class="label"><strong>NE PAS JOUER</strong><em>runtime · 84</em></div>
+        <div class="hole"></div><div class="notch"></div>
+      </div>
+      <div class="intro">
+        <h1>RUNTIME</h1>
+        <p>Une disquette trouvée au fond d'un carton, dans un vide-grenier. Deux euros. Le vendeur n'a pas voulu qu'on lui rende la monnaie.</p>
+        <p>Il est tard. Ta chambre est plongée dans le noir. Quelque part, un vieil ordinateur attend qu'on lui donne quelque chose à lire.</p>
+        <div class="row">
+          <button id="enterBtn" type="button">Entrer dans la chambre</button>
+          <label class="opt"><input id="qualityHigh" type="checkbox" checked> Qualité élevée</label>
+        </div>
+        <p class="small">PC · clavier et souris · casque recommandé · seul, dans le noir</p>
+        <p class="small">Contient des sursauts, des cris et des effets clignotants</p>
+        <p class="small" id="fins" hidden></p>
+      </div>
+    </div>
+    <div id="loading"><i></i><span>Chargement de la chambre…</span></div>
+  </div>
+
+</body>
+</html>
