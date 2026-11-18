@@ -1201,10 +1201,37 @@ class Noise3:
         return s / tot
 
 
+def _masked_diff(H, mask, axis):
+    """Dérivée centrale de H le long de « axis », en n'utilisant que les pixels de « mask »."""
+    Hp = np.roll(H, -1, axis)
+    Hm = np.roll(H, 1, axis)
+    mp = np.roll(mask, -1, axis)
+    mm = np.roll(mask, 1, axis)
+    d = np.zeros_like(H)
+    both = mp & mm
+    d[both] = (Hp[both] - Hm[both]) / 2
+    only_p = mp & ~mm
+    d[only_p] = Hp[only_p] - H[only_p]
+    only_m = mm & ~mp
+    d[only_m] = H[only_m] - Hm[only_m]
+    return d * mask
+
+
 def write_import(path, normal=False):
     """Réglages d'import Godot d'une texture 3D : VRAM (S3TC/BPTC ; RGTC pour une carte de normales),
-    mipmaps. (Sans éditeur, la détection « utilisée en 3D » ne passe jamais.)"""
-    with open(path + '.import', 'w') as f:
+    mipmaps. (Sans éditeur, la détection « utilisée en 3D » ne passe jamais.) Un .import déjà écrit par
+    Godot est gardé (son uid aussi) : seuls ces réglages y sont remis."""
+    imp = path + '.import'
+    if os.path.exists(imp):
+        import re
+        text = open(imp).read()
+        want = {'compress/mode': '2', 'compress/normal_map': '1' if normal else '0', 'mipmaps/generate': 'true',
+                'detect_3d/compress_to': '0'}
+        for k, v in want.items():
+            text = re.sub(r'(?m)^%s=.*$' % re.escape(k), '%s=%s' % (k, v), text)
+        open(imp, 'w').write(text)
+        return
+    with open(imp, 'w') as f:
         f.write('[remap]\n\nimporter="texture"\ntype="CompressedTexture2D"\n\n[params]\n\n'
                 'compress/mode=2\ncompress/high_quality=%s\ncompress/normal_map=%d\nmipmaps/generate=true\n'
                 'roughness/mode=0\nprocess/fix_alpha_border=true\ndetect_3d/compress_to=0\n'
@@ -1262,9 +1289,9 @@ def ambient_occlusion(points, normals, occ_V, occ_T, rays=48, dist=0.05, seed=1,
 
 SKIN = {
     # couleurs sRGB : dos de la main, paume, rougeurs (articulations, pulpe), ongle
-    'alexandre': dict(dos=(192, 150, 128), paume=(210, 172, 154), rouge=(186, 128, 110), ongle=(212, 168, 160),
+    'alexandre': dict(dos=(190, 152, 134), paume=(208, 172, 156), rouge=(182, 128, 112), ongle=(210, 168, 160),
                       veines=1.0, taches=14, seed=11),
-    'aurelia': dict(dos=(206, 166, 148), paume=(220, 184, 170), rouge=(198, 138, 124), ongle=(220, 176, 170),
+    'aurelia': dict(dos=(204, 166, 150), paume=(218, 184, 170), rouge=(194, 138, 126), ongle=(218, 176, 170),
                     veines=0.6, taches=8, seed=23),
 }
 
@@ -1387,8 +1414,8 @@ def bake_skin(h, hand, mh, name, out_dir, occluders, res=2048, ao_res=512, log=p
         if k == 1:
             # jointure (MCP) : quelques plis lâches, rougeur
             e = np.sqrt((s * mm / 1.4) ** 2 + (lat * mm / 3.0) ** 2)
-            lines = sum(np.exp(-((e - (2.0 + 1.6 * i)) / 0.35) ** 2) * (1.0 - 0.18 * i) for i in range(4))
-            wr += near * dors * lines * smooth01(1 - e / 9.0) * 0.6
+            lines = sum(np.exp(-((e - (2.0 + 1.6 * i)) / 0.5) ** 2) * (1.0 - 0.18 * i) for i in range(4))
+            wr += near * dors * lines * smooth01(1 - e / 9.0) * 0.3
             knuckle_red += near * dors * np.exp(-(e / 4.5) ** 2) * 0.7
             # pli digito-palmaire (base du doigt, côté paume), 5 mm plus loin
             crease += near * palm * np.exp(-(((s * mm) - 5.0 - 0.6 * (lat * mm / 6.0) ** 2) / 0.45) ** 2) * smooth01(1 - np.abs(lat * mm) / 9.0)
@@ -1397,7 +1424,7 @@ def bake_skin(h, hand, mh, name, out_dir, occluders, res=2048, ao_res=512, log=p
             rings = 5 if k == 2 else 3
             e = np.sqrt((s * mm / 1.0) ** 2 + (lat * mm / 2.4) ** 2)
             brk = 0.65 + 0.35 * np.sin(lat * mm * 1.7 + nz2(P * 400.0) * 6.0)
-            lines = sum(np.exp(-((e - (0.9 + 1.05 * i)) / 0.22) ** 2) * (1.0 - 0.12 * i) for i in range(rings))
+            lines = sum(np.exp(-((e - (0.9 + 1.05 * i)) / 0.33) ** 2) * (1.0 - 0.12 * i) for i in range(rings))
             wr += near * dors * lines * brk * smooth01(1 - e / (rings * 1.3 + 1.5)) * amp
             knuckle_red += near * dors * np.exp(-(e / 4.0) ** 2) * amp
             # plis de flexion : un double pli (IPP) ou simple (IPD), côté paume
@@ -1405,7 +1432,7 @@ def bake_skin(h, hand, mh, name, out_dir, occluders, res=2048, ao_res=512, log=p
                 crease += near * palm * np.exp(-(((s * mm) - off - 0.25 * (lat * mm / 4.0) ** 2) / 0.32) ** 2) * smooth01(1 - np.abs(lat * mm) / 8.0)
     wr = np.clip(wr, 0, 1.5)
     crease = np.clip(crease, 0, 1.2)
-    height -= wr * 0.00008 + crease * 0.00018
+    height -= wr * 0.00006 + crease * 0.00018
     # ---------------------------------------------------------------- dos de la main : veines, micro-relief
     back = (~on_finger) & (dorsal_n > 0.2)
     backw = smooth01((dorsal_n - 0.2) / 0.4) * (~on_finger)
@@ -1505,12 +1532,15 @@ def bake_skin(h, hand, mh, name, out_dir, occluders, res=2048, ao_res=512, log=p
     tm = np.zeros((res, res))
     tm[idx] = tex_m[tid[idx]]
     tm = dilate(tm, mask)
-    # normales (convention OpenGL, Y en haut de l'image) depuis la hauteur (pente en m/m)
-    gy, gx = np.gradient(Hm)
-    gx /= tm
-    gy /= tm
+    # normales (convention OpenGL, Y en haut de l'image) depuis la hauteur (pente en m/m) ; différences
+    # prises dans l'îlot seulement (un voisin hors de l'îlot : différence d'un seul côté)
+    gx = _masked_diff(Hm, mask, 1) / tm
+    gy = _masked_diff(Hm, mask, 0) / tm
     nrm = np.dstack([-gx, gy, np.ones_like(gx)])
     nrm /= np.linalg.norm(nrm, axis=2, keepdims=True)
+    # (marge autour des îlots : normale plate, pas les pentes de la hauteur étendue, sinon les mipmaps
+    # font des traits clairs le long des coutures des doigts)
+    nrm[~mask] = (0.0, 0.0, 1.0)
     nmap = nrm * 0.5 + 0.5
     orm = np.zeros((res, res, 3), np.float32)
     orm[..., 0][idx] = ao

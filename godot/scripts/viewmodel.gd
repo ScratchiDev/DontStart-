@@ -42,6 +42,10 @@ const Z_CLIP := 0.05
 const FOV := 62.0
 ## Distance du point visé par le faisceau (le centre de l'image).
 const AIM_DIST := 5.0
+## Diffusion sous la surface de la peau voulue (à la vraie distance), et facteur dont la profondeur
+## comprimée grossit son noyau : profondeur vraie / profondeur lue ≈ 0,4 m / 0,0315 m.
+const SSS_STRENGTH := 0.45
+const SSS_DEPTH_GAIN := 12.7
 ## Pose figée (bancs de captures) ; l'autotest fige aussi la pose.
 static var figee := false
 
@@ -153,13 +157,16 @@ func _skin_mat() -> BaseMaterial3D:
 	m.metallic = 0.0
 	m.metallic_specular = 0.38
 	if not Main.software_renderer():
+		# Diffusion d'écran : son rayon se calcule à la profondeur lue dans le tampon, donc à la profondeur
+		# comprimée par Z_CLIP_SCALE (la main, à 40 cm, y paraît à ~3 cm : noyau ~12 fois trop large, peau
+		# floue et liserés clairs le long des doigts). Force divisée d'autant : SSS_STRENGTH / SSS_DEPTH_GAIN.
 		m.subsurf_scatter_enabled = true
-		m.subsurf_scatter_strength = 0.4
+		m.subsurf_scatter_strength = SSS_STRENGTH / SSS_DEPTH_GAIN
 		m.subsurf_scatter_skin_mode = true
 		m.subsurf_scatter_transmittance_enabled = true
-		m.subsurf_scatter_transmittance_color = Color(0.95, 0.32, 0.2)
-		m.subsurf_scatter_transmittance_depth = 0.08
-		m.subsurf_scatter_transmittance_boost = 0.15
+		m.subsurf_scatter_transmittance_color = Color(0.85, 0.25, 0.16)
+		m.subsurf_scatter_transmittance_depth = 0.06
+		m.subsurf_scatter_transmittance_boost = 0.0
 	return m
 
 
