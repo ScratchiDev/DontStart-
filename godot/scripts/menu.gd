@@ -271,6 +271,9 @@ func _build_options() -> Control:
 		0.0, 1.0, Game.mouvements_camera, func(x: float) -> void:
 			Game.mouvements_camera = x
 			Game.apply_settings(), 0.05))
+	right.add_child(_check("Mains visibles", Game.mains_visibles, func(on: bool) -> void:
+		Game.mains_visibles = on
+		Game.apply_settings()))
 	right.add_child(_check("Sursauts réduits", Game.reduced_scares, func(on: bool) -> void:
 		Game.reduced_scares = on
 		Game.apply_settings()))

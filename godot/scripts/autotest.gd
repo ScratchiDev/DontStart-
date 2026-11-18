@@ -650,7 +650,7 @@ func side_shot(pos: Vector3, target: Vector3, shot_name: String) -> void:
 	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	main.add_child(vp)
 	var cam := Camera3D.new()
-	cam.cull_mask = player.camera.cull_mask
+	cam.cull_mask = player.camera.cull_mask & ~Builder.layer_bit(Viewmodel.LAYER)    # (pas les mains du joueur)
 	cam.fov = player.camera.fov
 	vp.add_child(cam)
 	cam.global_position = pos + Vector3(0, player.EYE, 0)

@@ -16,6 +16,8 @@ const GRAVITY := 9.8
 @onready var flashlight: SpotLight3D = $Head/Camera/Flashlight
 @onready var ray: RayCast3D = $Head/Camera/Ray
 @onready var steps: AudioStreamPlayer = $Steps
+## Les mains et la lampe de poche à l'écran (scripts/viewmodel.gd) ; la lampe part de sa tête.
+@onready var viewmodel: Viewmodel = $Head/Camera/Viewmodel
 
 var yaw := 0.0
 var pitch := 0.0
@@ -53,6 +55,7 @@ func _ready() -> void:
 	flash_base = flashlight.light_energy
 	# la couche 11 (« flux uniquement ») n'est vue que par les caméras de flux, jamais par le joueur
 	camera.set_cull_mask_value(Builder.LAYER_FEED_ONLY, false)
+	viewmodel.setup(self, camera, flashlight)
 
 
 func set_look(new_yaw: float, new_pitch := 0.0) -> void:
