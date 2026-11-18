@@ -21,7 +21,9 @@ extends RefCounted
 ##  - un fichier absent : on passe à la variante suivante, sans erreur ; aucune variante : null.
 ##
 ## Godot mélange la couleur d'un décalque selon alpha × albedo_mix, mais sa normale et son ORM selon
-## l'alpha seul : opts.mix bas = la tache change surtout la rugosité (reflet mat ou mouillé).
+## l'alpha seul : opts.mix bas = la tache change surtout la rugosité (reflet mat ou mouillé). Sur une
+## vitre, un miroir ou un écran (opts.vitre = true), albedo_mix est multiplié par VITRE_MIX : une trace de
+## doigts ou une traînée s'y voit dans le reflet (gras = plus mat), pas comme une peinture blanche.
 ##
 ## Coût : un décalque lit 2 ou 3 textures par pixel couvert (Forward+ par grappes) : viser 8 à 15
 ## décalques décoratifs par pièce, de taille raisonnable.
@@ -38,15 +40,17 @@ const KINDS := {
 	"coulure": ["acg:Leaking001", "acg:Leaking003", "acg:Leaking005", "acg:Leaking002", "acg:Leaking007", "acg:Leaking009"],
 	# cernes, dépôts de calcaire, marques d'eau séchée
 	"cerne": ["acg:SurfaceImperfections009", "acg:SurfaceImperfections010"],
-	# ronds de tasse ou de verre (plusieurs anneaux)
+	# ronds de tasse ou de verre (plusieurs anneaux) : bruns (café) par défaut ; sur bois sombre verni,
+	# opts.color = RING_LIGHT donne les auréoles blanchâtres de l'eau dans le vernis
 	"rond_tasse": ["acg:SurfaceImperfections006", "acg:SurfaceImperfections005"],
 	# poussière posée (dessus des meubles)
 	"poussiere": ["acg:SurfaceImperfections014"],
 	# salissure grasse, crasse de contact
 	"salissure": ["acg:SurfaceImperfections017"],
-	# traces de doigts (taches abstraites) : interrupteurs, poignées, verres, écrans
+	# traces de doigts (taches abstraites ; 1 = paume entière) : interrupteurs, poignées, portes ; verres,
+	# miroirs, écrans avec opts.vitre = true
 	"traces_doigts": ["acg:Fingerprints001", "acg:Fingerprints004"],
-	# traînées (chiffon, savon, gras) : miroirs, vitres, faïence
+	# traînées (chiffon, savon, gras) : miroirs, vitres (opts.vitre = true), faïence
 	"trainee": ["acg:Smear002", "acg:Smear005"],
 	# éraflures fines (rayures parallèles, horizontales dans l'image) : plinthes, bas de portes, sols
 	"eraflure": ["acg:Scratches001", "acg:Scratches004"],
@@ -65,7 +69,8 @@ const KINDS := {
 	"chemin_usure": ["chemin_usure_1", "chemin_usure_2"],
 	# pieds nus mouillés (rugosité 0,2), orteils en haut ; variantes paires (0, 2, 4) = pied gauche
 	"empreinte": ["empreinte_1", "empreinte_2", "empreinte_3", "empreinte_4", "empreinte_5", "empreinte_6"],
-	# bande de pied de mur, sombre en bas, périodique le long du mur (wall_base)
+	# bande de pied de mur de 0,22 m (wall_base) : crasse juste au-dessus de la plinthe de 11 cm
+	# (Builder.trim), poussière sur la plinthe et dans l'angle du sol ; périodique le long du mur
 	"crasse_pied_mur": ["crasse_pied_mur_1", "crasse_pied_mur_2", "crasse_pied_mur_3"],
 	# crasse d'angle, projetée en diagonale dans un coin de plafond (ceiling_corners)
 	"coin": ["coin_1"],
@@ -79,7 +84,7 @@ const STYLE := {
 	"rond_tasse": {"depth": 0.05, "mix": 0.75},
 	"poussiere": {"depth": 0.08, "mix": 0.55, "color": Color(1.35, 1.32, 1.26)},
 	"salissure": {"depth": 0.1, "mix": 0.55},
-	"traces_doigts": {"depth": 0.05, "mix": 0.35},
+	"traces_doigts": {"depth": 0.05, "mix": 0.4},
 	"trainee": {"depth": 0.05, "mix": 0.4},
 	"eraflure": {"depth": 0.06, "mix": 0.7},
 	"rouille": {"depth": 0.06, "mix": 0.95},
@@ -101,11 +106,18 @@ const FADE_LENGTH := 2.0
 const BAND_MAX := 3.2
 ## Largeur laissée libre de part et d'autre d'une porte (chambranle compris), en m.
 const DOOR_MARGIN := 0.09
-## Teinte de l'usure de passage selon le sol (HouseRoom.floor_kind) : bois sec et clair, moquette
-## grisée, carreaux ternis.
+## Usure de passage selon le sol (HouseRoom.floor_kind) : teinte (proche de la couleur moyenne du sol,
+## plus claire et plus grise : bois dont le vernis est parti, moquette tassée, carreaux ternis) et
+## albedo_mix ; la rugosité (0,88, mélangée selon l'alpha) rend le chemin mat sur le parquet verni et
+## sur l'émail des carreaux.
 const PATH_TINT := {
-	"parquet": Color(0.68, 0.57, 0.45), "moquette": Color(0.66, 0.54, 0.48), "carrelage": Color(0.62, 0.6, 0.57),
+	"parquet": Color(0.63, 0.51, 0.39), "moquette": Color(0.47, 0.32, 0.27), "carrelage": Color(0.57, 0.5, 0.44),
 }
+const PATH_MIX := {"parquet": 0.6, "moquette": 0.55, "carrelage": 0.3}
+## Vitres, miroirs, écrans (opts.vitre = true) : facteur sur albedo_mix.
+const VITRE_MIX := 0.3
+## Auréoles d'eau blanchâtres dans un vernis sombre (rond_tasse, opts.color).
+const RING_LIGHT := Color(1.6, 1.55, 1.45)
 ## Empreinte : taille du décalque (largeur, longueur) en m ; le pied en occupe environ 62 % × 88 %.
 const FOOT_SIZE := Vector2(0.17, 0.29)
 
@@ -208,7 +220,8 @@ static func basis_for(normal: Vector3, up: Vector3, rot := 0.0) -> Basis:
 ## size_u × size_v : taille sur la surface (m).
 ## opts : variant (int ; sinon hachage de la position), story (bool : existe aussi en rendu logiciel),
 ##   depth (m, épaisseur de projection), color (Color : teinte et alpha), alpha (multiplie l'alpha),
-##   mix (albedo_mix), rot (degrés autour de la normale), normal_fade, upper_fade, lower_fade,
+##   mix (albedo_mix), vitre (bool : vitre, miroir, écran ; mix × VITRE_MIX), rot (degrés autour de la
+##   normale), normal_fade, upper_fade, lower_fade,
 ##   fade_begin, fade_length (distance_fade), cull_mask, name, world (bool).
 ## Rend le Decal (déjà dans l'arbre), ou null (rendu logiciel hors récit, Basse, genre ou fichiers absents).
 static func decal(parent: Node, kind: String, center: Vector3, normal: Vector3, up: Vector3, size_u: float, size_v: float, opts := {}) -> Decal:
@@ -234,7 +247,10 @@ static func decal(parent: Node, kind: String, center: Vector3, normal: Vector3, 
 	var col: Color = opts.get("color", st.get("color", Color.WHITE))
 	col.a *= float(opts.get("alpha", 1.0))
 	d.modulate = col
-	d.albedo_mix = clampf(float(opts.get("mix", st.get("mix", 1.0))), 0.0, 1.0)
+	var mix := float(opts.get("mix", st.get("mix", 1.0)))
+	if bool(opts.get("vitre", false)):
+		mix *= VITRE_MIX
+	d.albedo_mix = clampf(mix, 0.0, 1.0)
 	d.normal_fade = float(opts.get("normal_fade", NORMAL_FADE))
 	d.upper_fade = float(opts.get("upper_fade", st.get("upper_fade", 0.3)))
 	d.lower_fade = float(opts.get("lower_fade", st.get("lower_fade", 0.3)))
@@ -387,9 +403,9 @@ static func ceiling_corners(room: HouseRoom, opts := {}) -> Array:
 
 
 ## Usure de passage sur le sol de la pièce (genre « chemin_usure » : plus clair et plus mat), le long
-## d'une ligne brisée « points » (Vector3 du monde, ou Vector2 en x, z), « width » m de large. Teinte
-## selon room.floor_kind (PATH_TINT), sinon opts.color. Un décalque par segment, prolongé de width / 4
-## aux deux bouts (les fondus des extrémités se recouvrent).
+## d'une ligne brisée « points » (Vector3 du monde, ou Vector2 en x, z), « width » m de large. Teinte et
+## albedo_mix selon room.floor_kind (PATH_TINT, PATH_MIX), sinon opts.color et opts.mix. Un décalque par
+## segment, prolongé de width / 4 aux deux bouts (les fondus des extrémités se recouvrent).
 static func path(room: HouseRoom, points: Array, width := 0.5, opts := {}) -> Array:
 	var out := []
 	if room == null or points.size() < 2 or not deco_on():
@@ -410,6 +426,8 @@ static func path(room: HouseRoom, points: Array, width := 0.5, opts := {}) -> Ar
 		o.variant = base_v + i
 		if not o.has("color"):
 			o.color = PATH_TINT.get(room.floor_kind, PATH_TINT.parquet)
+		if not o.has("mix"):
+			o.mix = PATH_MIX.get(room.floor_kind, PATH_MIX.parquet)
 		var d := decal(room, "chemin_usure", (a + b) / 2.0, Vector3.UP, dir / ln, width, ln + width * 0.5, o)
 		if d:
 			out.append(d)

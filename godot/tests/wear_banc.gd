@@ -124,6 +124,9 @@ func _decal_rules() -> void:
 	check("un décalque pour chaque genre", all_kinds, ", ".join(bad))
 	var d6 := Wear.decal(self, "trainee", Vector3.ZERO, Vector3.BACK, Vector3.UP, 0.3, 0.3, {"color": Color(1, 0.9, 0.8, 0.5), "alpha": 0.5, "mix": 0.2})
 	check("teinte, alpha et albedo_mix", d6 != null and is_equal_approx(d6.modulate.a, 0.25) and is_equal_approx(d6.albedo_mix, 0.2))
+	var d7 := Wear.decal(self, "traces_doigts", Vector3.ZERO, Vector3.BACK, Vector3.UP, 0.3, 0.3, {"vitre": true})
+	check("vitre : albedo_mix × VITRE_MIX (la trace se voit dans le reflet)", d7 != null
+		and is_equal_approx(d7.albedo_mix, float(Wear.STYLE.traces_doigts.mix) * Wear.VITRE_MIX) and d7.texture_orm != null)
 
 
 func _fallback() -> void:
@@ -230,10 +233,12 @@ func _corners_and_paths() -> void:
 	check("ceiling_corners : 4 coins, tournés vers la pièce et vers le bas", ok, "%d" % cs.size())
 	var pts := [Vector2(3.0, -3.6), Vector2(1.0, -3.9), Vector2(-1.0, -5.0)]
 	var ps := Wear.path(r, pts, 0.5)
-	check("path : un décalque par segment, teinte du parquet", ps.size() == 2 and (ps[0] as Decal).modulate.is_equal_approx(Wear.PATH_TINT.parquet)
-		and is_equal_approx((ps[0] as Decal).global_position.y, 0.0))
+	check("path : un décalque par segment, teinte et mélange du parquet", ps.size() == 2
+		and (ps[0] as Decal).modulate.is_equal_approx(Wear.PATH_TINT.parquet)
+		and is_equal_approx((ps[0] as Decal).albedo_mix, Wear.PATH_MIX.parquet) and is_equal_approx((ps[0] as Decal).global_position.y, 0.0))
 	var pm := Wear.path(rooms["amis"], [Vector3(2.5, 0, 3.4), Vector3(0, 0, 4.5)], 0.6)
-	check("path : teinte de la moquette", pm.size() == 1 and (pm[0] as Decal).modulate.is_equal_approx(Wear.PATH_TINT.moquette))
+	check("path : teinte et mélange de la moquette", pm.size() == 1 and (pm[0] as Decal).modulate.is_equal_approx(Wear.PATH_TINT.moquette)
+		and is_equal_approx((pm[0] as Decal).albedo_mix, Wear.PATH_MIX.moquette))
 
 
 func _footprints() -> void:

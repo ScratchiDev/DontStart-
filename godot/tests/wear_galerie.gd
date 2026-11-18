@@ -218,8 +218,8 @@ func _wear() -> void:
 	_put("salissure", Vector3(2.4, 2.1, z), nb, up, 0.75, 0.75, {}, "salissure")
 	# à hauteur de main
 	_put("traces_doigts", Vector3(-2.4, 1.3, z), nb, up, 0.3, 0.3, {"variant": 0}, "traces_doigts")
-	_put("trainee", Vector3(-1.15, 1.38, z), nb, up, 0.62, 0.5, {"variant": 0}, "")
-	_put("traces_doigts", Vector3(-0.45, 1.33, z), nb, up, 0.26, 0.3, {"variant": 1}, "")
+	_put("trainee", Vector3(-1.15, 1.38, z), nb, up, 0.62, 0.5, {"variant": 0, "vitre": true}, "")
+	_put("traces_doigts", Vector3(-0.45, 1.33, z), nb, up, 0.26, 0.3, {"variant": 1, "vitre": true}, "")
 	_label("trainee · traces_doigts (vitre)", Vector3(-0.85, 0.88, z + 0.05))
 	_put("cerne", Vector3(1.2, 1.15, z), nb, up, 0.7, 0.7, {"variant": 0}, "cerne")
 	_put("rouille", Vector3(2.4, 1.18, z + 0.02), nb, up, 0.6, 0.16, {"depth": 0.06}, "rouille")
@@ -230,7 +230,7 @@ func _wear() -> void:
 	_label("crasse_pied_mur", Vector3(1.9, 0.3, z + 0.08))
 	# meubles : poussière sur le coffre, ronds de tasse sur la table vernie
 	_put("poussiere", Vector3(-2.2, 0.45, -1.55), up, Vector3.BACK, 0.86, 0.42, {}, "poussiere")
-	_put("rond_tasse", Vector3(-0.5, 0.735, -1.25), up, Vector3.BACK, 0.55, 0.45, {"variant": 0}, "rond_tasse")
+	_put("rond_tasse", Vector3(-0.5, 0.735, -1.25), up, Vector3.BACK, 0.55, 0.45, {"variant": 0, "color": Wear.RING_LIGHT}, "rond_tasse")
 	# plafond : quatre auréoles, halo de suie au-dessus de la suspension, colonie de moisissure, coins
 	var dn := Vector3.DOWN
 	var ceil_y := H
@@ -247,7 +247,7 @@ func _wear() -> void:
 	var fp := Wear.footprints(room, [Vector3(-1.75, 0.0, 1.75), Vector3(-0.95, 0.0, -0.75)], {"fade_to": 0.6})
 	placed["empreinte"] = fp.size()
 	_label("empreinte (pieds nus mouillés)", Vector3(-1.9, 0.05, 1.2))
-	var pm := Wear.path(room, [Vector2(2.4, 1.85), Vector2(1.6, 0.4), Vector2(1.15, -1.3)], 0.6, {"color": Wear.PATH_TINT.moquette})
+	var pm := Wear.path(room, [Vector2(2.4, 1.85), Vector2(1.6, 0.4), Vector2(1.15, -1.3)], 0.6, {"color": Wear.PATH_TINT.moquette, "mix": Wear.PATH_MIX.moquette})
 	var pp := Wear.path(room, [Vector2(-0.15, 1.85), Vector2(-0.35, -0.2)], 0.5)
 	placed["chemin_usure"] = pm.size() + pp.size()
 	_label("chemin_usure (moquette)", Vector3(1.9, 0.05, 1.3))

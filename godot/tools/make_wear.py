@@ -17,15 +17,19 @@ déterministe (graines fixes). Écrit dans godot/assets/decals/gen/ (avec les .i
   décalque selon l'alpha de l'albédo, et la couleur selon alpha × albedo_mix : une tache peut changer la
   rugosité sans changer la couleur (albedo_mix bas). Le haut de l'image va vers « up » (Wear.decal).
     tache_plafond_1..4   1024²      auréoles d'eau : bords de dépôt, cernes successifs, point de goutte
-    moisissure_1..2      1024²      1 : bande le long du bord haut (jonction mur-plafond) ; 2 : colonie
+    moisissure_1..2      1024²      colonies de points noirs, satellites, voile gris-vert, auréole
+                                    d'humidité ; 1 : bande le long du bord haut (jonction mur-plafond,
+                                    plus fournie à gauche) ; 2 : colonie ronde
     fissure_1..3         1024×512   fissures de plâtre (sillon en relief, éclats de peinture)
     suie_1..2            512²       1 : halo au plafond au-dessus d'une ampoule ; 2 : panache sur un mur
     chemin_usure_1..2    512×1024   usure de passage (v = le long du chemin) : couleur presque blanche,
                                     teintée par Wear selon le sol ; mate
     empreinte_1..6       256×512    pieds nus, orteils en haut ; impairs = pied gauche, pairs = droit ;
                                     rugosité 0,2 (mouillé)
-    crasse_pied_mur_1..3 1024×128   bande de pied de mur, sombre en bas, PÉRIODIQUE en u (les tronçons
-                                    d'un même mur se raccordent sans couture)
+    crasse_pied_mur_1..3 1024×128   bande de pied de mur (0,22 m, Wear.wall_base) : crasse juste au-dessus
+                                    de la plinthe de 11 cm (moitié basse de l'image), poussière sur la
+                                    plinthe et dans l'angle du sol ; PÉRIODIQUE en u (les tronçons d'un même
+                                    mur se raccordent sans couture)
     coin_1               512²       crasse d'angle (projetée en diagonale dans un coin de plafond)
   Décalques ambientCG adoucis : acg/<Id>_albedo.png, copie de ../acg/<Id>_albedo.png (lot V1-ASSETS)
     dont l'alpha s'éteint vers les bords (contour irrégulier) : ces motifs sont faits pour se répéter, et
@@ -374,55 +378,73 @@ def tache_plafond(v, S=1024):
 
 # ------------------------------------------------------------------ moisissure
 
-def _dots(S, W, dens, n, rmin, rmax, seed):
-    """Points sombres (colonies) tirés selon la densité « dens » (0 à 1), rayons en loi de puissance."""
+def _colonies(S, dens, n_col, seed, per=(20, 220), sig=(2.0, 22.0), rmax=2.6, K=2):
+    """Colonies de moisissure : des amas de points (gaussiens autour d'un centre tiré selon « dens »),
+    rayons en loi de puissance (surtout des points d'un pixel), plus gros et plus noirs au cœur."""
     rng = np.random.default_rng(seed)
-    canvas = Image.new("L", (W * 2, S * 2), 0)
+    canvas = Image.new("L", (S * K, S * K), 0)
     dr = ImageDraw.Draw(canvas)
-    placed = 0
-    tries = 0
-    while placed < n and tries < n * 30:
+    cols = tries = 0
+    while cols < n_col and tries < n_col * 60:
         tries += 1
-        px, py = rng.random() * W, rng.random() * S
+        px, py = rng.random() * S, rng.random() * S
         d = dens[int(py), int(px)]
-        if rng.random() > d * d:
+        if rng.random() > d ** 1.6:
             continue
-        r = rmin + (rmax - rmin) * rng.random() ** 3.0 * (0.4 + 0.6 * d)
-        g = int(150 + 105 * rng.random())
-        dr.ellipse([2 * (px - r), 2 * (py - r), 2 * (px + r), 2 * (py + r)], fill=g)
-        placed += 1
-    a = np.asarray(canvas.resize((W, S), Image.BOX), np.float64) / 255.0
-    return a
+        cols += 1
+        sg = sig[0] + (sig[1] - sig[0]) * rng.random() ** 1.6 * (0.4 + 0.6 * d)
+        m = int(per[0] + (per[1] - per[0]) * rng.random() ** 1.3 * d)
+        # points plus serrés au centre (loi de Student : quelques points égarés loin)
+        ox = rng.standard_t(3, m) * sg * 0.7
+        oy = rng.standard_t(3, m) * sg * 0.7
+        rr = np.sqrt(ox * ox + oy * oy) / sg
+        rad = 0.3 + rmax * rng.random(m) ** 3.4 * np.exp(-rr * 0.8) * (0.5 + 0.5 * d)
+        g = 120 + 135 * np.exp(-rr * 0.5) * (0.6 + 0.4 * rng.random(m))
+        for i in range(m):
+            x0, y0, r = px + ox[i], py + oy[i], rad[i]
+            dr.ellipse([K * (x0 - r), K * (y0 - r), K * (x0 + r), K * (y0 + r)], fill=int(min(255, g[i])))
+    return np.asarray(canvas.resize((S, S), Image.BOX), np.float64) / 255.0
 
 
 def moisissure(v, S=1024):
     seed = 2000 + v * 31
     x, y = grid(S, S)
     n1 = spectral(S, S, 2.6, seed + 1, kmin=1.0 / S)
+    n2 = spectral(S, S, 2.2, seed + 6, kmin=4.0 / S)
     if v == 1:
         # le long du bord haut (jonction mur-plafond), plus fournie vers le coin gauche
-        dens = sstep(0.0, 1.0, 1.0 - y / 0.62 + 0.28 * n1 + 0.25 * (1.0 - x))
-        dens *= sstep(0.0, 0.12, x + 0.03 * n1) * sstep(0.0, 0.2, 1.0 - x + 0.03 * n1)
+        raw = 1.0 - y / 0.58 + 0.34 * n1 + 0.3 * (1.0 - x) + 0.16 * n2
+        side = sstep(0.0, 0.1, x + 0.03 * n1) * sstep(0.0, 0.18, 1.0 - x + 0.03 * n1)
     else:
-        r = np.sqrt((x - 0.5) ** 2 + (y - 0.52) ** 2)
-        dens = sstep(0.0, 1.0, 1.0 - r / 0.42 + 0.3 * n1)
-    dens = np.clip(dens, 0.0, 1.0)
-    fine = _dots(S, S, dens, 9000, 0.5, 3.0, seed + 2)
-    big = _dots(S, S, dens, 500, 2.0, 7.5, seed + 3)
-    # amas : bruit seuillé (la moisissure pousse par plaques)
-    clump = sstep(0.55, 1.4, spectral(S, S, 1.9, seed + 4, kmin=6.0 / S) + (dens - 0.6) * 1.6)
-    dots = np.clip(fine + big + blur(clump, 1.0) * 0.8, 0.0, 1.0)
-    halo = blur(dots, 5.0) * 1.3
-    stain = dens ** 1.5 * (0.6 + 0.4 * sstep(-1.0, 1.0, n1))
+        r = np.sqrt((x - 0.5) ** 2 + ((y - 0.52) * 1.1) ** 2)
+        raw = 1.0 - r / 0.4 + 0.32 * n1 + 0.12 * n2
+        side = 1.0
+    dens = np.clip(sstep(0.0, 1.0, raw) * side, 0.0, 1.0)
+    col = _colonies(S, dens, 1500, seed + 2)
+    # colonies satellites, petites, au-delà du front (la moisissure gagne par taches isolées)
+    sat = np.clip(sstep(-0.45, 0.5, raw + 0.25 * n2) * (side if v == 1 else 1.0), 0.0, 1.0) * 0.8
+    col = np.maximum(col, _colonies(S, sat, 700, seed + 7, per=(4, 45), sig=(1.0, 7.0), rmax=1.8))
+    # semis très fin (spores, poussière grise) : grain qui épaissit vers le cœur
+    grain = sstep(1.2 + 1.4 * (1.0 - dens), 3.2, spectral(S, S, 0.2, seed + 3, kmin=80.0 / S)) * sstep(0.05, 0.5, dens)
+    specks = np.clip(col + 0.7 * grain, 0.0, 1.0)
+    # voile gris-vert autour des amas, et cœur presque continu là où la densité est forte
+    haze = np.clip(blur(specks, 4.0) * 1.6 + 0.5 * blur(specks, 14.0) * 1.6, 0.0, 1.0)
+    core = sstep(0.62, 0.95, dens + 0.15 * n2) * (0.55 + 0.45 * sstep(-0.5, 1.0, spectral(S, S, 1.6, seed + 4, kmin=10.0 / S)))
+    # auréole d'humidité : fond jaunâtre et ligne de dépôt au bord de la zone humide
+    wet = raw + 0.05
+    stain_in = sstep(-0.02, 0.25, wet) * side
+    tide = np.exp(-((wet + 0.0) / 0.035) ** 2) * side * (0.5 + 0.5 * sstep(-1.0, 1.0, n2))
     layers = [
-        ((0.42, 0.40, 0.29), np.clip(stain * 0.32, 0, 1)),           # auréole jaunâtre
-        ((0.2, 0.21, 0.15), np.clip(halo * 0.55, 0, 1)),            # gris-vert autour des colonies
-        ((0.045, 0.05, 0.035), np.clip(dots * 0.95, 0, 1)),         # colonies noires
+        ((0.56, 0.48, 0.32), stain_in * 0.2),
+        ((0.4, 0.31, 0.18), tide * 0.38),
+        ((0.25, 0.25, 0.2), haze * 0.42),
+        ((0.06, 0.065, 0.05), core * 0.55),
+        ((0.035, 0.04, 0.03), specks * 0.97),
     ]
     rgb, a = over(layers, S, S)
-    a *= edge_fade(S, S, 0.03, seed + 5, keep=("top",) if v == 1 else ())
-    height = blur(dots, 0.7) + 0.3 * blur(clump, 2.0)
-    save_decal("moisissure_%d" % v, rgb, a, height, 1.6, 1.0 - 0.15 * blur(dots, 2.0), 0.97, aux=2)
+    a *= edge_fade(S, S, 0.04, seed + 5, keep=("top",) if v == 1 else ())
+    height = blur(specks, 0.6) + 0.4 * blur(core, 2.0)
+    save_decal("moisissure_%d" % v, rgb, a, height, 1.4, 1.0 - 0.2 * blur(specks, 2.0), 0.97, aux=2)
 
 
 # ------------------------------------------------------------------ fissures
@@ -554,16 +576,15 @@ def chemin_usure(v, W=512, H=1024):
     half = 0.2 if v == 1 else 0.16
     prof = np.exp(-(X / half) ** 2)
     if v == 2:
-        # deux sillons (un pas à gauche, un pas à droite) qui se fondent
         prof = 0.55 * prof + 0.45 * (np.exp(-((X - 0.13) / 0.09) ** 2) + np.exp(-((X + 0.13) / 0.09) ** 2))
-    streaks = spectral(H, W, 2.0, seed + 3, kmin=1.0 / H, ax=1.0, ay=6.0)    # allongées le long de v
+    streaks = spectral(H, W, 2.0, seed + 3, kmin=1.0 / H, ax=1.0, ay=6.0)
     patches = sstep(-0.8, 0.9, spectral(H, W, 2.3, seed + 4, kmin=2.0 / H))
     ends = sstep(0.0, 0.16, y) * sstep(0.0, 0.16, 1.0 - y)
-    a = 0.72 * prof * ends * (0.5 + 0.5 * patches) * (0.78 + 0.22 * np.tanh(streaks))
+    a = 0.62 * prof * ends * (0.55 + 0.45 * patches) * (0.85 + 0.15 * np.tanh(streaks))
     a *= edge_fade(H, W, 0.04, seed + 5)
-    lum = 0.9 + 0.1 * np.tanh(streaks)
+    lum = 0.93 + 0.05 * np.tanh(streaks)
     rgb = np.dstack([lum, lum * 0.985, lum * 0.97])
-    save_decal("chemin_usure_%d" % v, rgb, a, None, 1.0, 1.0, 0.9 + 0.06 * np.tanh(streaks), aux=2)
+    save_decal("chemin_usure_%d" % v, rgb, a, None, 1.0, 1.0, 0.88 + 0.06 * np.tanh(streaks), aux=2)
 
 
 # ------------------------------------------------------------------ empreintes de pieds nus
@@ -627,39 +648,54 @@ def empreinte(n, W=256, H=512):
 # ------------------------------------------------------------------ crasse de pied de mur
 
 def crasse_pied_mur(v, W=1024, H=128):
+    """Bande de 0,22 m (Wear.wall_base) : le haut de l'image à 22 cm du sol, le bas au sol ; la plinthe
+    de Builder.trim (11 cm) en occupe la moitié basse. Le plus sombre juste au-dessus de la plinthe
+    (balai, aspirateur, chaussures), voile qui monte en s'effilochant ; sur la plinthe, poussière grise
+    et coups de chaussure ; liseré de poussière dans l'angle du sol. PÉRIODIQUE en u."""
     seed = 7000 + v * 23
     rng = np.random.default_rng(seed)
     x, y = grid(H, W)
-    # (le décalque est étiré d'environ 1,5 fois en largeur : motifs un peu plus serrés en u)
     n2 = spectral(H, W, 2.8, seed + 1, kmin=1.0 / W, ax=0.68)
     n3 = spectral(H, W, 2.0, seed + 2, kmin=8.0 / W, ax=0.68)
     front1 = spectral(1, W, 3.2, seed + 3)[0][None, :]
-    base_front = [0.5, 0.42, 0.32][(v - 1) % 3]
-    front = base_front + 0.1 * front1 + 0.03 * n2
-    g = np.clip((y - front) / (1.0 - front), 0.0, 1.0)
-    dust = 0.05 * sstep(front - 0.25, front, y)                    # voile au-dessus du front
-    a = 0.66 * g ** 1.3 * (0.72 + 0.28 * np.tanh(n2)) * (0.85 + 0.15 * np.tanh(n3)) + dust
-    # ligne de poussière dans l'angle du sol
-    a += 0.18 * sstep(0.9, 1.0, y)
-    # coups de chaussure, d'aspirateur, de balai : marques courtes et effilées près du bas (en boucle sur u)
+    PL = 0.5                                                  # dessus de la plinthe (11 cm sur 22)
+    top = [0.16, 0.08, 0.24][(v - 1) % 3]
+    front = top + 0.09 * front1 + 0.03 * n2
+    # au-dessus de la plinthe : de 0 au front à ~0,6 juste au-dessus du dessus de plinthe
+    g = np.clip((y - front) / (PL - front), 0.0, 1.0)
+    # plus ou moins sale le long du mur (meubles déplacés, passages), sans couture (périodique)
+    along = 0.55 + 0.45 * sstep(-1.2, 1.0, spectral(1, W, 2.4, seed + 7, kmin=2.0 / W)[0][None, :])
+    wall = 0.62 * g ** 1.5 * along * (0.72 + 0.28 * np.tanh(n2)) * (0.9 + 0.1 * np.tanh(n3)) * (y < PL + 0.01)
+    # traînées verticales légères (eau de lavage qui a coulé, bas de serpillière)
+    drips = sstep(0.6, 1.6, spectral(H, W, 1.6, seed + 6, kmin=6.0 / W, ax=1.0, ay=0.12)) * g * 0.25
+    wall = np.clip(wall + drips * (y < PL + 0.01), 0.0, 0.85)
+    # sur la plinthe : poussière grise sur le haut, coups de chaussure, liseré au sol
+    on_pl = (y >= PL + 0.01)
+    dust_top = np.exp(-((y - PL - 0.03) / 0.05) ** 2) * on_pl * (0.6 + 0.4 * np.tanh(n3)) * 0.28
+    floor_line = sstep(0.86, 1.0, y) * (0.7 + 0.3 * np.tanh(n2)) * 0.32
     K = 4
     sc = Image.new("L", (W * K, H * K), 0)
     dr = ImageDraw.Draw(sc)
-    for _ in range(int(rng.integers(6, 11))):
+    for _ in range(int(rng.integers(8, 14))):
         cx = rng.uniform(0, W)
-        cy = rng.uniform(0.6, 0.93) * H
-        ln = rng.uniform(8, 36)
-        th = rng.uniform(0.8, 2.6)
-        g8 = int(rng.uniform(90, 200))
+        cy = rng.uniform(0.6, 0.95) * H
+        ln = rng.uniform(10, 46)
+        th = rng.uniform(0.8, 2.4)
+        g8 = int(rng.uniform(110, 230))
         for off in (-W, 0, W):
             dr.ellipse([(cx + off - ln / 2) * K, (cy - th / 2) * K, (cx + off + ln / 2) * K, (cy + th / 2) * K], fill=g8)
-    scuffs = blur(np.asarray(sc.resize((W, H), Image.BOX), np.float64) / 255.0, 1.0, wrap=True)
+    scuffs = blur(np.asarray(sc.resize((W, H), Image.BOX), np.float64) / 255.0, 0.8, wrap=True)
     scuffs *= 0.6 + 0.4 * sstep(-1.0, 1.0, spectral(H, W, 1.8, seed + 4, kmin=10.0 / W))
-    layers = [((0.17, 0.15, 0.13), np.clip(a, 0.0, 0.85)), ((0.08, 0.07, 0.06), scuffs * 0.5)]
+    layers = [
+        ((0.21, 0.175, 0.13), wall),
+        ((0.45, 0.43, 0.4), dust_top),
+        ((0.4, 0.38, 0.35), floor_line),
+        ((0.07, 0.06, 0.05), scuffs * 0.55),
+    ]
     rgb, al = over(layers, H, W)
-    # tout en haut, rien (le décalque s'arrête à « h »)
-    al *= sstep(0.0, 0.08, y)
-    save_decal("crasse_pied_mur_%d" % v, rgb, al, None, 1.0, 1.0 - 0.12 * g, 0.95, aux=2)
+    al *= sstep(0.0, 0.06, y)
+    rough = 0.95 - 0.0 * g
+    save_decal("crasse_pied_mur_%d" % v, rgb, al, None, 1.0, 1.0 - 0.12 * wall, rough, aux=2)
 
 
 # ------------------------------------------------------------------ coin de plafond
@@ -669,12 +705,14 @@ def coin(v, S=512):
     x, y = grid(S, S)
     r = np.sqrt((x - 0.5) ** 2 + (y - 0.5) ** 2)
     n = spectral(S, S, 2.6, seed + 1, kmin=1.0 / S)
-    specks = sstep(2.2, 3.0, spectral(S, S, 0.6, seed + 2, kmin=30.0 / S))
-    a = 0.55 * (1.0 - sstep(0.0, 0.5, r * (1.0 + 0.22 * n))) ** 2.0
-    a = np.clip(a * (0.75 + 0.25 * np.tanh(spectral(S, S, 1.8, seed + 3, kmin=6.0 / S))) + specks * a * 0.8, 0, 0.9)
+    specks = sstep(2.0, 2.9, spectral(S, S, 0.6, seed + 2, kmin=30.0 / S))
+    fib = sstep(1.2, 2.2, spectral(S, S, 1.4, seed + 5, kmin=12.0 / S, ax=1.0, ay=0.25))   # filaments (toiles)
+    body = (1.0 - sstep(0.0, 0.5, r * (1.0 + 0.25 * n))) ** 1.6
+    a = 0.72 * body * (0.72 + 0.28 * np.tanh(spectral(S, S, 1.8, seed + 3, kmin=6.0 / S)))
+    a = np.clip(a + specks * body * 0.7 + fib * body * 0.25, 0, 0.92)
     a *= edge_fade(S, S, 0.03, seed + 4)
     rgb = np.zeros((S, S, 3))
-    rgb[...] = (0.2, 0.19, 0.17)
+    rgb[...] = (0.19, 0.18, 0.16)
     save_decal("coin_%d" % v, rgb, a, None, 1.0, 1.0 - 0.15 * a, 0.96, aux=4)
 
 
