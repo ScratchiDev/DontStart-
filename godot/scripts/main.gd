@@ -198,8 +198,12 @@ func _on_window_resized() -> void:
 ##  - rétro : l'image d'avant, exactement (640×360 agrandie sans lissage, ACES, palette de 16 niveaux
 ##    et tramage de Bayer, aberration chromatique).
 ## Énergies des lumières : les mêmes dans les deux modes (l'exposition d'AgX compense ACES).
+## Nuit, halo et aberration du rendu net (lot V2-NUIT) : sur vraie carte seulement (FULL_* ci-dessous) ;
+## le rendu logiciel (profil des tests) garde les réglages d'avant (valeurs en dur, FLASH_GI_SOFT), le
+## rétro les siens.
 func _apply_video() -> void:
 	var retro_on := Game.style_retro
+	var full := not Qualite.soft()
 	if retro_on:
 		env.tonemap_mode = Environment.TONE_MAPPER_ACES
 		env.tonemap_exposure = 1.05
@@ -211,6 +215,8 @@ func _apply_video() -> void:
 		for i in 7:
 			env.set_glow_level(i, [0.0, 0.8, 0.4, 0.1, 0.0, 0.0, 0.0][i])
 		env.volumetric_fog_density = 0.028
+		# (valeur par défaut de Godot, celle d'avant : remise si l'on revient du rendu net)
+		env.volumetric_fog_gi_inject = 1.0
 		env.ssao_radius = 0.9
 		env.ssao_intensity = 1.8
 		env.ssao_power = 1.5
@@ -226,14 +232,19 @@ func _apply_video() -> void:
 		# (blanc et contraste d'AgX : voir AGX_WHITE, AGX_CONTRAST)
 		env.tonemap_agx_white = AGX_WHITE
 		env.tonemap_agx_contrast = AGX_CONTRAST
-		env.glow_intensity = 0.55
+		# halo : vraie carte, seuil plus haut et petits rayons seulement (FULL_GLOW_*) ; rendu logiciel,
+		# celui d'avant
+		env.glow_intensity = FULL_GLOW_INTENSITY if full else 0.55
 		env.glow_strength = 1.0
 		env.glow_bloom = 0.0
-		env.glow_hdr_threshold = 1.0
+		env.glow_hdr_threshold = FULL_GLOW_THRESHOLD if full else 1.0
 		env.glow_blend_mode = Environment.GLOW_BLEND_MODE_SCREEN
+		var levels: Array = FULL_GLOW_LEVELS if full else [0.0, 0.5, 0.7, 0.5, 0.25, 0.0, 0.0]
 		for i in 7:
-			env.set_glow_level(i, [0.0, 0.5, 0.7, 0.5, 0.25, 0.0, 0.0][i])
+			env.set_glow_level(i, levels[i])
 		env.volumetric_fog_density = 0.018
+		# (ce que le brouillard reprend de la VoxelGI : voir FULL_FOG_GI_INJECT)
+		env.volumetric_fog_gi_inject = fog_gi_inject() if full else 1.0
 		env.ssao_radius = 0.7
 		env.ssao_intensity = 1.6
 		env.ssao_power = 1.6
@@ -252,7 +263,7 @@ func _apply_video() -> void:
 	# lampe de poche : point chaud, anneau du réflecteur et halo (rendu net seulement) ; son rebond dans
 	# la VoxelGI de la pièce (rendu net : la nuit, on lit les volumes autour du faisceau)
 	player.flashlight.light_projector = null if retro_on else FLASH_COOKIE
-	player.flashlight.light_indirect_energy = 1.0 if retro_on else FLASH_GI_NET
+	player.flashlight.light_indirect_energy = 1.0 if retro_on else (flash_gi_net() if full else FLASH_GI_SOFT)
 	if room.has_method("set_screen_glow_style"):
 		room.set_screen_glow_style(retro_on)
 	var m := retro_mat()
@@ -262,7 +273,11 @@ func _apply_video() -> void:
 		m.set_shader_parameter("grain_mult", 1.0 if retro_on else 0.8)
 		m.set_shader_parameter("vignette", 0.85 if retro_on else NET_VIGNETTE)
 		m.set_shader_parameter("vignette_inner", 0.12 if retro_on else NET_VIGNETTE_INNER)
-		m.set_shader_parameter("aberration", 0.0011 if retro_on else 0.00015)
+		# aberration chromatique : rétro, celle d'avant ; rendu net sur vraie carte, aucune au repos, elle ne
+		# vient qu'avec la peur (corruption au-dessus de FULL_ABERRATION_FLOOR, montée quadratique) ;
+		# rendu logiciel, celle d'avant
+		m.set_shader_parameter("aberration", 0.0011 if retro_on else (0.0 if full else 0.00015))
+		m.set_shader_parameter("corruption_floor", FULL_ABERRATION_FLOOR if full and not retro_on else 0.0)
 		# rendu net : noir ramené à 0 (AgX et le brouillard relèvent le noir), pied de courbe réglé par
 		# la « Luminosité » (Game.luminosite), grain de pellicule
 		var c := net_curve(Game.luminosite)
@@ -300,6 +315,10 @@ const NET_VIGNETTE_INNER := 0.25
 ## (le brouillard relève le noir) et basses lumières enfoncées, sans boucher les nuits (on lit les
 ## volumes à la lampe sans y voir clair).
 const NET_BLACK_POINT := 0.008
+## Vraie carte (lot V2-NUIT) : point noir moitié moins fort. Avec la lampe qui découvre et le halo resserré,
+## 0,008 écrasait à 0 les ombres de la nuit (23 à 45 % de pixels nuls) ; à 0,004, elles gardent leurs
+## dégradés (le pied de courbe, lui, ne change pas).
+const FULL_BLACK_POINT := 0.004
 const NET_TOE := 0.06
 ## « Luminosité » de 0 à 1 : le point noir bouge de ±0,01 et le pied de courbe de ±0,06 autour du défaut
 ## (de 0,018 et 0,12, sombre, à 0 et 0, clair).
@@ -310,10 +329,30 @@ const NET_AMBIENT := 0.22
 const FLASH_COOKIE := preload("res://assets/textures/flashlight_cookie.png")
 ## Énergie indirecte de la lampe de poche (rendu net ; 1 en rétro) : ce qu'elle fait rebondir dans la
 ## VoxelGI de la pièce. À 1, tout ce qui sortait du faisceau restait à 0 (35 à 80 % de l'image la nuit) ;
-## à 6 (étalonnage des vues de nuit), les murs, le lit, les meubles se devinent sans qu'on y voie clair.
-const FLASH_GI_NET := 6.0
+## à 6 (étalonnage de la vague 1, gardé en rendu logiciel), la pièce entière se lisait autour du faisceau
+## et la lampe ne révélait plus rien (médiane de nuit 13 à 33/255). Vraie carte (lot V2-NUIT) : le
+## faisceau découvre, le reste de la pièce se devine à peine.
+const FLASH_GI_NET := 3.0
+const FLASH_GI_SOFT := 6.0
+## Brouillard volumétrique, rendu net sur vraie carte : part de la VoxelGI qu'il diffuse (1 par défaut).
+## Avec FLASH_GI_NET, il fait le fond de la nuit (le produit des deux : 6 avant, 3 ici). Le voile gris de
+## la vague 2 venait surtout du halo (FULL_GLOW_*) : une fois le halo resserré, une injection de 0,3 à 0,6
+## renvoyait les pièces à moquette dans le noir bouché de la 0.3.3 (médiane 0,2 à 3/255, jusqu'à 61 % de
+## pixels nuls) ; à 1, les formes (bâche, lampadaire, étagères) se devinent autour du faisceau.
+const FULL_FOG_GI_INJECT := 1.0
+## Halo du rendu net sur vraie carte : seuil au-dessus des papiers et des murs pris dans le faisceau, et
+## petits rayons seulement (les niveaux 3 à 5 faisaient un voile de 250 px autour des appliques).
+const FULL_GLOW_THRESHOLD := 1.3
+const FULL_GLOW_INTENSITY := 0.45
+const FULL_GLOW_LEVELS := [0.0, 0.6, 0.45, 0.15, 0.0, 0.0, 0.0]
+## Aberration chromatique du rendu net sur vraie carte : seulement au-dessus de cette corruption (la peur),
+## en montée quadratique (retro_post.gdshader, corruption_floor).
+const FULL_ABERRATION_FLOOR := 0.2
 ## « -- --expo=1.4 » : exposition d'AgX imposée (étalonnage ; rendu net seulement).
 static var _expo_arg := -2.0
+## Réglages imposés pour l'étalonnage (rendu net, vraie carte) : « -- --flash-gi=2.5 » (énergie
+## indirecte de la lampe), « -- --fog-gi=0.8 » (injection de la VoxelGI dans le brouillard).
+static var _cmd_floats := {}
 
 
 static func agx_exposure() -> float:
@@ -325,10 +364,32 @@ static func agx_exposure() -> float:
 	return _expo_arg if _expo_arg > 0.0 else AGX_EXPOSURE
 
 
+## Énergie indirecte de la lampe de poche en rendu net sur vraie carte (FLASH_GI_NET, ou « --flash-gi= »).
+static func flash_gi_net() -> float:
+	return _cmd_float("--flash-gi=", FLASH_GI_NET)
+
+
+## Injection de la VoxelGI dans le brouillard, rendu net sur vraie carte (FULL_FOG_GI_INJECT, ou « --fog-gi= »).
+static func fog_gi_inject() -> float:
+	return _cmd_float("--fog-gi=", FULL_FOG_GI_INJECT)
+
+
+## Valeur « -- <prefixe><nombre> » de la ligne de commande (lue une fois), sinon fallback.
+static func _cmd_float(prefix: String, fallback: float) -> float:
+	if not _cmd_floats.has(prefix):
+		_cmd_floats[prefix] = -1.0
+		for a in OS.get_cmdline_user_args():
+			if a.begins_with(prefix):
+				_cmd_floats[prefix] = float(a.substr(prefix.length()))
+	var v: float = _cmd_floats[prefix]
+	return v if v >= 0.0 else fallback
+
+
 ## Point noir (x) et pied de courbe (y) du rendu net pour une « Luminosité » de 0 (sombre) à 1 (clair).
 static func net_curve(luminosite: float) -> Vector2:
 	var d := 0.5 - clampf(luminosite, 0.0, 1.0)
-	return Vector2(maxf(NET_BLACK_POINT + d * LUMINOSITE_BLACK, 0.0), maxf(NET_TOE + d * LUMINOSITE_TOE, 0.0))
+	var bp := NET_BLACK_POINT if Qualite.soft() else FULL_BLACK_POINT
+	return Vector2(maxf(bp + d * LUMINOSITE_BLACK, 0.0), maxf(NET_TOE + d * LUMINOSITE_TOE, 0.0))
 
 
 ## Ce que le filtre plein écran fait d'une valeur v (0..1, après AgX) avec ce point noir et ce pied de

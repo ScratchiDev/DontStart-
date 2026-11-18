@@ -276,6 +276,14 @@ func _look(label: String, size: Vector3, pos: Vector3, text: String, reach := 2.
 	return it
 
 
+## Papier blanc : sur vraie carte, albédo plafonné (Builder.paper_albedo, k ≈ 0,5 / luminance linéaire du
+## fond) pour qu'il ne brille pas comme une lampe dans le faisceau ; en rendu logiciel, tel quel.
+func _paper_net(m: StandardMaterial3D, k: float) -> StandardMaterial3D:
+	if Builder.soft_render():
+		return m
+	return Builder.paper_albedo(m, k) as StandardMaterial3D
+
+
 func _tex_mat(tex: Texture2D, rough := 0.9) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
 	m.albedo_texture = tex
@@ -601,7 +609,7 @@ func _desk() -> void:
 		for c in 4:
 			_box(Vector3(0.014, 0.004, 0.012), Vector3(-0.03 + c * 0.02, 0.019, -0.01 + r * 0.022), _plain(Color(0.6, 0.58, 0.55), 0.5), false, calc)
 	for k in 5:
-		_box_rot(Vector3(0.21, 0.002, 0.297), Vector3(6.66, top + 0.001 + k * 0.0022, 5.78), _m(Color(0.86, 0.84, 0.78), 0.9), rng.randf_range(-0.2, 0.2))
+		_box_rot(Vector3(0.21, 0.002, 0.297), Vector3(6.66, top + 0.001 + k * 0.0022, 5.78), _paper_net(_m(Color(0.86, 0.84, 0.78), 0.9), 0.7), rng.randf_range(-0.2, 0.2))
 	var loupe := Node3D.new()
 	add_child(loupe)
 	loupe.position = Vector3(6.72, top + 0.006, 5.76)
@@ -955,7 +963,7 @@ func _printer() -> void:
 	# (sous le bac de sortie : un collisionneur jusqu'en haut arrêterait le rayon avant les feuilles)
 	_collider(Vector3(0.42, 0.15, 0.35), Vector3(PRINTER_C.x, top + 0.075, PRINTER_C.z))
 	# sous la table : une ramette de papier, la notice de la domotique encore sous plastique
-	_box_rot(Vector3(0.21, 0.05, 0.297), Vector3(8.2, 0.025, 6.02), _plain(Color(0.86, 0.85, 0.82), 0.9), 0.1)
+	_box_rot(Vector3(0.21, 0.05, 0.297), Vector3(8.2, 0.025, 6.02), _paper_net(_plain(Color(0.86, 0.85, 0.82), 0.9), 0.7), 0.1)
 	var notice := _box_rot(Vector3(0.2, 0.012, 0.28), Vector3(8.42, 0.006, 6.0), _m(Color(0.25, 0.45, 0.62), 0.5), -0.25)
 	notice.name = "Notice"
 	var wrap := StandardMaterial3D.new()
@@ -1441,7 +1449,7 @@ func _wall_things() -> void:
 			for k in 5:
 				img.set_pixel(clampi(x - 1 + k, 0, 59), clampi(y + 3 - k, 0, 83), Color(0.7, 0.12, 0.1))
 	img.generate_mipmaps()
-	var cm := _tex_mat(ImageTexture.create_from_image(img))
+	var cm := _paper_net(_tex_mat(ImageTexture.create_from_image(img)), 0.63)
 	var cal := _quad(Vector2(0.3, 0.42), Vector3(6.2, 1.55, ZS - 0.002), cm, PI)
 	cal.name = "Calendrier"
 	_mesh(_cyl(0.003, 0.003, 0.02, 6), Vector3(6.2, 1.78, ZS - 0.01), mats.metal, Vector3(PI / 2.0, 0, 0))
@@ -1557,8 +1565,8 @@ func _diploma() -> void:
 		_bp(Vector3(fw - 2.0 * b, fh - 2.0 * b, 0.004), c + Vector3(0, 0, 0.004)),
 	]
 	_merged(frame, _wood())
-	_quad(Vector2(fw - 2.0 * b, fh - 2.0 * b), c + Vector3(0, 0, 0.0065), _m(Color(0.8, 0.76, 0.66), 0.9))
-	_quad(Vector2(fw - 2.0 * b - 0.05, fh - 2.0 * b - 0.05), c + Vector3(0, 0, 0.0075), _tex_mat(ImageTexture.create_from_image(img), 0.85))
+	_quad(Vector2(fw - 2.0 * b, fh - 2.0 * b), c + Vector3(0, 0, 0.0065), _paper_net(_m(Color(0.8, 0.76, 0.66), 0.9), 0.83))
+	_quad(Vector2(fw - 2.0 * b - 0.05, fh - 2.0 * b - 0.05), c + Vector3(0, 0, 0.0075), _paper_net(_tex_mat(ImageTexture.create_from_image(img), 0.85), 0.72))
 	var g := _quad(Vector2(fw - 2.0 * b, fh - 2.0 * b), c + Vector3(0, 0, 0.016), mats.glass)
 	g.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_mesh(_cyl(0.002, 0.002, 0.02, 6), c + Vector3(0, fh / 2.0 + 0.02, 0.006), mats.metal, Vector3(PI / 2.0, 0, 0))

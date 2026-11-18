@@ -416,10 +416,14 @@ func _bathtub() -> void:
 
 # ------------------------------------------------------------------ les rideaux (réel et « flux »)
 
+const CURTAIN_NET := Color(0.44, 0.49, 0.47)
+
+
 func _curtain_mat() -> ShaderMaterial:
 	var cm := ShaderMaterial.new()
 	cm.shader = load("res://shaders/curtain.gdshader")
-	cm.set_shader_parameter("color", Color(0.52, 0.58, 0.55))
+	# (vraie carte : un peu plus sombre, il brûlait en bas sous le plafonnier et volait la scène à la baignoire)
+	cm.set_shader_parameter("color", Color(0.52, 0.58, 0.55) if Builder.soft_render() else CURTAIN_NET)
 	cm.set_shader_parameter("sway", 0.008)
 	return cm
 
@@ -580,12 +584,21 @@ func run_p4() -> String:
 
 # ------------------------------------------------------------------ l'applique
 
+## Applique sur vraie carte (rendu net) : énergie de la lumière et émission de l'abat-jour.
+const APPLIQUE_ENERGY_NET := 0.28
+const APPLIQUE_GLOW_NET := 0.25
+
+
 func _applique() -> void:
 	var lamp := prop("lampWall", Vector3(7.0, 1.94, ZS - 0.105), 180.0, Vector3(0.3, 0.0, 0.0), false)
 	var shade := _plain(Color(0.92, 0.88, 0.76), 0.6)
 	shade.emission_enabled = true
 	shade.emission = Color(1.0, 0.78, 0.5)
-	shade.emission_energy_multiplier = 0.5
+	# vraie carte : abat-jour et ampoule baissés (avec le halo du rendu net, la faïence claire et le mur au-dessus
+	# de l'applique brûlaient : revue DA de la vague 2) ; rendu logiciel : comme avant
+	var full := not Builder.soft_render()
+	var shade_glow := APPLIQUE_GLOW_NET if full else 0.5
+	shade.emission_energy_multiplier = shade_glow
 	_retint(lamp, {"lamp": shade, "metal": _chrome})
 	for mi in lamp.find_children("*", "MeshInstance3D", true, false):
 		_no_gi(mi as MeshInstance3D)
@@ -594,14 +607,14 @@ func _applique() -> void:
 	applique.device_id = "applique"
 	applique.room_id = "sdb"
 	applique.display_name = "Applique"
-	applique.energy = 0.42
+	applique.energy = APPLIQUE_ENERGY_NET if full else 0.42
 	applique.color = Color(1.0, 0.8, 0.58)
 	applique.light_range = 5.0
 	applique.bulb_radius = 0.026
 	add_child(applique)
 	applique.position = LAMP_POS
 	applique.build()
-	applique.add_glow_material(shade, 0.5)
+	applique.add_glow_material(shade, shade_glow)
 	# le culot de l'ampoule ne projette pas d'ombre en éventail sur le mur
 	for mi in applique.find_children("*", "MeshInstance3D", true, false):
 		(mi as MeshInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -609,8 +622,10 @@ func _applique() -> void:
 	# faisait de son cadre deux grandes ailes d'ombre sur la faïence ; la faïence claire renvoie de la
 	# lumière partout, les ombres ne sont pas noires
 	if applique.light:
-		applique.light.position.z = -0.065
+		applique.light.position.z = -0.12 if full else -0.065
 		applique.light.shadow_opacity = 0.8
+		if full:
+			applique.light.set_meta("taille", 0.04)      # ombres douces (PCSS, Ultra)
 	mirror.p4_lamp = applique
 
 

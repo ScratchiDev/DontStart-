@@ -250,9 +250,31 @@ static func _swap_one(m: Material, old: Texture2D, seen: Dictionary) -> int:
 	return c
 
 
+## Matières communes sur vraie carte (lot V2-NUIT ; le rendu logiciel, profil des tests, garde celles
+## d'avant) :
+##  - peinture de la salle de bain et de la lingerie un peu moins blanche (FULL_WALL_PAINT) ;
+##  - faïence neuve (Faience15, tools : aaa_fab/V2-NUIT/outils/gen_faience.py, œuvre originale CC0) :
+##    carreaux de 15 cm, joints gris clair de 2 mm, émail brillant (rugosité 0,14), ±3 % d'un carreau à
+##    l'autre, 2048 px pour 1,2 m (1 700 px/m au lieu de 570) ; la grille tombe juste en haut du lambris
+##    (1,4 m) et dans les angles (FAIENCE_OFFSET) ;
+##  - moquette : fibres plus fines (0,9 m par répétition au lieu de 1,7), relief ×1,6, variation lente
+##    de ±8 % (moquette_var.png), rugosité de tissu et reflet rasant (rim) ;
+##  - parquet : rugosité variée de 0,53 à 0,8 selon les lames et le passage, joints et pores à 0,9
+##    (herringbone_parquet_orm_v2.jpg), reflet spéculaire 0,4 : il ne fait plus sol mouillé.
+const FULL_WALL_PAINT := Color(0.76, 0.745, 0.7)
+const FULL_FAIENCE_TINT := Color(0.62, 0.6, 0.58)
+const FAIENCE_M := 1.2
+const FAIENCE_OFFSET := Vector3(0.0, -0.0416667, -0.0416667)
+const FULL_MOQUETTE_TINT := Color(0.55, 0.35, 0.305)
+const MOQUETTE_M := 0.9
+const PARQUET_ORM_V2 := "herringbone_parquet/herringbone_parquet_orm_v2.jpg"
+const MOQUETTE_VAR := "Carpet016/moquette_var.png"
+
+
 ## Remplit « mats » (dictionnaire partagé des pièces) : les clés et leur rôle ne changent pas, seules
 ## les matières deviennent photographiques. Les teintes reprennent la couleur moyenne d'avant.
 static func build(mats: Dictionary) -> void:
+	var full := not Qualite.soft()
 	# (coût en rendu logiciel : chaque carte est lue trois fois en triplanaire ; la crasse et l'occlusion
 	# ne sont gardées que là où elles se voient : papiers peints et lambris ont leurs taches dans la texture)
 	# plâtre peint (murs porteurs nus, embrasures) et plafonds : PaintedPlaster017 (2 m)
@@ -262,7 +284,7 @@ static func build(mats: Dictionary) -> void:
 	mats.ceil = pbr(plaster, 2.0, Color(0.68, 0.66, 0.61), 0.3, false, false, 0.92)
 	# (peinture et faïence de la salle de bain un peu moins blanches : sous l'applique, la nuit, elle était
 	# presque aussi claire qu'en plein jour)
-	mats.wall_paint = grime(pbr(plaster, 2.0, Color(0.86, 0.84, 0.79), 1.0, false, false, 0.85), 0.5, 1)
+	mats.wall_paint = grime(pbr(plaster, 2.0, FULL_WALL_PAINT if full else Color(0.86, 0.84, 0.79), 1.0, false, false, 0.85), 0.5, 1)
 	# papiers peints : deux lés de 0,53 m par répétition (1,06 m), motifs d'avant, vieillis
 	var pp := "decrepit_wallpaper/papier_peint_"
 	# (teintes : couleur moyenne d'avant, crasse comprise ; elle assombrissait d'environ 15 %)
@@ -279,6 +301,14 @@ static func build(mats: Dictionary) -> void:
 	# (rugosité constante 0,6 : la carte d'origine, très lisse, donnait un sol mouillé ; une carte de moins)
 	mats.floor = pbr("herringbone_parquet/herringbone_parquet", 3.4, Color(0.88, 0.82, 0.77), 1.0, true, true, 0.6)
 	(mats.floor as StandardMaterial3D).ao_light_affect = 0.35
+	if full and ResourceLoader.exists(DIR + PARQUET_ORM_V2):
+		var fl := mats.floor as StandardMaterial3D
+		var orm2: Texture2D = load(DIR + PARQUET_ORM_V2)
+		fl.ao_texture = orm2
+		fl.roughness = 1.0
+		fl.roughness_texture = orm2
+		fl.roughness_texture_channel = BaseMaterial3D.TEXTURE_CHANNEL_GREEN
+		fl.metallic_specular = 0.4
 	# bois des meubles, appuis de fenêtre, cimaises et plinthes (Wood027, éclairci)
 	mats.wood = grime(pbr("Wood027/Wood027", 1.2, Color(1, 1, 1), 1.0, false), 0.5, 2)
 	mats.wood_dark = grime(pbr("Wood027/Wood027", 1.2, Color(0.72, 0.7, 0.7), 1.0, false), 0.5, 2)
@@ -288,11 +318,33 @@ static func build(mats: Dictionary) -> void:
 	# (portes un peu plus sombres que les boiseries : à 0,92, elles brillaient dans le noir)
 	mats.door = grime(pbr(pw, 1.0, Color(0.8, 0.78, 0.72), 0.4, false), 0.8, 3)
 	# salle de bain : faïence 15 cm (Tiles133B) et damier crème et brun-rouge 20 cm (floor_tiles_06)
-	mats.faience = pbr("Tiles133B/Tiles133B", 1.8, Color(0.75, 0.69, 0.66))
+	if full and ResourceLoader.exists(DIR + "Faience15/Faience15_albedo.jpg"):
+		mats.faience = pbr("Faience15/Faience15", FAIENCE_M, FULL_FAIENCE_TINT)
+		(mats.faience as StandardMaterial3D).uv1_offset = FAIENCE_OFFSET
+	else:
+		mats.faience = pbr("Tiles133B/Tiles133B", 1.8, Color(0.75, 0.69, 0.66))
 	mats.carrelage = pbr("floor_tiles_06/floor_tiles_06_damier", 0.8, Color(0.76, 0.73, 0.71), 1.0, true, true)
 	(mats.carrelage as StandardMaterial3D).ao_light_affect = 0.35
 	# moquette rouille (Carpet016, 1,7 m réels)
-	mats.moquette = pbr_acg("Carpet016/Carpet016", 1.7, Color(0.51, 0.32, 0.28), 1.0, true)
+	if full:
+		var mq := pbr_acg("Carpet016/Carpet016", MOQUETTE_M, FULL_MOQUETTE_TINT, 1.6, true)
+		# (rugosité de tissu : la carte d'origine, vers 0,65, donnait un reflet de plastique)
+		mq.roughness_texture = null
+		mq.roughness = 0.93
+		mq.rim_enabled = true
+		mq.rim = 0.35
+		mq.rim_tint = 0.5
+		if ResourceLoader.exists(DIR + MOQUETTE_VAR):
+			mq.detail_enabled = true
+			mq.detail_albedo = load(DIR + MOQUETTE_VAR)
+			mq.detail_blend_mode = BaseMaterial3D.BLEND_MODE_MUL
+			mq.detail_uv_layer = BaseMaterial3D.DETAIL_UV_2
+			mq.uv2_triplanar = true
+			mq.uv2_world_triplanar = true
+			mq.uv2_scale = Vector3.ONE / 2.4
+		mats.moquette = mq
+	else:
+		mats.moquette = pbr_acg("Carpet016/Carpet016", 1.7, Color(0.51, 0.32, 0.28), 1.0, true)
 	# crasse HD : une image après la construction, vraie carte graphique seulement (hors de B16)
 	schedule_hd(mats)
 

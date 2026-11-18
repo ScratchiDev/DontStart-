@@ -1985,6 +1985,8 @@ func _finish_oval(h: Node3D, key: String, tex: Texture2D, crop: Array) -> void:
 func _paper() -> StandardMaterial3D:
 	if _paper_mat == null:
 		_paper_mat = _m(Color(0.8, 0.76, 0.66), 0.92)
+		if not Builder.soft_render():
+			Builder.paper_albedo(_paper_mat, 0.83)      # vraie carte : ne brille pas la nuit (V2-NUIT)
 	return _paper_mat
 
 

@@ -200,6 +200,11 @@ const LINEN := "res://assets/textures/terlenka/terlenka_%s_1k.jpg"
 
 ## Toile de coton fine (terlenka, Poly Haven, CC0) posée dans le monde (triplanaire, « meters » mètres par
 ## répétition), teintée, avec la crasse de la maison : la housse du fauteuil, le buste du mannequin.
+## Vraie carte : bâche du lit et drap de la bergère moins clairs (albédo ≈ 0,5 à 0,6 en linéaire).
+const TARP_NET := Color(0.5, 0.53, 0.56)
+const HOUSSE_NET := Color(0.74, 0.78, 0.8)
+
+
 func _linen(tint: Color, meters := 0.6) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
 	m.albedo_texture = load(LINEN % "diff")
@@ -533,7 +538,8 @@ func _bed() -> void:
 	var top := 0.445
 	# sous la bâche : un carton et des couvertures pliées, posés là « en attendant »
 	var cb := _box(Vector3(0.42, 0.3, 0.38), Vector3(0.34, top + 0.15, 4.65), _m(Color(0.5, 0.36, 0.22), 0.95))
-	cb.rotation.y = 0.12
+	# (vraie carte : droit, sinon ses coins percent la bâche, posée sur un support aligné sur les axes)
+	cb.rotation.y = 0.12 if Builder.soft_render() else 0.0
 	for k in 3:
 		_box(Vector3(0.52 - k * 0.02, 0.04, 0.58 - k * 0.03), Vector3(-0.36, top + 0.02 + k * 0.04, 4.85),
 			_m([Color(0.55, 0.45, 0.32), Color(0.3, 0.35, 0.45), Color(0.6, 0.3, 0.25)][k], 1.0))
@@ -616,6 +622,12 @@ func _bed() -> void:
 	tarp.albedo_color = Color(0.6, 0.64, 0.68)
 	tarp.roughness = 0.42
 	tarp.metallic_specular = 0.6
+	if not Builder.soft_render():
+		# vraie carte : vieille toile grise et satinée, qui redevient une silhouette dans le faisceau (elle
+		# brûlait en beige sous la lampe : revues de la vague 2)
+		tarp.albedo_color = TARP_NET
+		tarp.roughness = 0.62
+		tarp.metallic_specular = 0.35
 	var mi := _no_gi(_mesh(st.commit(), Vector3.ZERO, tarp))
 	mi.name = "Bache"
 	# deux bandes de scotch brun pour la tenir à la tête de lit
@@ -1416,7 +1428,7 @@ func _covered_armchair() -> void:
 	var mi := MeshInstance3D.new()
 	mi.name = "Housse"
 	mi.mesh = st.commit()
-	mi.material_override = _linen(Color(0.9, 0.95, 0.98), 0.5)
+	mi.material_override = _linen(Color(0.9, 0.95, 0.98) if Builder.soft_render() else HOUSSE_NET, 0.5)
 	mi.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
 	holder.add_child(mi)
 	_collider(Vector3(0.8, 1.0, 0.78), Vector3(0, 0.5, 0.0), holder)

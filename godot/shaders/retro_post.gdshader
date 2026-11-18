@@ -1,6 +1,7 @@
 // Filtre plein écran, réglé par main.gd (_apply_video) selon l'option « Style rétro (pixels) » :
 //  - rendu moderne (par défaut) : image à la résolution de l'écran, léger grain de pellicule,
-//    vignettage doux, aberration chromatique presque nulle ; levels = 0 (pas de palette réduite) ;
+//    vignettage doux, aberration chromatique nulle au repos (vraie carte ; presque nulle en rendu
+//    logiciel) ; levels = 0 (pas de palette réduite) ;
 //    point noir, épaule étirée jusqu'au blanc (les hautes lumières d'AgX plafonnent vers 0,8 : au-delà
 //    du genou, elles montent au blanc ; les tons moyens ne bougent pas), pied de courbe ;
 //  - style rétro : image 640×360 agrandie sans lissage, palette réduite (levels = 16) + tramage
@@ -19,6 +20,9 @@ uniform float vignette_inner = 0.12;  // où le vignettage commence (rayon² × 
 uniform float aberration = 0.00015;
 uniform float corruption_aberration = 0.0044;  // aberration ajoutée par la corruption (× corruption)
 uniform float corruption = 0.0;       // 0..1 : la partie « pourrit » l'image
+// rendu net sur vraie carte : l'aberration ne vient qu'au-dessus de ce seuil de corruption, en montée
+// quadratique (0 en rétro et en rendu logiciel : la montée linéaire d'avant, à l'identique)
+uniform float corruption_floor = 0.0;
 uniform float blackout = 0.0;         // 0..1 : fondu au noir
 uniform vec3 tint = vec3(1.0);
 // rendu net seulement (0 en rétro : l'image d'avant, à l'identique) :
@@ -40,7 +44,12 @@ void fragment() {
 	// petites déchirures horizontales quand la corruption monte
 	float tear = step(0.985 - corruption * 0.08, rnd(vec2(floor(uv.y * 90.0), floor(TIME * 12.0))));
 	uv.x += tear * (rnd(vec2(TIME, uv.y)) - 0.5) * 0.04 * corruption;
-	vec2 off = d * r2 * 40.0 * (aberration + corruption * corruption_aberration);
+	float ca = corruption;
+	if (corruption_floor > 0.0) {
+		float ct = max(corruption - corruption_floor, 0.0);
+		ca = ct * ct / (1.0 - corruption_floor);
+	}
+	vec2 off = d * r2 * 40.0 * (aberration + ca * corruption_aberration);
 	vec3 c;
 	c.r = texture(screen_tex, uv + off).r;
 	c.g = texture(screen_tex, uv).g;

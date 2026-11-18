@@ -1,7 +1,7 @@
 """Génère les images et sons « faits maison » du jeu (affiches, mot, étiquette, ambiances).
 
 Usage : python3 godot/tools/make_assets.py
-        python3 godot/tools/make_assets.py story   (seulement l'acte I ; aussi : house, music, floor, images)
+        python3 godot/tools/make_assets.py story   (seulement l'acte I ; aussi : house, music, floor, images, son)
         python3 godot/tools/make_assets.py images  (0.3.4 : les images du monde en HD, les étiquettes des classeurs,
                                                     le tapis du couloir, la lampe, et les photos de make_photos.py ;
                                                     contrôle des textes dessinés ; télécharge les photos sources)
@@ -4280,6 +4280,289 @@ FLOOR = [plan_etage, croquis_fractionneur, photo_couloir, silhouette_feed, clovi
          printer, fans_spinup, servo, curtain_rings, drip, wet_steps, heartbeat_loop, breath_near]
 
 
+# ============================================================ passe « triple A », lot V2-SON : pluie, respiration
+# « make_assets.py son » : la pluie contre chaque fenêtre (rain_glass_1 à 3, boucles de 16 s), la pluie sur le
+# toit (rain_roof, 20 s) et la respiration du héros (breath_<calme|tendu|panique>_<in|out>_<1..4>), lue par
+# Sfx._update_breath. Synthèse, en attendant de vrais enregistrements. Chaque fonction a son propre hasard
+# (np.random.RandomState à graine fixe) : le hasard global n'est jamais touché, rien d'autre ne change.
+# Niveaux : la pluie à -20 dBFS efficaces (crête limitée à 0,9), chaque souffle à BREATH_LEVELS (dBFS efficaces
+# sur sa partie active) : les rapports calme / tendu / panique et inspiration / expiration sont dans les fichiers,
+# le volume d'ensemble dans Sfx.BREATH_POINTS.
+
+def _peaks(f, specs):
+    """Résonances (formants) : somme de pics de Lorentz [(centre, largeur, gain)]."""
+    out = np.zeros_like(f)
+    for fc, bw, g in specs:
+        out += g / (1 + ((f - fc) / (bw / 2)) ** 2)
+    return out
+
+
+def _shaped_noise(n, env_fn, rs, frame=1024, hop=256):
+    """Bruit dont l'enveloppe spectrale suit env_fn(f, u) (u de 0 à 1 dans le son), par STFT (Hann, 75 %)."""
+    x = rs.randn(n + frame)
+    win = np.hanning(frame)
+    out = np.zeros(n + 2 * frame)
+    norm = np.zeros(n + 2 * frame)
+    f = np.fft.rfftfreq(frame, 1 / RATE)
+    for start in range(0, n + frame // 2, hop):
+        seg = x[start:start + frame]
+        if len(seg) < frame:
+            seg = np.pad(seg, (0, frame - len(seg)))
+        u = min(1.0, max(0.0, (start + frame / 2 - frame / 2) / n))
+        y = np.fft.irfft(np.fft.rfft(seg * win) * env_fn(f, u), frame) * win
+        out[start:start + frame] += y
+        norm[start:start + frame] += win ** 2
+    return (out / np.maximum(norm, 1e-3))[:n]
+
+
+def _smooth_noise(n, hz, rs):
+    """Bruit lent (passe-bas à hz), écart type 1."""
+    x = _spec_filter(rs.randn(n), lambda f: _butter(f, hz, 2))
+    return x / (np.std(x) + 1e-12)
+
+
+# ------------------------------------------------------------------ pluie à la fenêtre
+
+def _wrap_add(out, i, ev):
+    """Ajoute ev à partir de l'indice i, en revenant au début (boucle sans couture)."""
+    n = len(out)
+    m = len(ev)
+    end = i + m
+    if end <= n:
+        out[i:end] += ev
+    else:
+        k = n - i
+        out[i:] += ev[:k]
+        out[:m - k] += ev[k:]
+
+
+def rain_glass(k, sec=16.0):
+    """Pluie contre la vitre, entendue de la pièce (boucle de sec s) : le ruissellement dehors à travers le
+    verre, les gouttes qui claquent sur la vitre (petites résonances du carreau), l'appui de fenêtre qui
+    goutte à son rythme, un filet d'eau qui coule de temps en temps. k : variante (1 à 3)."""
+    rs = np.random.RandomState(4100 + k)
+    n = int(RATE * sec)
+    t = np.arange(n) / RATE
+    # rafales : modulations lentes de période sec / m (la boucle raccorde)
+    gust = 1.0 + 0.16 * np.sin(2 * np.pi * (2 / sec) * t + rs.uniform(0, 6.3)) \
+        + 0.09 * np.sin(2 * np.pi * (5 / sec) * t + rs.uniform(0, 6.3)) + 0.05 * np.sin(2 * np.pi * (11 / sec) * t + rs.uniform(0, 6.3))
+    # 1) la pluie dehors, à travers le verre : bruit rose, bosse dans le grave-médium, aigus amortis
+    wash = _spec_filter(rs.randn(n), lambda f: (np.maximum(f, 30) / 1000.0) ** -0.5 * _butter(f, 3800, 2) * _butter(f, 140, 2, high=True)
+                        * (1 + 0.8 * np.exp(-0.5 * ((f - 450) / 260) ** 2)))
+    wash = wash / np.std(wash) * 0.0045 * gust
+    # 2) les gouttes sur la vitre : impulsions courtes, résonances du carreau entre 1,8 et 6 kHz
+    drops = np.zeros(n)
+    rate = 22.0 + 5.0 * k
+    count = int(rate * sec)
+    pos = rs.uniform(0, n, count).astype(int)
+    for i in pos:
+        g = gust[i]
+        a = min(rs.pareto(2.2) * 0.026, 0.1) * g
+        if a < 0.002:
+            continue
+        m = int(RATE * 0.03)
+        tt = np.arange(m) / RATE
+        f0 = rs.uniform(1800, 6000)
+        ev = (np.sin(2 * np.pi * f0 * tt) * np.exp(-tt / rs.uniform(0.002, 0.006))
+              + 0.6 * np.sin(2 * np.pi * f0 * rs.uniform(1.4, 2.2) * tt) * np.exp(-tt / 0.0025)
+              + 0.8 * rs.randn(m) * np.exp(-tt / 0.0006)
+              + 0.5 * np.sin(2 * np.pi * rs.uniform(350, 800) * tt) * np.exp(-tt / 0.004))
+        _wrap_add(drops, i, ev * a)
+    drops = _spec_filter(drops, lambda f: _butter(f, 7000, 2) * _butter(f, 200, 1, high=True))
+    # 3) l'appui de fenêtre qui goutte, à son rythme (bulle : la hauteur monte), une ou deux sources
+    sill = np.zeros(n)
+    for src in range(2):
+        period = rs.uniform(0.7, 1.6) * (1.0 + src * 0.6)
+        beats = max(1, int(round(sec / period)))
+        period = sec / beats
+        f_b = rs.uniform(900, 1500)
+        for b in range(beats):
+            if rs.rand() < 0.12:
+                continue
+            i = int((b * period + rs.normal(0, 0.035) + src * 0.37) * RATE) % n
+            m = int(RATE * 0.09)
+            tt = np.arange(m) / RATE
+            fb = f_b * rs.uniform(0.93, 1.07)
+            ph = 2 * np.pi * np.cumsum(fb * (1 + 0.9 * (1 - np.exp(-tt / 0.012)))) / RATE
+            plip = np.sin(ph) * np.exp(-tt / 0.022) * np.clip(tt / 0.0008, 0, 1)
+            tick = rs.randn(m) * np.exp(-tt / 0.0012) * 0.35
+            _wrap_add(sill, i, (plip + tick) * rs.uniform(0.6, 1.0) * (0.075 if src == 0 else 0.045))
+    sill = _spec_filter(sill, lambda f: _butter(f, 4200, 2) * _butter(f, 300, 2, high=True))
+    # 4) un filet d'eau qui coule sur la vitre, par moments (deux passages par boucle)
+    trickle = _spec_filter(rs.randn(n), lambda f: np.exp(-0.5 * (np.log(np.maximum(f, 1) / 2200) / 0.45) ** 2))
+    flutter = 0.5 + 0.5 * np.clip(_smooth_noise(n, 35, rs), -2, 2) / 2
+    swell = np.clip(np.sin(2 * np.pi * (2 / sec) * t + rs.uniform(0, 6.3)), 0, 1) ** 3
+    trickle = trickle / np.std(trickle) * flutter * swell * 0.004
+    out = wash + drops + sill + trickle
+    out = _spec_filter(out, lambda f: _butter(f, 40, 2, high=True))
+    return out
+
+
+def rain_roof(sec=20.0):
+    """La pluie sur le toit, à travers le plafond et le grenier : un roulement grave et serré, un crépitement
+    étouffé, des rafales lentes. Boucle de sec s."""
+    rs = np.random.RandomState(4200)
+    n = int(RATE * sec)
+    t = np.arange(n) / RATE
+    gust = 1.0 + 0.2 * np.sin(2 * np.pi * (1 / sec) * t + 1.3) + 0.12 * np.sin(2 * np.pi * (3 / sec) * t + 0.4)
+    rumble = _spec_filter(rs.randn(n), lambda f: (np.maximum(f, 20) / 100.0) ** -0.8 * _butter(f, 420, 3) * _butter(f, 35, 2, high=True))
+    rumble = rumble / np.std(rumble)
+    patter = np.zeros(n)
+    pos = rs.uniform(0, n, int(420 * sec)).astype(int)
+    m = int(RATE * 0.02)
+    tt = np.arange(m) / RATE
+    for i in pos:
+        a = min(rs.pareto(3.0) * 0.3, 0.8) * gust[i]
+        _wrap_add(patter, i, rs.randn(m) * np.exp(-tt / 0.003) * a)
+    patter = _spec_filter(patter, lambda f: _butter(f, 900, 3) * _butter(f, 120, 2, high=True))
+    patter = patter / (np.std(patter) + 1e-12)
+    out = (rumble * 0.8 + patter * 0.35) * gust
+    return out
+
+
+# ------------------------------------------------------------------ respiration du héros
+
+def _tract(f, form, nasal=0.0, chest=0.0, hiss=0.0, hiss_fc=4500.0):
+    """Enveloppe spectrale d'un souffle : formants (form : [(fc, bw, g)]), nasalité (résonance grave et
+    creux vers 900 Hz), poitrine (grave, l'oreille interne), sifflement des dents ; son entendu de
+    l'intérieur de la tête (grave renforcé, aigus doux)."""
+    e = _peaks(f, form)
+    if nasal:
+        e = e * (1 - nasal * 0.85 * np.exp(-0.5 * ((f - 950) / 260) ** 2)) + nasal * 0.5 * np.exp(-0.5 * ((f - 280) / 90) ** 2)
+    if chest:
+        e = e + chest * _butter(f, 320, 2) * _butter(f, 70, 2, high=True)
+    if hiss:
+        e = e + hiss * np.exp(-0.5 * (np.log(np.maximum(f, 1) / hiss_fc) / 0.35) ** 2)
+    head = (1 + 0.45 * _butter(f, 500, 1)) * _butter(f, 7000, 2) * _butter(f, 120, 2, high=True)
+    return e * head
+
+
+def _envelope(n, attack, release, shape=1.0, sustain_tilt=0.0):
+    """Enveloppe d'un souffle : montée (attack), plateau qui penche (sustain_tilt), descente (release), en
+    fractions de la durée ; shape > 1 : descente plus douce."""
+    u = np.linspace(0, 1, n)
+    a = np.clip(u / max(attack, 1e-4), 0, 1) ** 0.7
+    r = np.clip((1 - u) / max(release, 1e-4), 0, 1) ** shape
+    s = 1 + sustain_tilt * (u - 0.5)
+    return np.sin(np.pi / 2 * a) * r * s
+
+
+def _voiced(n, f0, form, rs, jitter=0.02):
+    """Un peu de voix (glotte) : impulsions de Rosenberg à f0 (hauteur qui flotte), à travers les formants."""
+    x = np.zeros(n)
+    i = 0.0
+    while i < n:
+        period = RATE / (f0 * (1 + rs.normal(0, jitter)))
+        k = int(i)
+        m = int(period * 0.6)
+        tt = np.arange(m) / max(m, 1)
+        pulse = np.where(tt < 0.7, 0.5 * (1 - np.cos(np.pi * tt / 0.7)), np.cos(np.pi * (tt - 0.7) / 0.6))
+        end = min(n, k + m)
+        x[k:end] += pulse[:end - k]
+        i += period
+    x = np.diff(x, prepend=0.0)    # dérivée du débit : le son rayonné
+    return _spec_filter(x, lambda f: _peaks(f, form) + 0.05)
+
+
+BREATH_SPECS = {
+    # durée in / out (s), formants in / out, nasalité, poitrine, sifflement, tremblement, voix
+    'calme': dict(din=1.45, dout=2.05, fin=[(1700, 1400, 0.7), (3000, 1600, 0.5), (650, 500, 0.3)],
+                  fout=[(900, 900, 0.6), (1700, 1200, 0.45), (2900, 1500, 0.2)], nasal=0.9, chest=0.25,
+                  hiss=0.12, trem=0.0, voice=0.0, rough=0.1, pause=0.9),
+    'tendu': dict(din=0.92, dout=1.25, fin=[(620, 420, 0.8), (1250, 600, 0.65), (2600, 900, 0.5)],
+                  fout=[(700, 450, 0.9), (1220, 650, 0.6), (2550, 1000, 0.35)], nasal=0.15, chest=0.45,
+                  hiss=0.35, trem=0.12, voice=0.0, rough=0.25, pause=0.45),
+    'panique': dict(din=0.52, dout=0.72, fin=[(560, 380, 0.9), (1400, 600, 0.7), (2700, 900, 0.6)],
+                    fout=[(760, 420, 1.0), (1250, 600, 0.75), (2600, 1000, 0.45)], nasal=0.0, chest=0.7,
+                    hiss=0.55, trem=0.2, voice=0.05, rough=0.4, pause=0.06),
+}
+
+
+def breath(kind, way, k):
+    """Un souffle du héros : « in » (inspiration) ou « out » (expiration), ensemble kind (calme, tendu,
+    panique), variante k. Synthèse : bruit d'air mis en forme par le conduit vocal (STFT), enveloppe, grain
+    de turbulence, tremblement ; en panique, un rien de voix au bout de l'inspiration (le « hh-uh »)."""
+    sp = BREATH_SPECS[kind]
+    rs = np.random.RandomState(4300 + 100 * list(BREATH_SPECS).index(kind) + (0 if way == 'in' else 50) + k)
+    dur = (sp['din'] if way == 'in' else sp['dout']) * rs.uniform(0.88, 1.12)
+    n = int(RATE * dur)
+    sh = rs.uniform(0.94, 1.06)            # longueur du conduit de cette variante
+    form = [(fc * sh * rs.uniform(0.97, 1.03), bw, g) for fc, bw, g in (sp['fin'] if way == 'in' else sp['fout'])]
+    drift = rs.uniform(-0.08, 0.08)        # les formants glissent un peu pendant le souffle (mâchoire)
+
+    def env_fn(f, u):
+        moved = [(fc * (1 + drift * u), bw, g) for fc, bw, g in form]
+        hiss = sp['hiss'] * (1.2 if way == 'in' else 0.7)
+        return _tract(f, moved, nasal=sp['nasal'], chest=sp['chest'] * (0.6 if way == 'in' else 1.0), hiss=hiss,
+                      hiss_fc=5200 if way == 'in' else 3800)
+    x = _shaped_noise(n, env_fn, rs)
+    x /= np.std(x) + 1e-12
+    # grain de turbulence (le souffle n'est jamais un bruit lisse) et tremblement de la peur
+    t = np.arange(n) / RATE
+    grain = 1 + sp['rough'] * np.clip(_smooth_noise(n, rs.uniform(25, 45), rs), -2.5, 2.5) / 2.5
+    trem = 1 + sp['trem'] * np.sin(2 * np.pi * rs.uniform(5.0, 7.5) * t + rs.uniform(0, 6.3)) \
+        + sp['trem'] * 0.5 * np.clip(_smooth_noise(n, 9, rs), -2, 2) / 2
+    if way == 'in':
+        env = _envelope(n, attack=rs.uniform(0.18, 0.3) if kind != 'panique' else 0.07, release=0.18 if kind != 'panique' else 0.06,
+                        shape=1.2, sustain_tilt={'calme': 0.35, 'tendu': 0.3, 'panique': 0.7}[kind])
+    else:
+        env = _envelope(n, attack=0.07 if kind != 'calme' else 0.12, release=0.75, shape=1.6, sustain_tilt=-0.5)
+    y = x * grain * trem * env
+    if kind == 'panique' and way == 'in' and rs.rand() < 0.75:
+        # le « uh » qui accroche la gorge à la fin de l'inspiration
+        m = int(RATE * rs.uniform(0.05, 0.09))
+        v = _voiced(m, rs.uniform(105, 135), [(520, 160, 1.0), (1350, 250, 0.5), (2500, 400, 0.25)], rs)
+        v = v / (np.std(v) + 1e-12) * np.hanning(m) * 0.35
+        at = n - m - int(RATE * 0.02)
+        y[at:at + m] += v
+    if kind == 'panique' and way == 'out' and rs.rand() < 0.5:
+        m = int(RATE * rs.uniform(0.06, 0.12))
+        v = _voiced(m, rs.uniform(95, 120), [(700, 180, 1.0), (1200, 250, 0.6), (2550, 400, 0.25)], rs, jitter=0.04)
+        v = v / (np.std(v) + 1e-12) * np.hanning(m) * 0.22
+        y[:m] += v * np.linspace(1, 0.3, m)
+    fade = int(RATE * 0.012)
+    y[:fade] *= np.linspace(0, 1, fade) ** 2
+    y[-fade:] *= np.linspace(1, 0, fade) ** 2
+    return y
+
+
+def _active_rms(x):
+    e = x ** 2
+    w = int(RATE * 0.05)
+    s = np.convolve(e, np.ones(w) / w, mode='same')
+    thr = s.max() * 0.05
+    return np.sqrt(s[s > thr].mean())
+
+
+BREATH_LEVELS = {('calme', 'in'): -24.0, ('calme', 'out'): -25.5, ('tendu', 'in'): -22.0, ('tendu', 'out'): -21.5,
+                 ('panique', 'in'): -19.5, ('panique', 'out'): -20.5}
+
+
+def breaths():
+    for kind in BREATH_SPECS:
+        for way in ('in', 'out'):
+            for k in range(1, 5):
+                y = breath(kind, way, k)
+                y *= 10 ** (BREATH_LEVELS[(kind, way)] / 20) / _active_rms(y)
+                assert np.max(np.abs(y)) < 0.98, (kind, way, k, np.max(np.abs(y)))
+                write_wav('breath_%s_%s_%d.wav' % (kind, way, k), y)
+
+
+def rains():
+    for k in (1, 2, 3):
+        y = rain_glass(k)
+        y *= 10 ** (-20.0 / 20) / np.sqrt(np.mean(y ** 2))
+        y *= min(1.0, 0.9 / np.max(np.abs(y)))
+        write_wav('rain_glass_%d.wav' % k, y)
+    y = rain_roof()
+    y *= 10 ** (-20.0 / 20) / np.sqrt(np.mean(y ** 2))
+    y *= min(1.0, 0.9 / np.max(np.abs(y)))
+    write_wav('rain_roof.wav', y)
+
+
+SON = [rains, breaths]
+
+
 if __name__ == '__main__':
     import sys
     if len(sys.argv) > 1:   # ne régénérer que certaines ressources : make_assets.py house | music | story | floor | images
@@ -4296,6 +4579,9 @@ if __name__ == '__main__':
                 f()
         if 'floor' in sys.argv:
             for f in FLOOR:
+                f()
+        if 'son' in sys.argv:
+            for f in SON:
                 f()
         print('ok')
         raise SystemExit
@@ -4322,6 +4608,8 @@ if __name__ == '__main__':
     for f in STORY:
         f()
     for f in FLOOR:   # v0.3.1 : l'étage
+        f()
+    for f in SON:     # passe « triple A » : pluie aux fenêtres, respiration (hasard propre)
         f()
     images_hd()       # 0.3.4 : les images HD, les photos, et leurs contrôles
     print('ok')

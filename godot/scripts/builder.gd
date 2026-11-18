@@ -260,11 +260,42 @@ func _quad(size: Vector2, pos: Vector3, mat: Material, rot_y := 0.0, parent: Nod
 	return mi
 
 
+## Papiers et images trop blancs (lot V2-NUIT) : facteur d'albédo (linéaire) qui ramène leur blanc (95e
+## centile de la luminance linéaire de l'image, p95) vers PAPER_WHITE, au prorata de la part claire de
+## l'image (pixels au-dessus de 0,5 : f) : k = 1 − (1 − PAPER_WHITE / p95) × min(1, f / 0,5). Mesuré sur
+## les images (aaa_fab/V2-NUIT/outils/papiers.py). Sans cela, une note à 0,84 d'albédo prise dans le
+## faisceau de la lampe brillait comme une lampe, deux fois plus claire que le papier peint.
+const PAPER_WHITE := 0.5
+const PAPER_K := {
+	"note.png": 0.56, "paper_312.png": 0.59, "manual.png": 0.56, "vhs_label.png": 0.57,
+	"calendar.png": 0.64, "corkboard.png": 0.74, "poster_spectres.png": 0.77, "floppy_label.png": 0.77,
+	"clock_face.png": 0.81, "photo.png": 0.94, "poster_choisis.png": 0.98,
+}
+## Reflet spéculaire des papiers mats (0,5 par défaut) : le point chaud de la lampe ne les fait plus briller.
+const PAPER_SPECULAR := 0.3
+
+
 func _image_mat(file: String, rough := 0.95) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
 	m.albedo_texture = load("res://assets/images/" + file)
 	m.roughness = rough
 	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	# (vraie carte seulement : le rendu logiciel, profil des tests, garde l'image d'avant)
+	if not soft_render():
+		paper_albedo(m, float(PAPER_K.get(file.get_file(), 1.0)))
+	return m
+
+
+## Pose le facteur d'albédo k (linéaire, 1 = rien) d'un papier ou d'une image claire ; un papier mat (k <
+## 0,9, rugosité ≥ 0,7) reflète aussi moins le point chaud de la lampe. Pour les autres lots : un papier
+## blanc (fond vers 0,8 en linéaire) prend k ≈ PAPER_WHITE / 0,85.
+static func paper_albedo(m: BaseMaterial3D, k: float) -> BaseMaterial3D:
+	if k >= 0.999:
+		return m
+	var c := Color(k, k, k).linear_to_srgb()
+	m.albedo_color = Color(c.r * m.albedo_color.r, c.g * m.albedo_color.g, c.b * m.albedo_color.b, m.albedo_color.a)
+	if k < 0.9 and m.roughness >= 0.7:
+		m.metallic_specular = PAPER_SPECULAR
 	return m
 
 
@@ -2072,11 +2103,16 @@ func _wall_piece(axis: String, a: float, b: float, c: float, ya: float, yb: floa
 ## face : coordonnée de la face du mur ; dir : +1 ou -1, vers l'intérieur de la pièce.
 ## gaps : passages [u_début, u_fin] où le bas du mur est interrompu (portes).
 ## style : dado_h (hauteur du lambris, 0 = aucun), dado (matière), rail (cimaise), base (plinthe), crown (corniche).
+## Rendu logiciel (soft_render) : les boîtes d'avant. Vraie carte (lot V2-NUIT) : moulures profilées
+## (_trim_profiled), un maillage par mur.
 func trim(axis: String, u0: float, u1: float, face: float, dir: float, h: float, gaps := [], style := {}, y0 := 0.0, parent: Node3D = self) -> void:
 	var dado_h: float = style.get("dado_h", 0.92)
 	var dado: Material = style.get("dado", mats.wainscot)
 	var wood: Material = style.get("wood", mats.wood_dark)
 	var crown: Material = style.get("crown_mat", mats.paint)
+	if not soft_render() and _uv_free(dado) and _uv_free(wood) and _uv_free(crown):
+		_trim_profiled(axis, u0, u1, face, dir, h, gaps, style, y0, parent, dado_h, dado, wood, crown)
+		return
 	var spans := _spans(u0, u1, gaps)
 	var wt := 0.022
 	for s in spans:
@@ -2090,6 +2126,201 @@ func trim(axis: String, u0: float, u1: float, face: float, dir: float, h: float,
 	if style.get("crown", true):
 		_trim_piece(axis, u0, u1, face + dir * 0.035, y0 + h - 0.035, 0.07, 0.07, crown, parent)
 		_trim_piece(axis, u0, u1, face + dir * 0.055, y0 + h - 0.085, 0.03, 0.11, crown, parent)
+
+
+## Moulures profilées (vraie carte) : profils 2D extrudés le long du mur, fondus en un maillage par mur
+## (une surface par matière). Les angles rentrants se raccordent d'eux-mêmes (les deux profils se
+## recouvrent : l'arête de rencontre est celle d'une coupe d'onglet). Aux portes, cimaise et plinthe
+## s'arrêtent contre le chambranle (CASING_OUT au-delà du bord de l'ouverture) sur leur profil (un petit
+## retour) ; quand la plinthe déborde du chambranle (lambris), un socle de chambranle la reçoit. Le lambris
+## reste une boîte (sous la cimaise et le chambranle) ; la faïence sans cimaise reçoit un listel arrondi.
+## Coût : environ 25 sommets par mètre de moulure, construit pendant la maison (vraie carte seulement).
+const CASING_OUT := 0.0645      # bord extérieur du chambranle (door.gd) au-delà du bord de l'ouverture
+const CASING_IN := 0.0205       # bord intérieur du chambranle en deçà du bord de l'ouverture
+const PLINTH_BLOCK := Vector2(0.15, 0.004)   # socle de chambranle : hauteur, saillie au-delà de la plinthe
+const TRIM_SMOOTH_COS := 0.82   # arêtes plus douces que 35° : normales lissées (arrondis du profil)
+static var _profiles := {}
+
+
+class TrimAcc:
+	var v := PackedVector3Array()
+	var n := PackedVector3Array()
+	var uv := PackedVector2Array()
+	var idx := PackedInt32Array()
+
+
+func _trim_profiled(axis: String, u0: float, u1: float, face: float, dir: float, h: float, gaps: Array, style: Dictionary,
+		y0: float, parent: Node3D, dado_h: float, dado: Material, wood: Material, crown: Material) -> void:
+	var wt := 0.022
+	var accs := {}
+	var keys := []        # ordre des surfaces (déterministe)
+	var spans := _spans(u0, u1, gaps)
+	var base_on: bool = style.get("base", true)
+	var casing: Material = style.get("casing", mats.paint)
+	for s in spans:
+		var a: float = s[0]
+		var b: float = s[1]
+		# (un bout contre une porte s'arrête au chambranle ; contre un mur, il va jusqu'au mur)
+		var pa := a + (CASING_OUT if absf(a - u0) > 0.0005 else 0.0)
+		var pb := b - (CASING_OUT if absf(b - u1) > 0.0005 else 0.0)
+		if dado_h > 0.0:
+			_trim_piece(axis, a, b, face + dir * wt / 2.0, y0 + dado_h / 2.0, dado_h, wt, dado, parent)
+			if style.get("rail", true):
+				_profile_add(accs, keys, wood, _profile("rail"), axis, pa, pb, face, dir, 0.0, y0 + dado_h - 0.008)
+			else:
+				_profile_add(accs, keys, dado, _profile("cap"), axis, pa, pb, face, dir, 0.0, y0 + dado_h - 0.004)
+		if base_on:
+			_profile_add(accs, keys, wood, _profile("base"), axis, pa, pb, face, dir, wt if dado_h > 0.0 else 0.0, y0)
+	if style.get("crown", true):
+		_profile_add(accs, keys, crown, _profile("crown"), axis, u0, u1, face, dir, 0.0, y0 + h - 0.09)
+	if accs.is_empty():
+		return
+	var am := ArrayMesh.new()
+	for m in keys:
+		var acc: TrimAcc = accs[m]
+		var arr := []
+		arr.resize(Mesh.ARRAY_MAX)
+		arr[Mesh.ARRAY_VERTEX] = acc.v
+		arr[Mesh.ARRAY_NORMAL] = acc.n
+		arr[Mesh.ARRAY_TEX_UV] = acc.uv
+		arr[Mesh.ARRAY_INDEX] = acc.idx
+		am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+		am.surface_set_material(am.get_surface_count() - 1, m)
+	var mi := MeshInstance3D.new()
+	mi.mesh = am
+	parent.add_child(mi)
+	# socles de chambranle : la plinthe posée sur le lambris déborde du chambranle
+	if base_on and dado_h > 0.0:
+		var depth := wt + 0.016 + PLINTH_BLOCK.y
+		for g in gaps:
+			for side: float in [-1.0, 1.0]:
+				var edge: float = g[0] if side < 0.0 else g[1]
+				if edge <= u0 + 0.0005 or edge >= u1 - 0.0005:
+					continue
+				# du bord intérieur du chambranle à 1 mm au-delà de son bord extérieur
+				var lo: float = edge - CASING_IN * side
+				var hi: float = edge + (CASING_OUT + 0.001) * side
+				var bw := absf(hi - lo)
+				var uc: float = (lo + hi) / 2.0
+				var cpos := face + dir * depth / 2.0
+				if axis == "x":
+					_box(Vector3(bw, PLINTH_BLOCK.x, depth), Vector3(uc, y0 + PLINTH_BLOCK.x / 2.0, cpos), casing, false, parent)
+				else:
+					_box(Vector3(depth, PLINTH_BLOCK.x, bw), Vector3(cpos, y0 + PLINTH_BLOCK.x / 2.0, uc), casing, false, parent)
+
+
+## Profil d'une moulure, (d, y) en m : d = saillie depuis le mur, y = hauteur depuis le bas de la pièce ;
+## du bas contre le mur au haut contre le mur (matière à gauche du parcours). « base » : plinthe de 11 cm à
+## gorge et quart-de-rond ; « rail » : cimaise de 45 mm, saillie de 25 mm sur le lambris (tore et baguette) ;
+## « cap » : listel arrondi sur la faïence ; « crown » : corniche de 9 cm (listel, quart-de-rond, gorge).
+static func _profile(kind: String) -> PackedVector2Array:
+	if _profiles.has(kind):
+		return _profiles[kind]
+	var p := PackedVector2Array()
+	match kind:
+		"base":
+			p.append_array([Vector2(0, 0), Vector2(0.016, 0), Vector2(0.016, 0.079), Vector2(0.0138, 0.0805),
+				Vector2(0.0138, 0.0845), Vector2(0.016, 0.086)])
+			p.append_array(_arc(Vector2(0.003, 0.086), Vector2(0.013, 0.024), 0.0, 90.0, 6, true))
+			p.append(Vector2(0, 0.11))
+		"rail":
+			var w := 0.022
+			p.append_array([Vector2(0, 0.008), Vector2(w - 0.001, 0.008), Vector2(w - 0.001, 0.0), Vector2(w + 0.004, 0.0)])
+			p.append_array(_arc(Vector2(w + 0.004, 0.019), Vector2(0.021, 0.019), -90.0, 0.0, 6, true))
+			p.append(Vector2(w + 0.025, 0.023))
+			p.append_array(_arc(Vector2(w + 0.009, 0.023), Vector2(0.016, 0.016), 0.0, 90.0, 5, true))
+			p.append_array([Vector2(w + 0.006, 0.039), Vector2(w + 0.006, 0.045), Vector2(0, 0.045)])
+		"cap":
+			p.append_array([Vector2(0, 0), Vector2(0.0235, 0)])
+			p.append_array(_arc(Vector2(0.0095, 0.0), Vector2(0.014, 0.014), 0.0, 90.0, 6, true))
+			p.append(Vector2(0, 0.014))
+		"crown":
+			var r := 0.038
+			p.append_array([Vector2(0, 0), Vector2(0.01, 0), Vector2(0.01, 0.004)])
+			p.append_array(_arc(Vector2(0.01, 0.004 + r), Vector2(r, r), -90.0, 0.0, 7, true))
+			p.append_array(_arc(Vector2(0.01 + 2.0 * r, 0.004 + r), Vector2(r, r), 180.0, 90.0, 7, true))
+			p.append_array([Vector2(0.094, 0.004 + 2.0 * r), Vector2(0.094, 0.09), Vector2(0, 0.09)])
+	_profiles[kind] = p
+	return p
+
+
+## Arc d'ellipse de centre c, rayons r, de a0 à a1 degrés, en n segments (skip_first : sans le premier point).
+static func _arc(c: Vector2, r: Vector2, a0: float, a1: float, n: int, skip_first := false) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	for i in range(1 if skip_first else 0, n + 1):
+		var a := deg_to_rad(lerpf(a0, a1, float(i) / n))
+		out.append(c + Vector2(cos(a) * r.x, sin(a) * r.y))
+	return out
+
+
+static func _trim_pos(axis: String, u: float, face: float, dir: float, d: float, y: float) -> Vector3:
+	return Vector3(u, y, face + dir * d) if axis == "x" else Vector3(face + dir * d, y, u)
+
+
+static func _trim_nrm(axis: String, dir: float, n: Vector2) -> Vector3:
+	return Vector3(0.0, n.y, dir * n.x) if axis == "x" else Vector3(dir * n.x, n.y, 0.0)
+
+
+## Ajoute à l'accumulateur de « m » le profil prof extrudé de u = a à u = b (d décalé de d0, y de ybase),
+## avec ses deux bouts fermés. Triangles dans le sens de Godot (horaire vu de devant).
+static func _profile_add(accs: Dictionary, keys: Array, m: Material, prof: PackedVector2Array, axis: String, a: float, b: float,
+		face: float, dir: float, d0: float, ybase: float) -> void:
+	if b - a < 0.004 or prof.size() < 3:
+		return
+	if not accs.has(m):
+		accs[m] = TrimAcc.new()
+		keys.append(m)
+	var acc: TrimAcc = accs[m]
+	var np := prof.size()
+	var sn: Array[Vector2] = []
+	for i in np - 1:
+		var t := (prof[i + 1] - prof[i]).normalized()
+		sn.append(Vector2(t.y, -t.x))
+	var per := 0.0
+	for i in np - 1:
+		var p0 := prof[i]
+		var p1 := prof[i + 1]
+		var n0 := sn[i]
+		var n1 := sn[i]
+		if i > 0 and sn[i - 1].dot(sn[i]) > TRIM_SMOOTH_COS:
+			n0 = (sn[i - 1] + sn[i]).normalized()
+		if i < np - 2 and sn[i + 1].dot(sn[i]) > TRIM_SMOOTH_COS:
+			n1 = (sn[i + 1] + sn[i]).normalized()
+		var sl := p0.distance_to(p1)
+		var k := acc.v.size()
+		for u in [a, b]:
+			acc.v.append(_trim_pos(axis, u, face, dir, d0 + p0.x, ybase + p0.y))
+			acc.n.append(_trim_nrm(axis, dir, n0))
+			acc.uv.append(Vector2(u, per))
+			acc.v.append(_trim_pos(axis, u, face, dir, d0 + p1.x, ybase + p1.y))
+			acc.n.append(_trim_nrm(axis, dir, n1))
+			acc.uv.append(Vector2(u, per + sl))
+		per += sl
+		# k : (a, p0), k+1 : (a, p1), k+2 : (b, p0), k+3 : (b, p1)
+		_trim_tri(acc, k, k + 1, k + 2, _trim_nrm(axis, dir, sn[i]))
+		_trim_tri(acc, k + 2, k + 1, k + 3, _trim_nrm(axis, dir, sn[i]))
+	# bouts : le profil fermé le long du mur
+	var tris := Geometry2D.triangulate_polygon(prof)
+	if tris.is_empty():
+		return
+	var ua := Vector3(1, 0, 0) if axis == "x" else Vector3(0, 0, 1)
+	for end in [[a, -ua], [b, ua]]:
+		var k := acc.v.size()
+		for q in prof:
+			acc.v.append(_trim_pos(axis, end[0], face, dir, d0 + q.x, ybase + q.y))
+			acc.n.append(end[1])
+			acc.uv.append(q)
+		for t in range(0, tris.size(), 3):
+			_trim_tri(acc, k + tris[t], k + tris[t + 1], k + tris[t + 2], end[1])
+
+
+## Un triangle, retourné si besoin pour que sa face avant regarde du côté de n (sens horaire de Godot).
+static func _trim_tri(acc: TrimAcc, i0: int, i1: int, i2: int, n: Vector3) -> void:
+	var c := (acc.v[i1] - acc.v[i0]).cross(acc.v[i2] - acc.v[i0])
+	if c.dot(n) > 0.0:
+		acc.idx.append_array([i0, i2, i1])
+	else:
+		acc.idx.append_array([i0, i1, i2])
 
 
 func _spans(u0: float, u1: float, gaps: Array) -> Array:

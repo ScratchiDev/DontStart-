@@ -237,7 +237,9 @@ static func apply(main: Main) -> void:
 	env.ssr_enabled = reflections_on()
 	if env.ssr_enabled:
 		env.ssr_max_steps = SSR_STEPS[q]
-		env.ssr_fade_in = 0.15
+		# (entrée en fondu plus longue : au contact des pieds de chaise et des meubles, le parquet ne fait plus
+		# miroir mouillé)
+		env.ssr_fade_in = 0.35
 		env.ssr_fade_out = 2.0
 		# (portes et cloisons de 10 cm : la tolérance par défaut, 0,5, étirait les reflets derrière elles)
 		env.ssr_depth_tolerance = 0.15
@@ -258,7 +260,8 @@ static func apply(main: Main) -> void:
 	vp.positional_shadow_atlas_size = ATLAS[fq] if fq != BASSE else int(_ps("rendering/lights_and_shadows/positional_shadow/atlas_size", 4096))
 	RenderingServer.positional_soft_shadow_filter_set_quality(shadow_quality(q, retro, extras))
 	if env.ssr_enabled:
-		RenderingServer.environment_set_ssr_roughness_quality(RenderingServer.ENV_SSR_ROUGHNESS_QUALITY_HIGH if q == ULTRA else RenderingServer.ENV_SSR_ROUGHNESS_QUALITY_LOW)
+		# (environment_set_ssr_roughness_quality ne fait plus rien en 4.7.2 et avertissait à chaque
+		# lancement : la rugosité des reflets est prise en compte d'office)
 		RenderingServer.environment_set_ssr_half_size(q != ULTRA)
 	# filtrage des décalques (taches, empreintes) et des masques de projection (lampe de poche)
 	RenderingServer.decals_set_filter(RenderingServer.DECAL_FILTER_LINEAR_MIPMAPS_ANISOTROPIC if extras and q >= ELEVEE

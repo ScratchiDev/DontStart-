@@ -32,6 +32,8 @@ var flash_base := 5.0
 var flash_near := 1.0     # baisse de la lampe quand une surface est tout près (sinon tout blanchit)
 const FLASH_NEAR_FULL := 2.4     # pleine puissance au-delà de 2,4 m ; plus près, l'éclairement reste
 const FLASH_NEAR_MIN := 0.08     # celui d'un mur à 2,4 m (compensation en d²), sans descendre sous 8 %
+const FLASH_NEAR_POW_NET := 1.3   # rendu net sur vraie carte : compensation plus douce, et plancher à 25 %
+const FLASH_NEAR_MIN_NET := 0.25
 var current: Interactable = null
 var _flash_before_sit := true
 var rug_rect := Rect2(-1.1, -0.25, 2.4, 1.5)   # x, z, largeur, profondeur : le tapis étouffe les pas (sans maison)
@@ -142,7 +144,11 @@ func _flash_near_target() -> float:
 	if hit.is_empty():
 		return 1.0
 	var d := from.distance_to(hit.position) / FLASH_NEAR_FULL
-	return clampf(d * d, FLASH_NEAR_MIN, 1.0)
+	if not Qualite.extras_on():
+		return clampf(d * d, FLASH_NEAR_MIN, 1.0)
+	# rendu net sur vraie carte (AgX et son épaule absorbent le surplus) : l'objet qu'on regarde de près reste éclairé
+	# (revue « peur » de la vague 2 : à 8 %, la disquette de l'armoire et l'antenne restaient dans le noir)
+	return clampf(pow(d, FLASH_NEAR_POW_NET), FLASH_NEAR_MIN_NET, 1.0)
 
 
 ## Le sol sous les pieds : demandé à la maison ; sans maison, le tapis de la chambre.
