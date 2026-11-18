@@ -8,8 +8,13 @@ extends Node
 ## juger la peau en pleine lumière), mur_20cm (face au mur, l'œil à 20 cm : intersection), regard_bas,
 ## devant_pc (debout devant l'ordinateur allumé : la lueur verte de l'écran, toute proche de la main),
 ## inventaire (regard au sol près de la porte, comme l'autotest 22_inventaire).
-## Peau : une passe de plus où la peau est peinte en magenta (masque) ; sur la capture AVEC, luminance et
-## saturation verte des pixels de peau (centile 99,5) : M7 « devant_pc », pas de peau brûlée ni verte.
+## Masque : une passe de plus où la peau est peinte en magenta, la manche en cyan, la lampe en jaune.
+## Sur la capture AVEC : M7 (devant_pc, inventaire) peau ni brûlée ni verte (luminance et saturation verte
+## des pixels de peau, centile 99,5) ; M9 (toutes les vues) écart de luminance pouce / dos de la main ≤ 2,5
+## (médianes autour des points « Pouce » et « Dos » du modèle) et teinte médiane de la peau entre 10° et
+## 30° ; M10 (chambre_jour) manche / peau ≤ 1,2 en luminance. AVEC et SANS : M8 (regard_bas, inventaire,
+## mur_20cm, devant_pc) la lampe éclaire autant avec les mains : hors de la vue (masque dilaté), luminance
+## moyenne et part de l'image éclairée (L > 60/255) à ± 10 % de la capture sans les mains.
 ## « --retro » : style rétro (pixels) pour ce lancement.
 ## Chaque capture : <vue>_avec.png, <vue>_sans.png ; journal « MAINS <vue> … ».
 
@@ -195,29 +200,53 @@ func _view(v: String, seul: String) -> void:
 		_:
 			print("vue inconnue : ", v)
 			return
+	var imgs := {}
+	var mask: Image = null
 	for w in ["avec", "sans"]:
 		if seul != "" and seul != w:
 			continue
 		Game.mains_visibles = w == "avec"
-		await wait(1.2)
+		# (avec : le temps que l'équilibre mesuré sur l'image se règle)
+		await wait(3.0 if w == "avec" else 1.2)
 		var img := get_viewport().get_texture().get_image()
+		imgs[w] = img
 		if shots != "":
 			img.save_png(shots.path_join("%s_%s.png" % [v, w]))
 		var vm: Viewmodel = player.viewmodel
 		var lp: Vector3 = player.flashlight.global_position
-		print("MAINS %s %s · lampe %s · œil %s · baissée %.2f obstacle %.2f sol %.2f rebond %.2f" % [v, w, lp, player.camera.global_position, vm._lower, vm._obst, vm._down, vm.bounce.light_energy])
+		print("MAINS %s %s · lampe %s · œil %s · baissée %.2f obstacle %.2f sol %.2f rebond %.2f · équilibre %s" % [v, w, lp, player.camera.global_position, vm._lower, vm._obst, vm._down, vm.bounce.light_energy, vm.bal_stats])
 		if w == "avec" and v == "mur_20cm":
 			# la lumière reste de ce côté du mur (x < 3,2)
 			check("M6 face au mur : la lampe ne passe pas le mur", lp.x < 3.2, "x = %.3f" % lp.x)
 		if w == "avec":
 			_mask_name = "%s_masque.png" % v
-			var st: Dictionary = await _skin_stats(img)
+			mask = await _mask_pass()
+			var st: Dictionary = _skin_stats(img, mask)
 			print("MAINS %s peau : %d px, luminance p99,5 %.2f (max %.2f), saturation verte p99,5 %.2f (max %.2f)" % [
 				v, st.n, st.lum, st.lum_max, st.green, st.green_max])
 			# (pas en style rétro : palette réduite, tramage et franges colorées font des pixels saturés)
 			if (v == "devant_pc" or v == "inventaire") and not Game.style_retro:
 				check("M7 %s : peau ni brûlée ni verte" % v, st.n > 200 and st.lum <= 0.9 and st.green <= 0.35,
 					"%d px, luminance %.2f, vert %.2f" % [st.n, st.lum, st.green])
+			var pr: Dictionary = _thumb_back(img, mask)
+			print("MAINS %s pouce %.3f dos %.3f écart %.2f · teinte médiane %.0f° (p10 %.0f°, p90 %.0f°) · manche %.3f peau %.3f" % [
+				v, pr.pouce, pr.dos, pr.ecart, pr.hue, pr.hue10, pr.hue90, pr.manche, pr.peau])
+			if not Game.style_retro:
+				check("M9 %s : écart pouce / dos ≤ 2,5, teinte de la peau 10-30°" % v,
+					pr.ecart <= 2.5 and pr.hue >= 10.0 and pr.hue <= 30.0,
+					"écart %.2f, teinte %.0f°" % [pr.ecart, pr.hue])
+				if v == "chambre_jour":
+					check("M10 chambre_jour : manche / peau ≤ 1,2", pr.peau > 0.0 and pr.manche / pr.peau <= 1.2,
+						"manche %.3f, peau %.3f" % [pr.manche, pr.peau])
+	if imgs.size() == 2 and mask and v in ["regard_bas", "inventaire", "mur_20cm", "devant_pc"]:
+		var a := _beam_stats(imgs.avec, mask)
+		var b := _beam_stats(imgs.sans, mask)
+		var dl: float = a.lum / maxf(b.lum, 0.001) - 1.0
+		var da: float = a.lit / maxf(b.lit, 0.001) - 1.0
+		print("MAINS %s faisceau : luminance hors de la vue %.1f / %.1f (%+.0f %%), part éclairée %.1f %% / %.1f %% (%+.0f %%)" % [
+			v, a.lum * 255.0, b.lum * 255.0, dl * 100.0, a.lit * 100.0, b.lit * 100.0, da * 100.0])
+		check("M8 %s : la lampe éclaire autant avec les mains (± 10 %%)" % v, absf(dl) <= 0.10 and (absf(da) <= 0.10 or absf(a.lit - b.lit) < 0.004),
+			"luminance %+.0f %%, part éclairée %+.0f %%" % [dl * 100.0, da * 100.0])
 	Game.mains_visibles = true
 
 
@@ -226,30 +255,146 @@ static func _magenta(m: Image, x: int, y: int) -> bool:
 	return c.r > 0.75 and c.b > 0.75 and c.r - c.g > 0.25 and c.b - c.g > 0.25
 
 
-## Masque de la peau (une passe où la peau est peinte en magenta, sans éclairage) ; statistiques des
-## pixels de peau de la capture « img » : luminance (Rec. 709, valeurs affichées) et saturation des
-## teintes vertes (75° à 165°), centile 99,5 et maximum.
-func _skin_stats(img: Image) -> Dictionary:
+static func _cyan(m: Image, x: int, y: int) -> bool:
+	var c := m.get_pixel(x, y)
+	return c.g > 0.75 and c.b > 0.75 and c.g - c.r > 0.25 and c.b - c.r > 0.25
+
+
+## Pixel de la vue (peau, manche, lampe…) : magenta, cyan ou jaune dans le masque.
+static func _any_vm(m: Image, x: int, y: int) -> bool:
+	var c := m.get_pixel(x, y)
+	var mx := maxf(c.r, maxf(c.g, c.b))
+	var mn := minf(c.r, minf(c.g, c.b))
+	return mx > 0.6 and mx - mn > 0.35
+
+
+## Passe de masque : la peau en magenta, la manche en cyan, le reste de la vue (lampe, bracelet) en jaune,
+## sans éclairage ; rend l'image (et l'écrit si « shots »).
+func _mask_pass() -> Image:
 	var vm: Viewmodel = player.viewmodel
-	var mi := vm.model.get_node_or_null("Main") as MeshInstance3D
-	var out := {"n": 0, "lum": 0.0, "lum_max": 0.0, "green": 0.0, "green_max": 0.0}
-	if mi == null:
-		return out
-	var mk := StandardMaterial3D.new()
-	mk.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mk.albedo_color = Color(1, 0, 1)
-	mk.use_z_clip_scale = true
-	mk.z_clip_scale = Viewmodel.Z_CLIP
-	mk.use_fov_override = true
-	mk.fov_override = Viewmodel.FOV
-	var old := mi.get_surface_override_material(0)
-	mi.set_surface_override_material(0, mk)
+	vm.balance_on = false
+	var old := {}
+	for mi in Viewmodel._meshes(vm.model):
+		var col := Color(1, 1, 0)
+		if mi.name == "Main":
+			col = Color(1, 0, 1)
+		elif mi.name == "Manche":
+			col = Color(0, 1, 1)
+		var mk := StandardMaterial3D.new()
+		mk.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mk.albedo_color = col
+		mk.use_z_clip_scale = true
+		mk.z_clip_scale = Viewmodel.Z_CLIP
+		mk.use_fov_override = true
+		mk.fov_override = Viewmodel.FOV
+		var mats := []
+		for s in mi.mesh.get_surface_count():
+			mats.append(mi.get_surface_override_material(s))
+			mi.set_surface_override_material(s, mk)
+		old[mi] = mats
 	await wait(0.4)
 	var m := get_viewport().get_texture().get_image()
-	mi.set_surface_override_material(0, old)
+	for mi: MeshInstance3D in old:
+		for s in (old[mi] as Array).size():
+			mi.set_surface_override_material(s, old[mi][s])
 	if shots != "" and _mask_name != "":
 		m.save_png(shots.path_join(_mask_name))
-	await wait(0.2)
+	await wait(0.3)
+	vm.balance_on = true
+	return m
+
+
+## Pouce / dos de la main : médianes de luminance des pixels de peau à moins de r px des points « Pouce »
+## et « Dos » du modèle projetés ; teinte des pixels de peau (médiane, p10, p90 ; pixels assez clairs) ;
+## médianes de luminance de la manche et de la peau.
+func _thumb_back(img: Image, m: Image) -> Dictionary:
+	var vm: Viewmodel = player.viewmodel
+	var size := Vector2(img.get_width(), img.get_height())
+	var inv: Transform3D = player.camera.global_transform.affine_inverse()
+	var pp := Vector2(-1000, -1000)
+	var pd := Vector2(-1000, -1000)
+	if vm._marks.has("Pouce"):
+		pp = vm._vm_pixel(inv * (vm._marks["Pouce"] as Node3D).global_position, size)
+	if vm._marks.has("Dos"):
+		pd = vm._vm_pixel(inv * (vm._marks["Dos"] as Node3D).global_position, size)
+	var r := size.y * 0.028
+	var th := PackedFloat32Array()
+	var bk := PackedFloat32Array()
+	var hues := PackedFloat32Array()
+	var skin := PackedFloat32Array()
+	var sleeve := PackedFloat32Array()
+	for y in range(2, m.get_height() - 2, 2):
+		for x in range(2, m.get_width() - 2, 2):
+			var p := img.get_pixel(x, y)
+			var l := 0.2126 * p.r + 0.7152 * p.g + 0.0722 * p.b
+			if _cyan(m, x, y) and _cyan(m, x - 2, y) and _cyan(m, x + 2, y):
+				sleeve.append(l)
+				continue
+			if not (_magenta(m, x, y) and _magenta(m, x - 2, y) and _magenta(m, x + 2, y) and _magenta(m, x, y - 2) and _magenta(m, x, y + 2)):
+				continue
+			skin.append(l)
+			var q := Vector2(x, y)
+			if q.distance_to(pp) < r:
+				th.append(l)
+			elif q.distance_to(pd) < r * 1.6:
+				bk.append(l)
+			if l > 0.03 and p.s > 0.08:
+				var h := p.h * 360.0
+				hues.append(h - 360.0 if h > 300.0 else h)
+	var out := {"pouce": _med(th), "dos": _med(bk), "ecart": 0.0, "hue": _pct(hues, 0.5), "hue10": _pct(hues, 0.1),
+		"hue90": _pct(hues, 0.9), "manche": _med(sleeve), "peau": _med(skin)}
+	var lo := minf(out.pouce, out.dos)
+	var hi := maxf(out.pouce, out.dos)
+	out.ecart = hi / maxf(lo, 0.004) if lo >= 0.0 else 99.0
+	return out
+
+
+static func _pct(a: PackedFloat32Array, q: float) -> float:
+	if a.is_empty():
+		return -1.0
+	var b := a.duplicate()
+	b.sort()
+	return b[clampi(int(b.size() * q), 0, b.size() - 1)]
+
+
+static func _med(a: PackedFloat32Array) -> float:
+	return _pct(a, 0.5)
+
+
+## Hors de la vue (masque dilaté de 12 px : bords, halo de l'ampoule) : luminance moyenne et part des
+## pixels éclairés (L > 60/255).
+func _beam_stats(img: Image, m: Image) -> Dictionary:
+	var w := m.get_width()
+	var h := m.get_height()
+	var excl := PackedByteArray()
+	excl.resize(w * h)
+	var d := 12
+	for y in range(0, h, 2):
+		for x in range(0, w, 2):
+			if _any_vm(m, x, y):
+				for yy in range(maxi(y - d, 0), mini(y + d + 1, h)):
+					for xx in range(maxi(x - d, 0), mini(x + d + 1, w), 2):
+						excl[yy * w + xx] = 1
+	var s := 0.0
+	var lit := 0
+	var n := 0
+	for y in range(0, h, 2):
+		for x in range(0, w, 2):
+			if excl[y * w + x] != 0:
+				continue
+			var p := img.get_pixel(x, y)
+			var l := 0.2126 * p.r + 0.7152 * p.g + 0.0722 * p.b
+			s += l
+			n += 1
+			if l > 60.0 / 255.0:
+				lit += 1
+	return {"lum": s / maxf(n, 1.0), "lit": float(lit) / maxf(n, 1.0)}
+
+
+## Statistiques des pixels de peau (magenta dans le masque) de la capture « img » : luminance (Rec. 709,
+## valeurs affichées) et saturation des teintes vertes (75° à 165°), centile 99,5 et maximum.
+func _skin_stats(img: Image, m: Image) -> Dictionary:
+	var out := {"n": 0, "lum": 0.0, "lum_max": 0.0, "green": 0.0, "green_max": 0.0}
 	var lums := PackedFloat32Array()
 	var greens := PackedFloat32Array()
 	# (masque érodé de 2 px : les bords, mêlés au fond par l'anticrénelage, ne comptent pas)

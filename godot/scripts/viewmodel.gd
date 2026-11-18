@@ -33,8 +33,20 @@ extends Node3D
 ## retard à la souris, balancement à la marche, respiration, tremblement de la peur (Game.peur), lampe
 ## levée quand elle s'allume et baissée (tournée vers le sol) quand elle s'éteint, la lampe qui suit le
 ## regard vers le sol, recul devant un mur, main baissée quand un obstacle est tout près du poing.
-## La lampe du joueur part de la tête de la lampe (son faisceau vise le centre de l'image, au loin), sauf
-## si les mains sont cachées (réglage « Mains visibles », Game.mains_visibles) : elle reprend alors sa place.
+##
+## La lampe du joueur (SpotLight3D) : l'axe de la lampe à l'écran vise le centre de l'image (à 3-5 m) ;
+## la lumière vise ce même point, sur l'axe « tête de la lampe → point visé », mais RECULÉE derrière la
+## tête jusqu'à la profondeur de sa place d'origine (sous la caméra). Le rond de lumière, sa taille et son
+## énergie sont donc ceux de la 0.3.3 (mains cachées), quelle que soit la pose de la main : partie de la
+## tête (60 cm devant l'œil), elle éclairait deux fois moins de surface en regardant le sol et brûlait un
+## mur proche. La tête de la lampe reste l'origine visible (ampoule, verre). Elle n'éclaire pas la main.
+## Mains cachées (réglage « Mains visibles », Game.mains_visibles) : la lampe reprend sa place exacte.
+##
+## Équilibre de l'éclairage de la main, mesuré sur l'image (_balance_*) : quelques carrés de 8 px de
+## l'image précédente sont copiés sur la carte (lecture asynchrone, sans attente) : autour de la main
+## (la scène), sur le dos de la main et sur le pouce. L'appoint monte tant que le dos de la main est plus
+## sombre que la scène autour, ou que l'écart pouce / dos dépasse 2,2 ; il redescend si la main est
+## nettement plus claire que la scène. Aucune lumière de remplacement ne donne plus de 2 fois la suivante.
 
 const LAYER := 14
 const MODELS := {
@@ -45,14 +57,20 @@ const TEX := "res://assets/models/mains/"
 ## Présentation (repère de la caméra, m et degrés : tangage, lacet, roulis ; ordre YXZ) : le poing en bas
 ## à droite, la lampe vue de trois quarts par-dessus, la tête vers le centre bas de l'image, le pouce
 ## allongé sur l'interrupteur côté œil, l'avant-bras qui sort en diagonale par le coin bas droit.
-const REST_POS := Vector3(0.20, -0.19, -0.46)
-const REST_ROT := Vector3(-6.0, 36.0, 20.0)
-## Lampe éteinte : la lampe pivote vers le sol et l'avant (bras détendu), sans montrer son profil.
-const LOWER_POS := Vector3(-0.01, -0.025, -0.01)
-const LOWER_ROT := Vector3(-14.0, 5.0, -4.0)
-## Regard vers le sol (tangage de la caméra de -25° à -60°) : la lampe accompagne le regard.
-const LOOK_DOWN_POS := Vector3(0.0, -0.02, -0.05)
-const LOOK_DOWN_ROT := Vector3(-8.0, 0.0, 0.0)
+## L'axe de la lampe, prolongé, passe à ~60-70 px du centre d'une image de 960 px entre 3 et 5 m (moins de
+## 10 % de la largeur) : la lampe vise là où va la lumière. Lampe vue de trois quarts arrière, raccourcie
+## par la perspective (la présentation des jeux à lampe torche), pouce allongé sur l'interrupteur côté œil,
+## avant-bras qui sort par le bas de l'image ; le poignet de la pose (make_hands.py, POSE) suit.
+const REST_POS := Vector3(0.225, -0.185, -0.41)
+const REST_ROT := Vector3(3.0, 12.0, 28.0)
+## Lampe éteinte : le bras se détend, la lampe pend vers le sol (tête qui sort par le bas de l'image),
+## tournée vers l'intérieur : le culot n'est plus face à l'œil.
+const LOWER_POS := Vector3(-0.015, -0.035, -0.02)
+const LOWER_ROT := Vector3(-26.0, 14.0, -4.0)
+## Regard vers le sol (tangage de la caméra de -25° à -60°) : la lampe accompagne le regard (un peu plus
+## bas et en avant ; à peine inclinée, l'axe reste près du centre de l'image).
+const LOOK_DOWN_POS := Vector3(-0.01, 0.03, -0.01)
+const LOOK_DOWN_ROT := Vector3(2.0, 0.0, 0.0)
 const Z_CLIP := 0.05
 const FOV := 62.0
 ## Distance du point visé par le faisceau (le centre de l'image).
@@ -67,6 +85,16 @@ const PROXY_MIN_DIST := 0.8
 const PROXY_MAX_FACTOR := 0.6
 ## Un obstacle à moins de CLEARANCE (m) au-delà du poing ou de la tête de la lampe fait baisser la main.
 const CLEARANCE := 0.35
+## Équilibre mesuré sur l'image : taille d'un carré (px), carrés par lecture (atlas 8 × 4), images entre
+## deux lectures en jeu, gain maximal de l'appoint, bornes du rapport dos de la main / scène.
+const BAL_PATCH := 8
+const BAL_COLS := 8
+const BAL_ROWS := 4
+const BAL_EVERY := 10
+const BAL_GAIN_MAX := 12.0
+const BAL_LOW := 0.9
+const BAL_HIGH := 1.7
+const BAL_CONTRAST := 2.2
 ## Pose figée (bancs de captures) ; l'autotest fige aussi la pose.
 static var figee := false
 
@@ -74,6 +102,7 @@ var player: Node3D
 var camera: Camera3D
 var light: SpotLight3D
 var light_rest := Transform3D.IDENTITY     # place d'origine de la lampe du joueur (sous la caméra)
+var light_mask_rest := 0                   # son masque d'éclairage d'origine
 var pivot: Node3D
 var model: Node3D
 var head: Node3D
@@ -99,6 +128,18 @@ var _tints := {}                       # teinte des matières touchées par le f
 var _beam_tint := Color(0.8, 0.7, 0.6)
 var _beam_dist := INF
 var _sss_gain := 1.0
+# équilibre mesuré sur l'image
+var _rd: RenderingDevice
+var _atlas := RID()
+var _atlas_fmt := -1
+var _bal_frame := 0
+var _bal_pending := false
+var _bal_result: Array = []
+var _bal_gain := 1.0
+var _bal_cap := 1.0                       # facteur appliqué aux remplaçantes (borné par l'écart pouce / dos)
+var bal_stats := {}                       # dernière mesure (bancs) : scène, dos, pouce, gain
+var balance_on := true                    # (les bancs le coupent pendant leur passe de masque)
+var _marks := {}                          # nœuds de mesure du modèle (Dos, Pouce, Culot, Poignet)
 
 
 func _ready() -> void:
@@ -109,16 +150,17 @@ func _ready() -> void:
 	bounce = _vm_light("Rebond", 1.2)
 	bounce.light_color = Color(1.0, 0.86, 0.68)
 	bounce.omni_attenuation = 1.2
-	bounce.light_specular = 0.12      # (lumière renvoyée par une surface mate : large, presque sans reflet)
+	bounce.light_specular = 0.05      # (lumière renvoyée par une surface mate : large, presque sans reflet)
 	add_child(bounce)
-	# appoint doux (couleur de l'ambiance), du côté de l'œil
+	# appoint doux (couleur de l'ambiance), venu d'en haut, un peu devant la main : il éclaire le dos de la
+	# main et le dessus du pouce, laisse le dessous dans l'ombre (du relief, pas un gant éclairé de face)
 	fill = _vm_light("Appoint", 1.4)
-	fill.light_specular = 0.15
+	fill.light_specular = 0.0             # (lumière d'ambiance : sans reflet)
 	add_child(fill)
-	fill.position = Vector3(-0.25, 0.22, 0.05)
+	fill.position = Vector3(0.0, 0.30, -0.30)
 	for i in PROXY_COUNT:
 		var p := _vm_light("Proche%d" % i, 2.0)
-		p.light_specular = 0.2
+		p.light_specular = 0.08           # (reflet lilas cireux sous une lumière colorée : presque pas de reflet)
 		add_child(p)
 		proxies.append(p)
 
@@ -144,6 +186,7 @@ func setup(p: Node3D, cam: Camera3D, flash: SpotLight3D) -> void:
 	camera = cam
 	light = flash
 	light_rest = flash.transform
+	light_mask_rest = flash.light_cull_mask
 	_load_hero()
 	_adopt_lights.call_deferred()
 
@@ -164,6 +207,11 @@ func _load_hero() -> void:
 	model.name = "Modele"
 	pivot.add_child(model)
 	head = model.get_node_or_null("Tete") as Node3D
+	_marks = {}
+	for k in ["Dos", "Pouce", "Culot", "Poignet"]:
+		var n := model.get_node_or_null(k) as Node3D
+		if n:
+			_marks[k] = n
 	_apply_materials()
 
 
@@ -284,8 +332,8 @@ func _update_proxies(delta: float) -> void:
 		var p := proxies[k]
 		p.global_position = fist + dir * d2
 		p.omni_range = d2 + 1.2
-		p.light_color = l.light_color
-		var want := minf(float(c[0]) / maxf(_att(d2, p.omni_range, 1.0), 0.0001), PROXY_MAX_FACTOR * l.light_energy)
+		p.light_color = _soft_color(l.light_color, 0.5)
+		var want := minf(float(c[0]) / maxf(_att(d2, p.omni_range, 1.0), 0.0001), PROXY_MAX_FACTOR * l.light_energy) * _bal_cap
 		p.light_energy = want if figee or Game.autotest else lerpf(p.light_energy, want, 1.0 - exp(-10.0 * delta))
 		p.visible = true
 		amb += l.light_color * float(c[0])
@@ -305,9 +353,38 @@ func _update_proxies(delta: float) -> void:
 	var col := base
 	if amb_w > 0.0:
 		col = base.lerp(amb / amb_w, clampf(amb_w * 2.0, 0.0, 0.6))
-	fill.light_color = Color(col.r, col.g, col.b).lightened(0.15)
-	fill.light_energy = 0.07 * lvl + 0.05 * clampf(amb_w, 0.0, 1.0)
+	fill.light_color = _soft_color(Color(col.r, col.g, col.b), 0.3).lightened(0.05)
+	fill.light_energy = (0.07 * lvl + 0.05 * clampf(amb_w, 0.0, 1.0)) * _bal_gain
 	fill.visible = true
+	_limit_proxies()
+
+
+## Couleur adoucie : mêlée à son gris de même luminance (la peau garde sa teinte sous une lumière verte,
+## bleue ou violette).
+static func _soft_color(c: Color, k: float) -> Color:
+	var l := c.get_luminance()
+	return Color(c.r, c.g, c.b).lerp(Color(l, l, l), k)
+
+
+## Aucune lumière de la vue (remplaçantes, rebond) ne donne à la main plus de 2 fois la suivante
+## (l'appoint compte) : pas de pouce brûlant à côté d'un dos de main noir.
+func _limit_proxies() -> void:
+	var fist := pivot.global_position
+	var recv := []
+	for l: OmniLight3D in proxies + [bounce, fill]:
+		if not l.visible or l.light_energy <= 0.0:
+			continue
+		var r := l.light_energy * _att(fist.distance_to(l.global_position), l.omni_range, l.omni_attenuation)
+		recv.append([r, l])
+	if recv.size() < 2:
+		return
+	recv.sort_custom(func(a, b): return a[0] > b[0])
+	for i in range(recv.size() - 1):
+		var l: OmniLight3D = recv[i][1]
+		var nxt: float = recv[i + 1][0]
+		if l != fill and float(recv[i][0]) > 2.0 * nxt and nxt > 0.0:
+			l.light_energy *= 2.0 * nxt / float(recv[i][0])
+			recv[i][0] = 2.0 * nxt
 
 
 # ------------------------------------------------------------------ matières
@@ -348,7 +425,7 @@ func _skin_mat() -> BaseMaterial3D:
 	else:
 		m.roughness = 0.5
 	m.metallic = 0.0
-	m.metallic_specular = 0.38
+	m.metallic_specular = 0.35          # (rugosité ≥ 0,55 dans la carte ORM : peau mate, pas cireuse)
 	if not Main.software_renderer():
 		m.subsurf_scatter_enabled = true
 		m.subsurf_scatter_strength = SSS_STRENGTH
@@ -377,9 +454,10 @@ func _sleeve_mat() -> BaseMaterial3D:
 	m.roughness = 0.9
 	m.vertex_color_use_as_albedo = true      # (occlusion des plis, cuite dans les couleurs de sommet)
 	m.cull_mode = BaseMaterial3D.CULL_DISABLED
-	# lustre de tissu : la manche reste un volume la nuit, pas un trou noir
+	# lustre de tissu, léger : la manche reste un volume la nuit, sans briller plus que la peau le jour
+	# (elle est éclairée par les mêmes lumières de la vue que la main)
 	m.rim_enabled = true
-	m.rim = 0.3
+	m.rim = 0.08
 	m.rim_tint = 0.5
 	return m
 
@@ -511,8 +589,10 @@ func _process(delta: float) -> void:
 	var show := wanted() and model != null
 	visible = show
 	if not show:
-		if light and light.transform != light_rest and light.get_parent() == camera:
-			light.transform = light_rest
+		if light and light.get_parent() == camera:
+			if light.transform != light_rest:
+				light.transform = light_rest
+			light.light_cull_mask = light_mask_rest
 		return
 	_t += delta
 	var frozen := Game.autotest or figee
@@ -577,6 +657,7 @@ func _process(delta: float) -> void:
 	_update_sss()
 	_update_light(on, wall)
 	_update_proxies(delta)
+	_balance(delta, frozen)
 
 
 ## Distance du premier obstacle devant la caméra (rayon de 0,8 m), INF sinon.
@@ -661,13 +742,15 @@ func _tint_of(collider: Object) -> Color:
 	return c
 
 
-## La lampe du joueur part de la tête de la lampe (sans traverser un mur) et vise le centre de l'image.
+## La lampe du joueur vise le centre de l'image ; elle est posée sur l'axe « tête de la lampe → point
+## visé », reculée jusqu'à la profondeur de sa place d'origine (sous la caméra) : même rond de lumière
+## que mains cachées. Sans traverser un mur ; elle n'éclaire pas la main (couche de la vue retirée).
 func _update_light(on: bool, wall: float) -> void:
 	if light == null or head == null:
 		return
 	var cam := camera.global_transform
 	var hp := head.global_position
-	# (la tête de la lampe peut être au-delà d'un mur tout proche : la lumière reste de ce côté)
+	# (la tête de la lampe peut être au-delà d'un mur tout proche : on reste de ce côté)
 	var hit := _ray_hits(cam.origin, hp)
 	if not hit.is_empty():
 		hp = cam.origin + (hit.position - cam.origin) * 0.85
@@ -678,7 +761,15 @@ func _update_light(on: bool, wall: float) -> void:
 	dir = fwd.lerp(dir, 0.6).normalized()
 	var aim := cam.origin + dir * AIM_DIST
 	var up := cam.basis.y
-	light.global_transform = Transform3D(Basis.looking_at(aim - hp, up), hp)
+	var axis := (aim - hp).normalized()
+	var depth_rest := (cam * light_rest.origin - cam.origin).dot(fwd)
+	var back := ((hp - cam.origin).dot(fwd) - depth_rest) / maxf(axis.dot(fwd), 0.3)
+	var lp := hp - axis * maxf(back, 0.0)
+	var h2 := _ray_hits(cam.origin, lp)
+	if not h2.is_empty():
+		lp = cam.origin + (h2.position - cam.origin) * 0.8
+	light.global_transform = Transform3D(Basis.looking_at(aim - lp, up), lp)
+	light.light_cull_mask = light_mask_rest & ~(1 << (LAYER - 1))
 	# l'ampoule et le rebond sur la main suivent la puissance de la lampe
 	var base := float(player.get("flash_base"))
 	var f := light.light_energy / maxf(base, 0.001) if on and light.visible else 0.0
@@ -690,7 +781,7 @@ func _update_light(on: bool, wall: float) -> void:
 		_beam_dist = INF
 	else:
 		_beam_dist = hp.distance_to(bh.position)
-		_beam_tint = _beam_tint.lerp(_tint_of(bh.collider), 0.25 if not (figee or Game.autotest) else 1.0)
+		_beam_tint = _beam_tint.lerp(_soft_color(_tint_of(bh.collider), 0.5), 0.25 if not (figee or Game.autotest) else 1.0)
 	var k := 0.0 if _beam_dist == INF else clampf(0.45 / (_beam_dist * _beam_dist + 0.2), 0.0, 1.0)
 	var near := clampf(1.0 - (wall - 0.3) / 1.6, 0.0, 1.0) if wall < INF else 0.0
 	# (la lumière revient de là où le faisceau éclaire : devant la main, un peu au-dessus ; elle rase le
@@ -699,5 +790,211 @@ func _update_light(on: bool, wall: float) -> void:
 	bounce.global_position = pivot.global_position + bdir * 0.38 + cam.basis.y * 0.10 - cam.basis.x * 0.04
 	var lc := light.light_color
 	bounce.light_color = Color(lc.r * _beam_tint.r, lc.g * _beam_tint.g, lc.b * _beam_tint.b).lightened(0.1)
-	bounce.light_energy = (0.22 + 0.4 * maxf(k, near)) * clampf(f, 0.0, 1.5)
+	bounce.light_energy = (0.22 + 0.4 * maxf(k, near)) * clampf(f, 0.0, 1.5) * lerpf(1.0, _bal_cap, 0.7)
 	bounce.visible = bounce.light_energy > 0.0005
+
+
+# ------------------------------------------------------------------ équilibre mesuré sur l'image
+
+func _exit_tree() -> void:
+	if _rd and _atlas.is_valid():
+		_rd.free_rid(_atlas)
+		_atlas = RID()
+
+
+## Point du repère de la caméra → pixel, avec la projection de la vue (champ FOV, use_fov_override).
+func _vm_pixel(p_cam: Vector3, size: Vector2) -> Vector2:
+	var t := tan(deg_to_rad(FOV) * 0.5)
+	var asp := size.x / size.y
+	var z := maxf(-p_cam.z, 0.01)
+	return Vector2((p_cam.x / z / (t * asp) * 0.5 + 0.5) * size.x, (0.5 - p_cam.y / z / t * 0.5) * size.y)
+
+
+## Rectangle de la vue à l'écran (boîtes des maillages projetées), en pixels.
+func _vm_rect(size: Vector2) -> Rect2:
+	var inv := camera.global_transform.affine_inverse()
+	var r := Rect2()
+	var first := true
+	for mi in _meshes(model):
+		if not mi.visible or mi.mesh == null:
+			continue
+		var bb := mi.get_aabb()
+		var xf := inv * mi.global_transform
+		for i in 8:
+			var pc := xf * bb.get_endpoint(i)
+			if pc.z > -0.05:
+				continue        # (le bout de la manche, derrière le plan de l'œil)
+			var q := _vm_pixel(pc, size)
+			if first:
+				r = Rect2(q, Vector2.ZERO)
+				first = false
+			else:
+				r = r.expand(q)
+	return r
+
+
+## Carrés à lire : la scène autour de la vue (à gauche et au-dessus de son rectangle à l'écran), le dos
+## de la main, le pouce. Rend [[pixel (Vector2i), "s" | "d" | "p"], …].
+func _balance_points(size: Vector2) -> Array:
+	var pts := []
+	var inv := camera.global_transform.affine_inverse()
+	var half := Vector2(BAL_PATCH, BAL_PATCH) * 0.5
+	for k in ["Dos", "Pouce"]:
+		if _marks.has(k):
+			var q := _vm_pixel(inv * (_marks[k] as Node3D).global_position, size)
+			pts.append([Vector2i(q - half), "d" if k == "Dos" else "p"])
+	var r := _vm_rect(size)
+	var m := size.y * 0.035
+	var top := clampf(r.position.y, size.y * 0.25, size.y - m)
+	var left := clampf(r.position.x, size.x * 0.2, size.x - m)
+	# à gauche du rectangle, de son haut au bas de l'image
+	for i in 7:
+		var y := lerpf(top, size.y - m, float(i) / 6.0)
+		pts.append([Vector2i(Vector2(left - m, y) - half), "s"])
+		pts.append([Vector2i(Vector2(left - 3.0 * m, y) - half), "s"])
+	# au-dessus du rectangle, de sa gauche au bord droit
+	for i in 6:
+		var x := lerpf(left, size.x - m, float(i) / 5.0)
+		pts.append([Vector2i(Vector2(x, top - m) - half), "s"])
+		pts.append([Vector2i(Vector2(x, top - 3.0 * m) - half), "s"])
+	return pts.slice(0, BAL_COLS * BAL_ROWS)
+
+
+func _balance(delta: float, frozen: bool) -> void:
+	if not balance_on:
+		_bal_result = []
+		return
+	if not _bal_result.is_empty():
+		var res := _bal_result
+		_bal_result = []
+		_balance_apply(res[0], res[1], res[2], frozen, delta)
+	_bal_frame += 1
+	if _bal_pending or (not frozen and _bal_frame % BAL_EVERY != 0):
+		return
+	_balance_request()
+
+
+func _balance_request() -> void:
+	if _rd == null:
+		_rd = RenderingServer.get_rendering_device()
+		if _rd == null:
+			return
+	var vt := get_viewport().get_texture()
+	if vt == null:
+		return
+	var src := RenderingServer.texture_get_rd_texture(vt.get_rid())
+	if not src.is_valid() or not _rd.texture_is_valid(src):
+		return
+	var f := _rd.texture_get_format(src)
+	if f == null or f.width < 64 or f.height < 64:
+		return
+	if not _atlas.is_valid() or _atlas_fmt != f.format:
+		if _atlas.is_valid():
+			_rd.free_rid(_atlas)
+		var tf := RDTextureFormat.new()
+		tf.format = f.format
+		tf.width = BAL_PATCH * BAL_COLS
+		tf.height = BAL_PATCH * BAL_ROWS
+		tf.usage_bits = RenderingDevice.TEXTURE_USAGE_CAN_COPY_TO_BIT | RenderingDevice.TEXTURE_USAGE_CAN_COPY_FROM_BIT | RenderingDevice.TEXTURE_USAGE_SAMPLING_BIT
+		_atlas = _rd.texture_create(tf, RDTextureView.new())
+		_atlas_fmt = f.format
+		if not _atlas.is_valid():
+			return
+	var size := Vector2(f.width, f.height)
+	var pts := _balance_points(size)
+	var hi := Vector2i(f.width - BAL_PATCH, f.height - BAL_PATCH)
+	for i in pts.size():
+		var p: Vector2i = (pts[i][0] as Vector2i).clamp(Vector2i.ZERO, hi)
+		pts[i][0] = p
+		_rd.texture_copy(src, _atlas, Vector3(p.x, p.y, 0), Vector3((i % BAL_COLS) * BAL_PATCH, floori(float(i) / BAL_COLS) * BAL_PATCH, 0),
+			Vector3(BAL_PATCH, BAL_PATCH, 1), 0, 0, 0, 0)
+	_bal_pending = true
+	var err := _rd.texture_get_data_async(_atlas, 0, _balance_read.bind(pts, f.format))
+	if err != OK:
+		_bal_pending = false
+
+
+func _balance_read(data: PackedByteArray, pts: Array, fmt: int) -> void:
+	_bal_pending = false
+	_bal_result = [data, pts, fmt]
+
+
+## Luminance (valeurs affichées, Rec. 709) moyenne d'un carré de l'atlas.
+static func _patch_lum(data: PackedByteArray, fmt: int, i: int) -> float:
+	var bpp := 8 if fmt == RenderingDevice.DATA_FORMAT_R16G16B16A16_SFLOAT else 4
+	var w := BAL_PATCH * BAL_COLS
+	var x0 := (i % BAL_COLS) * BAL_PATCH
+	var y0 := floori(float(i) / BAL_COLS) * BAL_PATCH
+	var s := 0.0
+	for y in BAL_PATCH:
+		for x in BAL_PATCH:
+			var o := ((y0 + y) * w + x0 + x) * bpp
+			if o + bpp > data.size():
+				return -1.0
+			var r: float
+			var g: float
+			var b: float
+			if bpp == 8:
+				r = _to_srgb(data.decode_half(o))
+				g = _to_srgb(data.decode_half(o + 2))
+				b = _to_srgb(data.decode_half(o + 4))
+			elif fmt == RenderingDevice.DATA_FORMAT_A2B10G10R10_UNORM_PACK32:
+				var v := data.decode_u32(o)
+				r = float(v & 1023) / 1023.0
+				g = float((v >> 10) & 1023) / 1023.0
+				b = float((v >> 20) & 1023) / 1023.0
+			else:
+				r = data[o] / 255.0
+				g = data[o + 1] / 255.0
+				b = data[o + 2] / 255.0
+			s += 0.2126 * r + 0.7152 * g + 0.0722 * b
+	return s / float(BAL_PATCH * BAL_PATCH)
+
+
+static func _to_srgb(x: float) -> float:
+	x = clampf(x, 0.0, 1.0)
+	return x * 12.92 if x < 0.0031308 else 1.055 * pow(x, 1.0 / 2.4) - 0.055
+
+
+## Réglage : l'appoint (gain) monte tant que le dos de la main est plus sombre que BAL_LOW × la scène
+## autour (médiane) ou que l'écart pouce / dos dépasse BAL_CONTRAST ; il redescend au-dessus de
+## BAL_HIGH × la scène. Les remplaçantes baissent (_bal_cap) quand l'écart reste trop fort.
+func _balance_apply(data: PackedByteArray, pts: Array, fmt: int, frozen: bool, delta: float) -> void:
+	var scene := PackedFloat32Array()
+	var back := -1.0
+	var thumb := -1.0
+	for i in pts.size():
+		var l := _patch_lum(data, fmt, i)
+		if l < 0.0:
+			return
+		match String(pts[i][1]):
+			"s":
+				scene.append(l)
+			"d":
+				back = l
+			"p":
+				thumb = l
+	if scene.is_empty() or back < 0.0:
+		return
+	scene.sort()
+	var sc := scene[floori(scene.size() * 0.5)]
+	var want := 1.0
+	var lo := back if thumb < 0.0 else minf(back, thumb)
+	var hi := back if thumb < 0.0 else maxf(back, thumb)
+	var contrast := hi / maxf(lo, 0.008)
+	if back < BAL_LOW * sc:
+		want = BAL_LOW * sc / maxf(back, 0.01)
+	elif back > BAL_HIGH * sc and back > 0.06:
+		want = BAL_HIGH * sc / back
+	if contrast > BAL_CONTRAST:
+		# (trop d'écart : on baisse d'abord les remplaçantes et le rebond ; l'appoint ne monte que si le dos
+		# de la main est aussi plus sombre que la scène)
+		_bal_cap = maxf(_bal_cap * 0.85, 0.3)
+		if back < BAL_LOW * sc or _bal_cap <= 0.31:
+			want = maxf(want, minf(contrast / BAL_CONTRAST, 1.6))
+	else:
+		_bal_cap = minf(_bal_cap * 1.05, 1.0)
+	# (dans la bande : l'appoint redescend doucement, il reste au plus bas qui suffit)
+	var step := clampf(pow(want, 0.75), 0.7, 1.45) if want != 1.0 else 0.97
+	_bal_gain = clampf(_bal_gain * step, 1.0, BAL_GAIN_MAX)
+	bal_stats = {"scene": sc, "dos": back, "pouce": thumb, "gain": _bal_gain, "cap": _bal_cap, "ecart": contrast}
