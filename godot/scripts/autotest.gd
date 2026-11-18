@@ -18,6 +18,15 @@ extends Node
 ##   … -- --autotest --seance2=changer|delai|confirmer --shots=DIR   (séance 2 seule : C1, C2, C3)
 ##   … -- --autotest --seance2=absorbe --shots=DIR (jauge à 100 pendant la séance 2 : ABSORBÉ, C3 intact)
 ##   … -- --preview=<pièce>[,<pièce>…] --shots=DIR (6 vues par pièce ; B1 : positions, battants libres)
+##   … -- --preview=… --etalonnage=1.2,1.35:6:1.35,1.35:3:1.6:4,… (en plus, chaque vue à ces expositions
+##        d'AgX, avec en option le blanc et le contraste d'AgX, puis l'énergie indirecte de la lampe de
+##        poche, sans point noir, épaule, pied de courbe ni grain : « <vue>_e135 », « <vue>_e135_w600_c135 »,
+##        « <vue>_e135_w300_c160_g40 » ; 5e valeur « r0 » : sans SSR ni sondes de reflets, « …_r0 » ;
+##        pour caler la courbe du rendu net et voir ce qu'apportent les reflets)
+## Passe « triple A » (lot V1-RENDU) : « QUALITÉ effective … » au début ; Q1 à Q5 (préréglages, migration
+## de settings.cfg, --qualite en rendu logiciel, style rétro inchangé, réglages de confort) ; avec
+## --qualite=… : Q3 ; en style rétro : Q4 ; --attendu-qualite=basse : le niveau lu au démarrage (Q2).
+## Avec une vraie carte (ou --rendu-complet), l'autotest attend la fin des captures des sondes de reflets.
 ## « --sous-titres » active les sous-titres des sons pour le test (sans l'enregistrer) ; sinon ils sont
 ## coupés (C5 : les sons sont signalés, jamais affichés).
 ## Le parcours principal couvre A1 à A8 (sauf A5 fins : --seance), B1 à B12, B14, B16, B18, C1 à C3
@@ -90,6 +99,12 @@ func setup(m: Main) -> void:
 
 
 func run() -> void:
+	print(Qualite.describe())
+	if main.reflections_busy():
+		var tr := Time.get_ticks_msec()
+		await main.reflections_settled
+		print("REFLETS : %d ms d'attente avant les tests" % (Time.get_ticks_msec() - tr))
+	check_quality_start()
 	if Game.preview_room != "":
 		await run_previews(Game.preview_room)
 	elif Game.seance_only:
@@ -110,6 +125,136 @@ func run() -> void:
 		await run_revue()
 	else:
 		await run_main()
+
+
+# ------------------------------------------------------------------ préréglages d'image (V1-RENDU)
+
+## Profil « complet » (--rendu-complet) sur un rendu logiciel : les réglages d'une vraie carte tournent
+## sur le processeur ; les durées (B16, C8) n'y veulent rien dire (elles sont vérifiées dans le profil
+## des tests, sans --rendu-complet).
+static func complet_logiciel() -> bool:
+	if not OS.get_cmdline_user_args().has("--rendu-complet"):
+		return false
+	var n := RenderingServer.get_video_adapter_name().to_lower()
+	for k in ["llvmpipe", "lavapipe", "swiftshader", "basic render"]:
+		if n.contains(k):
+			return true
+	return false
+
+
+## Au début de chaque variante : Q3 (--qualite=… : en rendu logiciel, jamais au-dessus d'Élevée, aucune
+## nouveauté), Q4 (style rétro lu dans settings.cfg : l'image d'avant), Q2 (--attendu-qualite=… : le
+## niveau lu au démarrage, par exemple un settings.cfg de la 0.3.3 qui n'a que high_quality=false).
+func check_quality_start() -> void:
+	if Game.quality_arg >= 0:
+		var want := mini(Game.quality_arg, Qualite.ELEVEE) if Qualite.soft() else Game.quality_arg
+		var vp := main.get_viewport()
+		var probes := 0
+		for id in house.rooms:
+			if (house.rooms[id] as HouseRoom).probe:
+				probes += 1
+		var quiet := not Qualite.soft() or (not main.env.ssr_enabled and vp.scaling_3d_mode != Viewport.SCALING_3D_MODE_FSR2 and probes == 0
+			and vp.anisotropic_filtering_level == Viewport.ANISOTROPY_DISABLED and vp.positional_shadow_atlas_size == 4096)
+		check("Q3 --qualite=%s → effective %s%s" % [Qualite.CLES[Game.quality_arg], Qualite.name_of(want), " (rendu logiciel : aucune nouveauté)" if Qualite.soft() else ""],
+			Qualite.effective() == want and quiet,
+			"effective %s, SSR %s, mode 3D %d, sondes %d, anisotrope %d, atlas %d" % [Qualite.name_of(Qualite.effective()), main.env.ssr_enabled,
+				vp.scaling_3d_mode, probes, vp.anisotropic_filtering_level, vp.positional_shadow_atlas_size])
+	if Game.style_retro:
+		check_retro("au démarrage")
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--attendu-qualite="):
+			var q := Qualite.from_name(a.substr(18))
+			check("Q2 démarrage : niveau lu dans settings.cfg = %s" % Qualite.name_of(q), q >= 0 and Game.quality == q and not Game.quality_auto,
+				"niveau %s (auto %s)" % [Qualite.name_of(Game.quality), Game.quality_auto])
+
+
+## Q4 : le style rétro garde l'image d'avant (ACES, exposition 1,05, palette de 16 niveaux, tramage,
+## 3D en 640×360 agrandie sans lissage, aberration 0,0011).
+func check_retro(tag: String) -> void:
+	var m := main.retro_mat()
+	var env := main.env
+	var ok := env.tonemap_mode == Environment.TONE_MAPPER_ACES and is_equal_approx(env.tonemap_exposure, 1.05) and m != null \
+		and is_equal_approx(float(m.get_shader_parameter("levels")), 16.0) and is_equal_approx(float(m.get_shader_parameter("dither_strength")), 1.0) \
+		and get_tree().root.content_scale_mode == Window.CONTENT_SCALE_MODE_VIEWPORT and is_equal_approx(float(m.get_shader_parameter("aberration")), 0.0011) \
+		and is_zero_approx(float(m.get_shader_parameter("black_point"))) and is_zero_approx(float(m.get_shader_parameter("toe"))) and not env.ssr_enabled
+	check("Q4 style rétro inchangé (%s)" % tag, ok, "tonemap %d, exposition %.3f, levels %s, dither %s, échelle %d, aberration %s, point noir %s, pied %s, SSR %s" % [
+		env.tonemap_mode, env.tonemap_exposure, m.get_shader_parameter("levels") if m else "-", m.get_shader_parameter("dither_strength") if m else "-",
+		get_tree().root.content_scale_mode, m.get_shader_parameter("aberration") if m else "-", m.get_shader_parameter("black_point") if m else "-",
+		m.get_shader_parameter("toe") if m else "-", env.ssr_enabled])
+
+
+## Q1, Q2, Q5 (écran des options) : aller-retour de chaque niveau par settings.cfg (un Game neuf le
+## relit), migration d'un settings.cfg de la 0.3.3 (high_quality seul), luminosité, champ de vision et
+## mouvements de la caméra gardés. Le settings.cfg du dossier user:// de la variante est réécrit à la fin.
+func check_quality_settings() -> void:
+	var keep := [Game.quality, Game.luminosite, Game.fov, Game.mouvements_camera]
+	for q in [Qualite.BASSE, Qualite.MOYENNE, Qualite.ELEVEE, Qualite.ULTRA]:
+		Game.quality = q
+		Game.save_settings()
+		var g: Node = GAME.new()
+		g._load_settings()
+		var cfg := ConfigFile.new()
+		cfg.load(Game.SETTINGS_PATH)
+		check("Q1 qualité %s gardée (et case de la 0.3.3 %s)" % [Qualite.name_of(q), "cochée" if q >= Qualite.ELEVEE else "décochée"],
+			int(g.get("quality")) == q and int(cfg.get_value("video", "qualite", -1)) == q and bool(cfg.get_value("video", "high_quality", not (q >= Qualite.ELEVEE))) == (q >= Qualite.ELEVEE)
+			and g.get("high_quality") == (q >= Qualite.ELEVEE),
+			"relu %s · fichier qualite=%s high_quality=%s" % [g.get("quality"), cfg.get_value("video", "qualite", "?"), cfg.get_value("video", "high_quality", "?")])
+		g.free()
+	# Q2 : un settings.cfg de la 0.3.3 (sans « qualite »)
+	var mig := "user://migration_033.cfg"
+	for hq in [false, true]:
+		var c33 := ConfigFile.new()
+		c33.set_value("controls", "mouse_sensitivity", 0.0022)
+		c33.set_value("video", "fullscreen", true)
+		c33.set_value("video", "high_quality", hq)
+		c33.set_value("video", "style_retro", false)
+		c33.save(mig)
+		var g2: Node = GAME.new()
+		g2._load_settings(mig)
+		var want := Qualite.ELEVEE if hq else Qualite.BASSE
+		check("Q2 migration 0.3.3 : high_quality=%s → %s" % [hq, Qualite.name_of(want)], int(g2.get("quality")) == want and not g2.get("quality_auto"),
+			"niveau %s" % g2.get("quality"))
+		g2.free()
+	var c0 := ConfigFile.new()
+	c0.set_value("video", "fullscreen", true)
+	c0.save(mig)
+	var g3: Node = GAME.new()
+	g3._load_settings(mig)
+	check("Q2 sans réglage de qualité : détection (%s, jamais Ultra)" % Qualite.name_of(Qualite.detect()),
+		int(g3.get("quality")) == Qualite.detect() and int(g3.get("quality")) != Qualite.ULTRA and g3.get("quality_auto"), "niveau %s" % g3.get("quality"))
+	g3.free()
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(mig))
+	# Q5 : luminosité, champ de vision, mouvements de la caméra
+	for v in [[0.2, 58.0, 0.0], [0.85, 77.0, 0.65]]:
+		Game.luminosite = v[0]
+		Game.fov = v[1]
+		Game.mouvements_camera = v[2]
+		Game.save_settings()
+		var g5: Node = GAME.new()
+		g5._load_settings()
+		check("Q5 réglages gardés (luminosité %.2f, champ %d°, mouvements %d %%)" % [v[0], int(v[1]), int(v[2] * 100.0)],
+			is_equal_approx(float(g5.get("luminosite")), v[0]) and is_equal_approx(float(g5.get("fov")), v[1]) and is_equal_approx(float(g5.get("mouvements_camera")), v[2]),
+			"%s / %s / %s" % [g5.get("luminosite"), g5.get("fov"), g5.get("mouvements_camera")])
+		g5.free()
+	var fresh: Node = GAME.new()
+	check("Q5 valeurs par défaut (luminosité 0,5, champ 62°, mouvements 100 %)", is_equal_approx(float(fresh.get("luminosite")), 0.5)
+		and is_equal_approx(float(fresh.get("fov")), 62.0) and is_equal_approx(float(fresh.get("mouvements_camera")), 1.0), "")
+	fresh.free()
+	Game.quality = keep[0]
+	Game.luminosite = keep[1]
+	Game.fov = keep[2]
+	Game.mouvements_camera = keep[3]
+	Game.save_settings()
+	# Q4 : passer en style rétro puis revenir : l'image d'avant, puis le rendu net
+	var was := Game.style_retro
+	Game.style_retro = true
+	Game.apply_settings()
+	await get_tree().process_frame
+	check_retro("depuis les options")
+	Game.style_retro = was
+	Game.apply_settings()
+	await get_tree().process_frame
+	print(Qualite.describe())
 
 
 # ------------------------------------------------------------------ outils
@@ -155,7 +300,63 @@ func view(pos: Vector3, yaw: float, pitch: float, shot_name: String, delay := 0.
 	player.set_look(yaw, pitch)
 	player.head.position.y = player.EYE
 	await wait(delay)
+	# (Ultra : FSR 2 accumule l'image sur plusieurs images après une téléportation ; sur un rendu
+	# logiciel en profil complet, 0,8 s ne fait qu'une ou deux images)
+	if Qualite.effective() == Qualite.ULTRA and not Game.style_retro:
+		for i in 12:
+			await RenderingServer.frame_post_draw
 	await shot(shot_name)
+	await calibration_shots(shot_name)
+
+
+## --etalonnage=e1,e2,… (aperçus) : la même vue à chacune de ces expositions d'AgX (« e:blanc:contraste »
+## pour changer aussi le blanc et le contraste d'AgX), sans point noir, ni pied de courbe, ni grain
+## (« <vue>_e135 », « <vue>_e135_w400_c140 ») ; le reste du filtre (vignettage, aberration) est gardé.
+## Le point noir, le pied de courbe et le grain se rejouent ensuite hors du jeu, à l'identique.
+func calibration_shots(shot_name: String) -> void:
+	if Game.preview_room == "" or Game.style_retro:
+		return
+	var list: PackedStringArray = []
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--etalonnage="):
+			list = a.substr(13).split(",", false)
+	if list.is_empty():
+		return
+	var m := main.retro_mat()
+	var grain: Variant = m.get_shader_parameter("grain_net")
+	m.set_shader_parameter("black_point", 0.0)
+	m.set_shader_parameter("white_point", 1.0)
+	m.set_shader_parameter("toe", 0.0)
+	m.set_shader_parameter("grain_net", 0.0)
+	m.set_shader_parameter("grain_mult", 0.0)
+	var gi0: float = player.flashlight.light_indirect_energy
+	for e in list:
+		var p := e.split(":")
+		main.env.tonemap_exposure = float(p[0])
+		var tag := "%s_e%d" % [shot_name, roundi(float(p[0]) * 100.0)]
+		if p.size() >= 3:
+			main.env.tonemap_agx_white = float(p[1])
+			main.env.tonemap_agx_contrast = float(p[2])
+			tag += "_w%d_c%d" % [roundi(float(p[1]) * 100.0), roundi(float(p[2]) * 100.0)]
+		if p.size() >= 4:
+			# (4e valeur : énergie indirecte de la lampe de poche, ce qu'elle fait rebondir dans la VoxelGI)
+			player.flashlight.light_indirect_energy = float(p[3])
+			tag += "_g%d" % roundi(float(p[3]) * 10.0)
+		# (5e valeur « r0 » : sans reflets, ni SSR ni sondes, pour voir ce qu'ils apportent)
+		var no_refl := p.size() >= 5 and p[4] == "r0"
+		HouseRoom.reflections_muted = no_refl
+		main.env.ssr_enabled = Qualite.reflections_on() and not no_refl
+		if no_refl:
+			tag += "_r0"
+		for i in 4:
+			await RenderingServer.frame_post_draw
+		await shot(tag)
+		shots_taken -= 1     # (B1 compte 6 vues par pièce)
+	player.flashlight.light_indirect_energy = gi0
+	HouseRoom.reflections_muted = false
+	main.env.ssr_enabled = Qualite.reflections_on()
+	main._apply_video()
+	m.set_shader_parameter("grain_net", grain)
 
 
 ## Attend que cond soit vraie (au plus timeout secondes). Renvoie true si elle l'est devenue.
@@ -408,7 +609,10 @@ func run_main() -> void:
 	check_c9("parcours principal", ["seance1", "fin_seance1", "sortir", "mamie", "explorer", "p4", "convocation", "seance2", "fin"])
 	var real_s := Time.get_ticks_msec() / 1000.0
 	print("C8 : parcours complet joué en %.0f s d'horloge (lancement compris)" % real_s)
-	check("C8 parcours complet en moins de 15 min", real_s < 900.0, "%.0f s" % real_s)
+	if complet_logiciel():
+		print("C8 non vérifié : profil complet (--rendu-complet) sur un rendu logiciel")
+	else:
+		check("C8 parcours complet en moins de 15 min", real_s < 900.0, "%.0f s" % real_s)
 	finish()
 
 
@@ -1606,7 +1810,10 @@ func run_screens() -> void:
 	var ot := texts_of(menu.options_box)
 	check("options son", ot.contains("Sous-titres des sons") and ot.contains("Chuchotements (synthèse Windows)"), ot)
 	check("options dans l'écran", fits(menu.options_box), str(menu.options_box.get_global_rect()))
+	check("options image", ot.contains("Qualité : ‹ ") and ot.contains("Luminosité") and ot.contains("Champ de vision : ")
+		and ot.contains("Mouvements de la caméra : ") and ot.contains("Style rétro (pixels)") and ot.contains("Plein écran"), ot)
 	await shot("e02_options")
+	await check_quality_settings()
 	menu.show_hero()
 	await wait(0.5)
 	check("héros dans l'écran", fits(menu.hero_box), str(menu.hero_box.get_global_rect()))
@@ -1840,6 +2047,10 @@ func check_positions() -> void:
 ## 1,5 fois ceux de la 0.3.0 en rendu logiciel (maison ≈ 2250 ms, VoxelGI ≈ 950 ms).
 func check_build_times() -> void:
 	print("B16 : maison construite en %d ms (au plus %d), VoxelGI cuit en %d ms (au plus %d)" % [main.build_ms, int(BUILD_MS_030 * 1.5), main.gi_ms, int(GI_MS_030 * 1.5)])
+	if complet_logiciel():
+		check("B16 temps de construction mesurés (profil complet sur rendu logiciel : limites non appliquées)", main.build_ms > 0 and main.gi_ms > 0,
+			"maison %d ms, GI %d ms" % [main.build_ms, main.gi_ms])
+		return
 	check("B16 temps de construction", main.build_ms > 0 and main.build_ms <= BUILD_MS_030 * 1.5 and main.gi_ms > 0 and main.gi_ms <= GI_MS_030 * 1.5,
 		"maison %d ms, GI %d ms" % [main.build_ms, main.gi_ms])
 

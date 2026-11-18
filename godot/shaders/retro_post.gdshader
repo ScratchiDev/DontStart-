@@ -1,6 +1,8 @@
 // Filtre plein écran, réglé par main.gd (_apply_video) selon l'option « Style rétro (pixels) » :
 //  - rendu moderne (par défaut) : image à la résolution de l'écran, léger grain de pellicule,
 //    vignettage doux, aberration chromatique presque nulle ; levels = 0 (pas de palette réduite) ;
+//    point noir, épaule étirée jusqu'au blanc (les hautes lumières d'AgX plafonnent vers 0,8 : au-delà
+//    du genou, elles montent au blanc ; les tons moyens ne bougent pas), pied de courbe ;
 //  - style rétro : image 640×360 agrandie sans lissage, palette réduite (levels = 16) + tramage
 //    ordonné (Bayer 4×4), grain, vignettage, aberration chromatique : l'aspect des versions 0.1 à 0.3.
 // La peur (corruption, main.gd _on_fear) déchire l'image et écarte les couleurs dans les deux modes ;
@@ -13,6 +15,7 @@ uniform float dither_strength = 0.0;  // tramage de Bayer (rétro : 1)
 uniform float grain = 0.045;          // grain de base + stress (piloté par Game)
 uniform float grain_mult = 0.5;       // part du grain gardée (rétro : 1)
 uniform float vignette = 0.55;
+uniform float vignette_inner = 0.12;  // où le vignettage commence (rayon² × 1,9) ; rétro : 0,12
 uniform float aberration = 0.00015;
 uniform float corruption_aberration = 0.0044;  // aberration ajoutée par la corruption (× corruption)
 uniform float corruption = 0.0;       // 0..1 : la partie « pourrit » l'image
@@ -20,6 +23,8 @@ uniform float blackout = 0.0;         // 0..1 : fondu au noir
 uniform vec3 tint = vec3(1.0);
 // rendu net seulement (0 en rétro : l'image d'avant, à l'identique) :
 uniform float black_point = 0.0;      // noir relevé par AgX et le brouillard, ramené à 0
+uniform float white_point = 1.0;      // valeur qui devient le blanc (1 : rien ne change)
+uniform float shoulder_knee = 0.4;    // l'épaule s'étire au-dessus de ce genou (raccord sans cassure)
 uniform float toe = 0.0;              // pied de courbe : les basses lumières s'enfoncent (0..1)
 uniform float grain_net = 0.0;        // grain de pellicule : taille suivant la résolution, plus fort dans le noir
 
@@ -40,18 +45,23 @@ void fragment() {
 	c.r = texture(screen_tex, uv + off).r;
 	c.g = texture(screen_tex, uv).g;
 	c.b = texture(screen_tex, uv - off).b;
-	c *= mix(1.0, smoothstep(0.95, 0.12, r2 * 1.9), vignette);
+	c *= mix(1.0, smoothstep(0.95, vignette_inner, r2 * 1.9), vignette);
 	if (black_point > 0.0) {
 		c = max(c - black_point, vec3(0.0)) / (1.0 - black_point);
+	}
+	if (white_point < 1.0) {
+		vec3 t = max(c - shoulder_knee, vec3(0.0));
+		c += t * t * (1.0 - white_point) / ((white_point - shoulder_knee) * (white_point - shoulder_knee));
 	}
 	float lum = dot(c, vec3(0.299, 0.587, 0.114));
 	if (toe > 0.0) {
 		c *= 1.0 - toe * (1.0 - clamp(lum / 0.25, 0.0, 1.0));
 	}
 	if (grain_net > 0.0) {
-		// un grain de 2 px en 1080p (1 px en 540p), plus présent dans les ombres que dans les lumières
+		// un grain de 2 px en 1080p (1 px en 540p), plus présent dans les ombres que dans les lumières,
+		// mais qui s'efface dans le noir profond (il n'y fait plus de points noirs ni gris)
 		float gp = max(1.0, floor(0.5 + 1.0 / (SCREEN_PIXEL_SIZE.y * 540.0)));
-		float gw = 0.6 + 0.8 * (1.0 - clamp(lum, 0.0, 1.0));
+		float gw = (0.6 + 0.8 * (1.0 - clamp(lum, 0.0, 1.0))) * smoothstep(0.0, 0.06, lum);
 		c += (rnd(floor(FRAGCOORD.xy / gp) + fract(TIME * 7.13) * 97.0) - 0.5) * grain * grain_mult * gw * grain_net;
 	} else {
 		c += (rnd(FRAGCOORD.xy + fract(TIME * 7.13) * 97.0) - 0.5) * grain * grain_mult;

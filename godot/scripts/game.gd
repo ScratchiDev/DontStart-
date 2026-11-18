@@ -23,7 +23,33 @@ const WEAPON_PARTS := ["seche_cheveux", "antenne", "boussole", "bobine"]
 var mouse_sensitivity := 0.0022
 var master_volume := 0.85
 var fullscreen := true
-var high_quality := true
+## Préréglage d'image : Qualite.BASSE, MOYENNE, ELEVEE ou ULTRA (scripts/qualite.gd ; settings.cfg
+## « video/qualite »). Au premier lancement, d'après la carte graphique (Qualite.detect). En rendu
+## logiciel, le niveau appliqué est plafonné à Élevée (Qualite.effective).
+var quality: int = Qualite.ELEVEE
+## Vrai si aucun réglage n'a choisi le niveau (ni settings.cfg, ni --qualite) : détecté (Main le refait
+## après la construction, si l'autoload a interrogé la carte trop tôt).
+var quality_auto := false
+var _quality_saved := -1      # --qualite=… : le niveau d'avant, celui qu'on enregistre
+## L'ancienne case « Qualité élevée » (0.3.3) : vraie à partir d'Élevée ; la cocher donne Élevée, la
+## décocher Basse.
+var high_quality: bool:
+	get:
+		return quality >= Qualite.ELEVEE
+	set(v):
+		quality = Qualite.ELEVEE if v else Qualite.BASSE
+## Luminosité (0 = sombre, 1 = clair ; 0,5 par défaut) : point noir et pied de courbe du rendu net
+## (Main.net_curve) ; sans effet en style rétro.
+var luminosite := 0.5
+## Champ de vision vertical de la caméra du joueur, en degrés (55 à 80 ; 62 par défaut, soit environ
+## 95° en horizontal en 16:9). Appliqué par le joueur (lot V2-PRESENCE).
+const FOV_DEFAULT := 62.0
+const FOV_MIN := 55.0
+const FOV_MAX := 80.0
+var fov := FOV_DEFAULT
+## « Mouvements de la caméra » (0 à 1) : multiplie la respiration, l'impact des pas, le roulis et les
+## secousses de la caméra (couche « présence », lot V2-PRESENCE). 0 = la caméra de la 0.3.3.
+var mouvements_camera := 1.0
 ## Style rétro (pixels) : image 640×360 agrandie sans lissage, palette réduite et tramage (l'aspect des
 ## versions 0.1 à 0.3). Désactivé : rendu net à la résolution de l'écran (main.gd, _apply_video).
 var style_retro := false
@@ -73,6 +99,7 @@ var miroir_arg := ""       # --miroir=fixe|retourne|fui : issue imposée du P4 r
 var seance2_arg := ""      # --seance2=confirmer|changer|delai : issue imposée de la séance 2 (autotest)
 var indices := false       # --indices : minuteries des indices accélérées (×30)
 var absorbe_test := false  # --absorbe : jauge forcée à 100 dans le couloir (autotest)
+var quality_arg := -1      # --qualite=basse|moyenne|elevee|ultra : niveau imposé, non enregistré
 
 var fonts := {}
 
@@ -110,7 +137,16 @@ func _enter_tree() -> void:
 			indices = true
 		elif a == "--absorbe":
 			absorbe_test = true
+		elif a.begins_with("--qualite="):
+			quality_arg = Qualite.from_name(a.substr(10))
+			if quality_arg < 0:
+				push_warning("--qualite : basse, moyenne, elevee ou ultra (reçu « %s »)" % a.substr(10))
 	_load_settings()
+	# --qualite=… : le niveau est imposé pour ce lancement, sans être enregistré
+	if quality_arg >= 0:
+		_quality_saved = quality
+		quality = quality_arg
+		quality_auto = false
 	if autotest:
 		fullscreen = false
 	apply_settings()
@@ -201,14 +237,29 @@ func _load_fonts() -> void:
 	fonts.mono = load("res://assets/fonts/IBMPlexMono-Regular.ttf")
 
 
-func _load_settings() -> void:
+## Lit les réglages (settings.cfg ; « path » : un autre fichier, pour les vérifications de l'autotest).
+## Qualité : « video/qualite » (0 à 3) s'il existe, sinon l'ancienne case « video/high_quality » de la
+## 0.3.3 (cochée → Élevée, décochée → Basse), sinon la détection de la carte (quality_auto).
+func _load_settings(path := SETTINGS_PATH) -> void:
 	var cfg := ConfigFile.new()
-	if cfg.load(SETTINGS_PATH) != OK:
+	if cfg.load(path) != OK:
+		quality = Qualite.detect()
+		quality_auto = true
 		return
 	mouse_sensitivity = cfg.get_value("controls", "mouse_sensitivity", mouse_sensitivity)
 	master_volume = cfg.get_value("audio", "master_volume", master_volume)
 	fullscreen = cfg.get_value("video", "fullscreen", fullscreen)
-	high_quality = cfg.get_value("video", "high_quality", high_quality)
+	quality_auto = false
+	if cfg.has_section_key("video", "qualite"):
+		quality = clampi(int(cfg.get_value("video", "qualite")), Qualite.BASSE, Qualite.ULTRA)
+	elif cfg.has_section_key("video", "high_quality"):
+		quality = Qualite.ELEVEE if bool(cfg.get_value("video", "high_quality")) else Qualite.BASSE
+	else:
+		quality = Qualite.detect()
+		quality_auto = true
+	luminosite = clampf(float(cfg.get_value("video", "luminosite", luminosite)), 0.0, 1.0)
+	fov = clampf(float(cfg.get_value("video", "fov", fov)), FOV_MIN, FOV_MAX)
+	mouvements_camera = clampf(float(cfg.get_value("confort", "mouvements_camera", mouvements_camera)), 0.0, 1.0)
 	style_retro = cfg.get_value("video", "style_retro", style_retro)
 	reduced_scares = cfg.get_value("accessibilite", "sursauts_reduits", reduced_scares)
 	soft_flashes = cfg.get_value("accessibilite", "eclairs_adoucis", soft_flashes)
@@ -222,14 +273,28 @@ func save_settings() -> void:
 	cfg.set_value("controls", "mouse_sensitivity", mouse_sensitivity)
 	cfg.set_value("audio", "master_volume", master_volume)
 	cfg.set_value("video", "fullscreen", fullscreen)
-	cfg.set_value("video", "high_quality", high_quality)
+	# (les deux clés : une 0.3.3 qui relirait ce fichier retrouverait sa case « Qualité élevée »)
+	var q := quality if _quality_saved < 0 else _quality_saved
+	cfg.set_value("video", "qualite", q)
+	cfg.set_value("video", "high_quality", q >= Qualite.ELEVEE)
+	cfg.set_value("video", "luminosite", luminosite)
+	cfg.set_value("video", "fov", fov)
 	cfg.set_value("video", "style_retro", style_retro)
+	cfg.set_value("confort", "mouvements_camera", mouvements_camera)
 	cfg.set_value("accessibilite", "sursauts_reduits", reduced_scares)
 	cfg.set_value("accessibilite", "eclairs_adoucis", soft_flashes)
 	cfg.set_value("audio", "chuchotements", whispers)
 	cfg.set_value("accessibilite", "sous_titres_sons", sound_captions)
 	cfg.set_value("accessibilite", "avertissement_vu", seen_warning)
 	cfg.save(SETTINGS_PATH)
+
+
+## Le joueur choisit un niveau (menu « Qualité ») : il remplace aussi un --qualite de la ligne de commande.
+func set_quality(q: int) -> void:
+	quality = clampi(q, Qualite.BASSE, Qualite.ULTRA)
+	_quality_saved = -1
+	quality_auto = false
+	apply_settings()
 
 
 func apply_settings() -> void:

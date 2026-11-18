@@ -1,6 +1,8 @@
 extends CanvasLayer
 ## Avertissement (premier lancement), écran-titre (« Continuer » s'il existe une sauvegarde), choix du
-## héros, menu pause et options (sensibilité, volume, plein écran, qualité, style rétro, accessibilité, son).
+## héros, menu pause et options en deux colonnes (image et contrôles : sensibilité, qualité Basse à
+## Ultra, luminosité avec sa mire, champ de vision, plein écran, style rétro ; son et confort : volume,
+## mouvements de la caméra, accessibilité, son).
 ## Tourne même quand le jeu est en pause. Police VT323 aux seules tailles nettes (multiples de 10 px :
 ## en 12 à 16 px, son « M » se lit « N »).
 
@@ -25,6 +27,12 @@ var hero_box: Control
 var warning_box: Control
 var continue_btn: Button
 var back_target := "title"
+var quality_btn: Button          # « > Qualité : ‹ Élevée › » (clic, Entrée, ← et →)
+var quality_help: Label
+var mire_logo: Label             # la mire de la luminosité : logo presque noir sur noir
+## Valeur (après AgX, avant le filtre plein écran) du logo de la mire : à la luminosité par défaut,
+## il sort à environ 8/255, « à peine visible » sur un écran bien réglé.
+const MIRE_VALUE := 0.04
 
 
 func _ready() -> void:
@@ -180,13 +188,14 @@ func _build_pause() -> Control:
 	return v
 
 
-func _slider(label: String, min_v: float, max_v: float, value: float, cb: Callable) -> Control:
+func _slider(label: String, min_v: float, max_v: float, value: float, cb: Callable, step := -1.0) -> Control:
 	var row := VBoxContainer.new()
+	row.add_theme_constant_override("separation", 0)
 	row.add_child(_text(label, BEIGE, FONT, false))
 	var s := HSlider.new()
 	s.min_value = min_v
 	s.max_value = max_v
-	s.step = (max_v - min_v) / 100.0
+	s.step = (max_v - min_v) / 100.0 if step <= 0.0 else step
 	s.value = value
 	s.custom_minimum_size = Vector2(220, 14)
 	s.value_changed.connect(cb)
@@ -194,73 +203,163 @@ func _slider(label: String, min_v: float, max_v: float, value: float, cb: Callab
 	return row
 
 
+## Un curseur dont le libellé montre la valeur (« Champ de vision : 62° ») : fmt(valeur) -> texte.
+func _slider_live(fmt: Callable, min_v: float, max_v: float, value: float, cb: Callable, step := -1.0) -> Control:
+	var lbl := []     # (les lambdas copient les variables locales : un tableau, partagé, garde le libellé)
+	var row := _slider(fmt.call(value), min_v, max_v, value, func(x: float) -> void:
+		(lbl[0] as Label).text = fmt.call(x)
+		cb.call(x), step)
+	lbl.append(row.get_child(0))
+	return row
+
+
+func _check(label: String, on: bool, cb: Callable) -> CheckBox:
+	var c := CheckBox.new()
+	c.text = label
+	c.button_pressed = on
+	c.toggled.connect(cb)
+	return c
+
+
+## Écran Options, en deux colonnes sous options_box : à gauche l'image et les contrôles, à droite le
+## son et le confort ; « Retour » dessous. Les libellés d'avant n'ont pas changé (C7 retrouve la case
+## « Chuchotements (synthèse Windows) » par son texte).
 func _build_options() -> Control:
-	var v := _vbox(44)
-	# (huit réglages : lignes resserrées pour que « Retour » tienne dans les 360 px de haut)
+	var v := _vbox(30)
 	v.add_theme_constant_override("separation", 2)
 	v.position.y -= 6
 	v.add_child(_text("OPTIONS", GREEN, FONT_HEAD, false))
-	v.add_child(_slider("Sensibilité de la souris", 0.0006, 0.006, Game.mouse_sensitivity, func(x: float) -> void:
+	var cols := HBoxContainer.new()
+	cols.add_theme_constant_override("separation", 14)
+	v.add_child(cols)
+	var left := VBoxContainer.new()
+	left.custom_minimum_size = Vector2(268, 0)
+	left.add_theme_constant_override("separation", 2)
+	cols.add_child(left)
+	var right := VBoxContainer.new()
+	right.custom_minimum_size = Vector2(304, 0)
+	right.add_theme_constant_override("separation", 2)
+	cols.add_child(right)
+	# --- image et contrôles
+	left.add_child(_slider("Sensibilité de la souris", 0.0006, 0.006, Game.mouse_sensitivity, func(x: float) -> void:
 		Game.mouse_sensitivity = x))
-	v.add_child(_slider("Volume", 0.0, 1.0, Game.master_volume, func(x: float) -> void:
+	quality_btn = _button(_quality_text(), func() -> void: _set_quality(Game.quality + 1))
+	quality_btn.gui_input.connect(_on_quality_input)
+	left.add_child(quality_btn)
+	quality_help = _text("", Color(0.5, 0.49, 0.44), FONT_SMALL, false)
+	left.add_child(quality_help)
+	left.add_child(_slider("Luminosité", 0.0, 1.0, Game.luminosite, func(x: float) -> void:
+		Game.luminosite = x
+		_update_mire()
+		Game.apply_settings()))
+	left.add_child(_build_mire())
+	left.add_child(_slider_live(func(x: float) -> String: return "Champ de vision : %d°" % roundi(x),
+		Game.FOV_MIN, Game.FOV_MAX, Game.fov, func(x: float) -> void:
+			Game.fov = x
+			Game.apply_settings(), 1.0))
+	left.add_child(_check("Plein écran", Game.fullscreen, func(on: bool) -> void:
+		Game.fullscreen = on
+		Game.apply_settings()))
+	left.add_child(_check("Style rétro (pixels)", Game.style_retro, func(on: bool) -> void:
+		Game.style_retro = on
+		Game.apply_settings()))
+	# --- son et confort
+	right.add_child(_slider("Volume", 0.0, 1.0, Game.master_volume, func(x: float) -> void:
 		Game.master_volume = x
 		Game.apply_settings()))
-	var fs := CheckBox.new()
-	fs.text = "Plein écran"
-	fs.button_pressed = Game.fullscreen
-	fs.toggled.connect(func(on: bool) -> void:
-		Game.fullscreen = on
-		Game.apply_settings())
-	v.add_child(fs)
-	var hq := CheckBox.new()
-	hq.text = "Qualité élevée (brouillard, ombres fines)"
-	hq.button_pressed = Game.high_quality
-	hq.toggled.connect(func(on: bool) -> void:
-		Game.high_quality = on
-		Game.apply_settings())
-	v.add_child(hq)
-	var sr := CheckBox.new()
-	sr.text = "Style rétro (pixels)"
-	sr.button_pressed = Game.style_retro
-	sr.toggled.connect(func(on: bool) -> void:
-		Game.style_retro = on
-		Game.apply_settings())
-	v.add_child(sr)
-	var rs := CheckBox.new()
-	rs.text = "Sursauts réduits"
-	rs.button_pressed = Game.reduced_scares
-	rs.toggled.connect(func(on: bool) -> void:
+	right.add_child(_slider_live(func(x: float) -> String: return "Mouvements de la caméra : %d %%" % roundi(x * 100.0),
+		0.0, 1.0, Game.mouvements_camera, func(x: float) -> void:
+			Game.mouvements_camera = x
+			Game.apply_settings(), 0.05))
+	right.add_child(_check("Sursauts réduits", Game.reduced_scares, func(on: bool) -> void:
 		Game.reduced_scares = on
-		Game.apply_settings())
-	v.add_child(rs)
-	var sf := CheckBox.new()
-	sf.text = "Éclairs adoucis (photosensibilité)"
-	sf.button_pressed = Game.soft_flashes
-	sf.toggled.connect(func(on: bool) -> void:
+		Game.apply_settings()))
+	right.add_child(_check("Éclairs adoucis (photosensibilité)", Game.soft_flashes, func(on: bool) -> void:
 		Game.soft_flashes = on
-		Game.apply_settings())
-	v.add_child(sf)
-	var sc := CheckBox.new()
-	sc.text = "Sous-titres des sons"
-	sc.button_pressed = Game.sound_captions
-	sc.toggled.connect(func(on: bool) -> void:
+		Game.apply_settings()))
+	right.add_child(_check("Sous-titres des sons", Game.sound_captions, func(on: bool) -> void:
 		Game.sound_captions = on
-		Game.apply_settings())
-	v.add_child(sc)
-	var wh := CheckBox.new()
-	wh.text = "Chuchotements (synthèse Windows)"
-	wh.button_pressed = Game.whispers
-	wh.toggled.connect(func(on: bool) -> void:
+		Game.apply_settings()))
+	right.add_child(_check("Chuchotements (synthèse Windows)", Game.whispers, func(on: bool) -> void:
 		Game.whispers = on
-		Game.apply_settings())
-	v.add_child(wh)
+		Game.apply_settings()))
 	v.add_child(_button("Retour", func() -> void:
 		Game.save_settings()
 		if back_target == "title":
 			show_title()
 		else:
 			show_pause()))
+	_update_quality()
+	_update_mire()
 	return v
+
+
+# ------------------------------------------------------------------ qualité, mire de luminosité
+
+func _quality_text() -> String:
+	return "Qualité : ‹ %s ›" % Qualite.name_of(Game.quality)
+
+
+## Clic ou Entrée : niveau suivant (après Ultra, Basse) ; ← et → quand le bouton a le focus (clavier,
+## manette, Steam Deck).
+func _on_quality_input(event: InputEvent) -> void:
+	if event.is_action_pressed("ui_left"):
+		_set_quality(Game.quality - 1, false)
+		quality_btn.accept_event()
+	elif event.is_action_pressed("ui_right"):
+		_set_quality(Game.quality + 1, false)
+		quality_btn.accept_event()
+
+
+## Change le niveau (« wrap » : après Ultra, Basse ; sinon borné, avec le clic du curseur).
+func _set_quality(q: int, wrap := true) -> void:
+	if wrap:
+		q = posmod(q, Qualite.ULTRA + 1)
+	q = clampi(q, Qualite.BASSE, Qualite.ULTRA)
+	if q == Game.quality:
+		return
+	if not wrap:
+		Sfx.play("metalClick", -14.0, 1.6)
+	Game.set_quality(q)
+	_update_quality()
+
+
+func _update_quality() -> void:
+	if quality_btn == null:
+		return
+	quality_btn.text = "> " + _quality_text()
+	var help: String = Qualite.AIDE[clampi(Game.quality, 0, 3)]
+	if Qualite.soft() and Game.quality > Qualite.ELEVEE:
+		help += " · rendu logiciel : Élevée au plus"
+	quality_btn.tooltip_text = help
+	quality_help.text = help
+
+
+## Mire de la luminosité : sur un fond noir, le logo à la valeur MIRE_VALUE passée dans la même courbe
+## que l'image (Main.net_curve, Main.net_display) ; on règle jusqu'à ce qu'il soit à peine visible.
+func _build_mire() -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	var box := ColorRect.new()
+	box.color = Color.BLACK
+	box.custom_minimum_size = Vector2(112, 22)
+	row.add_child(box)
+	mire_logo = Label.new()
+	mire_logo.text = "DON'T PLAY"
+	mire_logo.add_theme_font_size_override("font_size", FONT)
+	mire_logo.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	mire_logo.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	mire_logo.set_anchors_preset(Control.PRESET_FULL_RECT)
+	box.add_child(mire_logo)
+	row.add_child(_text("‹ à peine visible", Color(0.5, 0.49, 0.44), FONT, false))
+	return row
+
+
+func _update_mire() -> void:
+	if mire_logo == null:
+		return
+	var g := Main.net_display(MIRE_VALUE, Main.net_curve(Game.luminosite))
+	mire_logo.add_theme_color_override("font_color", Color(g, g, g))
 
 
 func hide_all() -> void:
@@ -297,4 +396,5 @@ func show_pause() -> void:
 
 func show_options(from: String) -> void:
 	back_target = from
+	_update_quality()
 	_show(options_box)

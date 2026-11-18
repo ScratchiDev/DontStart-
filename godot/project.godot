@@ -2,6 +2,9 @@
 ; L'interface est pensée en 640×360 et agrandie (étirement « canvas_items ») ; la 3D est calculée à la
 ; résolution de la fenêtre. L'option « Style rétro (pixels) » rend l'aspect d'avant : 3D en 640×360
 ; agrandie sans lissage, palette réduite et tramage (main.gd, _apply_video).
+; Préréglages d'image Basse, Moyenne, Élevée, Ultra : scripts/qualite.gd (les valeurs ci-dessous sont
+; celles d'Élevée et du rendu logiciel). Une sonde de reflets par pièce (8) : l'atlas en garde 16
+; (64 par défaut, soit environ 270 Mo de mémoire vidéo réservés pour rien).
 
 config_version=5
 
@@ -45,3 +48,4 @@ environment/defaults/default_clear_color=Color(0, 0, 0, 1)
 lights_and_shadows/positional_shadow/atlas_size=4096
 environment/volumetric_fog/volume_size=96
 environment/volumetric_fog/volume_depth=96
+reflections/reflection_atlas/reflection_count=16

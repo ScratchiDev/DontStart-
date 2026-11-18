@@ -19,6 +19,11 @@ var floor_kind := "parquet"
 var rugs: Array[Rect2] = []      # tapis (x, z, largeur, profondeur) : les pas y sont étouffés
 var _rugs_scanned := -1
 var _rugs_auto: Array[Rect2] = []
+## Sonde de reflets « Reflets » (prepare_reflections ; vraie carte seulement, montrée dès Élevée).
+var probe: ReflectionProbe
+var _probe_lights: Array = []     # [[Light3D, énergie de base], …] : les lampes de la capture
+var _probe_sum := 0.0             # somme de leurs énergies de base
+var _probe_base := {}             # Light3D -> énergie de base, relevée à la construction
 
 
 func setup(id: String, r: Rect2, floor_y := 0.0, height := 2.6, name_shown := "") -> void:
@@ -167,7 +172,173 @@ func set_active(on: bool) -> void:
 		if is_instance_valid(l) and not l.has_meta("always_on"):
 			l.visible = on
 	if gi:
-		gi.visible = on and Game.high_quality
+		gi.visible = on and Qualite.gi_on()
+	# (la sonde de reflets reste montrée : la cacher puis la remontrer la ferait recapturer avec les lampes
+	# du moment et la lampe de poche ; une pièce inactive a ses reflets à l'intensité 0, update_reflection)
+
+
+## Objets de décor de la pièce (passe « triple A ») : appelé par Main après la mesure de B16, seulement
+## avec une vraie carte graphique (Qualite.details_on()), jamais dans furnish(). Les scripts des pièces
+## la redéfinissent et y posent leurs Builder.detail(…) ; ici, rien.
+func dress_details() -> void:
+	pass
+
+
+# ------------------------------------------------------------------ reflets
+
+## Délais d'une capture, en images (mesurés sur lavapipe : une sonde UPDATE_ONCE rend ses 6 faces dans
+## les 2 images qui suivent son apparition, puis filtre ses niveaux de rugosité en moins de 10 images ;
+## la suivante attend son tour).
+const PROBE_FACE_FRAMES := 3
+const PROBE_TOTAL_FRAMES := 12
+## Énergie prise pour une lampe éteinte dont on ne connaît pas l'énergie d'allumage (méta
+## « energie_base » absente), quand la pièce n'a aucune autre lampe connue.
+const PROBE_DEFAULT_ENERGY := 0.5
+## Gain des reflets figés. La capture ne voit que les lampes de la pièce (ni la lampe de service des
+## aperçus, ni, semble-t-il, le rebond de la VoxelGI) : sur les aperçus en Ultra, les sondes assombrissent
+## un peu le spéculaire (−1 à −5/255 en moyenne). À régler sur une vraie carte (lot V3-ETALONNAGE).
+const PROBE_GAIN := 1.0
+
+
+## Sonde de reflets de la pièce (vraie carte seulement ; Main l'appelle après la construction) : une
+## ReflectionProbe « Reflets » à la taille de la pièce, projetée en boîte, intérieure, sans lumière
+## ambiante (l'éclairage ambiant ne change pas), capturée UNE fois (UPDATE_ONCE), cachée jusqu'à sa
+## capture (Main._capture_reflections, puis capture_reflection). Couches exclues : 11 (flux
+## uniquement) et Qualite.LAYER_NO_PROBE (lampe de poche).
+func prepare_reflections() -> void:
+	if probe or Qualite.soft():
+		return
+	probe = ReflectionProbe.new()
+	probe.name = "Reflets"
+	probe.size = Vector3(rect.size.x + 0.3, h + 0.2, rect.size.y + 0.3)
+	probe.position = center() - global_position
+	# (point de capture à hauteur des yeux ; la projection en boîte corrige le reste)
+	probe.origin_offset = Vector3(0.0, clampf(1.5 - h / 2.0, -h / 2.0 + 0.2, h / 2.0 - 0.2), 0.0)
+	probe.box_projection = true
+	probe.interior = true
+	probe.ambient_mode = ReflectionProbe.AMBIENT_DISABLED
+	probe.update_mode = ReflectionProbe.UPDATE_ONCE
+	probe.blend_distance = 0.15
+	probe.mesh_lod_threshold = 4.0
+	probe.enable_shadows = true          # (une seule capture : les ombres ne coûtent qu'une fois)
+	probe.cull_mask = 0xFFFFF & ~(Builder.layer_bit(LAYER_FEED_ONLY) | Builder.layer_bit(Qualite.LAYER_NO_PROBE))
+	probe.intensity = 0.0
+	probe.visible = false
+	add_child(probe)
+	# (énergies de base relevées maintenant : toutes les pièces sont encore actives, rien n'a clignoté)
+	for l in _lights:
+		if is_instance_valid(l):
+			_probe_base[l] = _base_energy(l)
+
+
+## Énergie de base d'une lampe : méta « energie_base », sinon celle de son ampoule connectée (SmartBulb,
+## même éteinte), sinon son énergie si elle est allumée ; 0 = elle ne compte pas (veilleuses
+## infrarouges, lumières des seules caméras de flux…). -1 : éteinte, énergie d'allumage inconnue.
+static func _base_energy(l: Light3D) -> float:
+	if l.has_meta("energie_base"):
+		return float(l.get_meta("energie_base"))
+	if (l.light_cull_mask & 1) == 0:
+		return 0.0
+	var p := l.get_parent()
+	if p is SmartBulb:
+		return (p as SmartBulb).energy
+	if l.visible and l.light_energy > 0.0:
+		return l.light_energy
+	if not l.visible or l.has_meta("always_on"):
+		return 0.0
+	return -1.0
+
+
+## Capture la sonde (appelée par Main, une pièce à la fois, caméra de capture en place) : les lampes de
+## la pièce à leur énergie de base pendant les images où la sonde rend ses faces, puis remises comme
+## elles étaient (sauf si le jeu les a changées entre-temps), puis le filtrage. Coroutine.
+func capture_reflection() -> void:
+	if probe == null:
+		return
+	_probe_lights.clear()
+	_probe_sum = 0.0
+	var unknown: Array[Light3D] = []
+	for l in _lights:
+		if not is_instance_valid(l):
+			continue
+		var e: float = _probe_base[l] if _probe_base.has(l) else _base_energy(l)
+		if e > 0.0:
+			_probe_lights.append([l, e])
+			_probe_sum += e
+		elif e < 0.0:
+			unknown.append(l)
+	if _probe_sum <= 0.0:
+		for l in unknown:
+			_probe_lights.append([l, PROBE_DEFAULT_ENERGY])
+			_probe_sum += PROBE_DEFAULT_ENERGY
+	var saved := []      # [lampe, visible, énergie, énergie imposée]
+	for e in _probe_lights:
+		var l: Light3D = e[0]
+		saved.append([l, l.visible, l.light_energy, float(e[1])])
+		l.visible = true
+		l.light_energy = float(e[1])
+	# (les autres lampes de la pièce, allumées hors de leur état de base : éteintes le temps de la capture)
+	for l in _lights:
+		if is_instance_valid(l) and l.visible and l.light_energy > 0.0 and not _counted(l):
+			saved.append([l, true, l.light_energy, 0.0])
+			l.visible = false
+	probe.intensity = 1.0
+	probe.visible = true
+	var was_active := active
+	for i in PROBE_FACE_FRAMES:
+		await RenderingServer.frame_post_draw
+	for sv in saved:
+		var l: Light3D = sv[0]
+		if not is_instance_valid(l):
+			continue
+		var forced: float = sv[3]
+		var untouched := (l.visible and is_equal_approx(l.light_energy, forced)) if forced > 0.0 else not l.visible
+		if untouched:
+			# (la pièce a changé d'état entre-temps : la visibilité suit set_active)
+			l.visible = sv[1] if active == was_active else (active or l.has_meta("always_on"))
+			l.light_energy = sv[2]
+	update_reflection()
+	for i in PROBE_TOTAL_FRAMES - PROBE_FACE_FRAMES:
+		await RenderingServer.frame_post_draw
+
+
+func _counted(l: Light3D) -> bool:
+	for e in _probe_lights:
+		if e[0] == l:
+			return true
+	return false
+
+
+## Vrai : toutes les sondes à l'intensité 0 sans les cacher (comparaison avec / sans reflets de
+## l'étalonnage de l'autotest ; cacher une sonde la ferait recapturer).
+static var reflections_muted := false
+
+
+## Intensité des reflets (appelée à chaque image par Main) : la somme des énergies actuelles des lampes
+## de la capture sur leur somme de base. Lampes éteintes ou pièce inactive : 0, plus aucun reflet figé
+## (la VoxelGI et le SSR restent).
+func update_reflection() -> void:
+	if probe == null or not probe.visible:
+		return
+	var k := 0.0
+	if active and _probe_sum > 0.0 and not reflections_muted:
+		var cur := 0.0
+		for e in _probe_lights:
+			var l: Light3D = e[0]
+			if is_instance_valid(l) and l.is_visible_in_tree():
+				cur += l.light_energy
+		k = clampf(cur / _probe_sum * PROBE_GAIN, 0.0, 2.5)
+		if k < 0.02:
+			k = 0.0
+	if absf(k - probe.intensity) > 0.004 or (k == 0.0 and probe.intensity != 0.0):
+		probe.intensity = k
+
+
+## Qualité trop basse ou style rétro : la sonde se cache (elle se recapturera si on la remontre).
+func hide_reflection() -> void:
+	if probe:
+		probe.visible = false
+		probe.intensity = 0.0
 
 
 ## Ajoute un tapis (rectangle au sol, repère du jeu : x, z, largeur en x, profondeur en z).

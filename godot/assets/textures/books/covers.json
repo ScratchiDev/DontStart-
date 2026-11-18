@@ -1,0 +1,717 @@
+{
+ "atlases": [
+  "res://assets/textures/books/covers_0.jpg",
+  "res://assets/textures/books/covers_1.jpg"
+ ],
+ "cell_px": [
+  512,
+  341
+ ],
+ "grid": [
+  4,
+  6
+ ],
+ "layout": {
+  "comment": "couverture dépliée, en fractions de la largeur : dos (4e de couverture) | tranche | plat",
+  "back": [
+   0.0,
+   0.4443
+  ],
+  "spine": [
+   0.4443,
+   0.5537
+  ],
+  "front": [
+   0.5537,
+   1.0
+  ]
+ },
+ "base": {
+  "comment": "book_hardcover_01_{diff,nor_gl,arm}.jpg (1024²) : rectangles [x, y, l, h] en UV",
+  "diff": "res://assets/textures/books/book_hardcover_01_diff.jpg",
+  "normal": "res://assets/textures/books/book_hardcover_01_nor_gl.jpg",
+  "arm": "res://assets/textures/books/book_hardcover_01_arm.jpg",
+  "pages_rect": [
+   0.0,
+   0.0,
+   1.0,
+   0.3232
+  ],
+  "cover_rect": [
+   0.0,
+   0.3232,
+   1.0,
+   0.6768
+  ]
+ },
+ "covers": [
+  {
+   "id": "book_hardcover_01_cover51",
+   "kind": "hardcover",
+   "source": "polyhaven",
+   "atlas": 0,
+   "index": 0,
+   "rect": [
+    0.0,
+    0.0,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "book_hardcover_01_cover08",
+   "kind": "hardcover",
+   "source": "polyhaven",
+   "atlas": 0,
+   "index": 1,
+   "rect": [
+    0.25,
+    0.0,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "book_hardcover_01_cover87",
+   "kind": "hardcover",
+   "source": "polyhaven",
+   "atlas": 0,
+   "index": 2,
+   "rect": [
+    0.5,
+    0.0,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "book_hardcover_01_cover47",
+   "kind": "hardcover",
+   "source": "polyhaven",
+   "atlas": 0,
+   "index": 3,
+   "rect": [
+    0.75,
+    0.0,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_00",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "HUGO / LES MISÉRABLES / I",
+   "atlas": 0,
+   "index": 4,
+   "rect": [
+    0.0,
+    0.16650390625,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_01",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "HUGO / LES MISÉRABLES / II",
+   "atlas": 0,
+   "index": 5,
+   "rect": [
+    0.25,
+    0.16650390625,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_02",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "ZOLA / GERMINAL",
+   "atlas": 0,
+   "index": 6,
+   "rect": [
+    0.5,
+    0.16650390625,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_03",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "BALZAC / EUGÉNIE GRANDET",
+   "atlas": 0,
+   "index": 7,
+   "rect": [
+    0.75,
+    0.16650390625,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_04",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "MAUPASSANT / CONTES",
+   "atlas": 0,
+   "index": 8,
+   "rect": [
+    0.0,
+    0.3330078125,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_05",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "FLAUBERT / MADAME BOVARY",
+   "atlas": 0,
+   "index": 9,
+   "rect": [
+    0.25,
+    0.3330078125,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_06",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "JULES VERNE / L'ÎLE MYSTÉRIEUSE",
+   "atlas": 0,
+   "index": 10,
+   "rect": [
+    0.5,
+    0.3330078125,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_07",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "DUMAS / LES TROIS MOUSQUETAIRES",
+   "atlas": 0,
+   "index": 11,
+   "rect": [
+    0.75,
+    0.3330078125,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_08",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "STENDHAL / LE ROUGE ET LE NOIR",
+   "atlas": 0,
+   "index": 12,
+   "rect": [
+    0.0,
+    0.49951171875,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_09",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "LA FONTAINE / FABLES",
+   "atlas": 0,
+   "index": 13,
+   "rect": [
+    0.25,
+    0.49951171875,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_10",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "VOLTAIRE / CANDIDE",
+   "atlas": 0,
+   "index": 14,
+   "rect": [
+    0.5,
+    0.49951171875,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_11",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "ENCYCLOPÉDIE / TOME III",
+   "atlas": 0,
+   "index": 15,
+   "rect": [
+    0.75,
+    0.49951171875,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_12",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "ENCYCLOPÉDIE / TOME IV",
+   "atlas": 0,
+   "index": 16,
+   "rect": [
+    0.0,
+    0.666015625,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_13",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "ENCYCLOPÉDIE / TOME V",
+   "atlas": 0,
+   "index": 17,
+   "rect": [
+    0.25,
+    0.666015625,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_14",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "DICTIONNAIRE / A – K",
+   "atlas": 0,
+   "index": 18,
+   "rect": [
+    0.5,
+    0.666015625,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_15",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "DICTIONNAIRE / L – Z",
+   "atlas": 0,
+   "index": 19,
+   "rect": [
+    0.75,
+    0.666015625,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_16",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "RADIO / ÉLECTRICITÉ",
+   "atlas": 0,
+   "index": 20,
+   "rect": [
+    0.0,
+    0.83251953125,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_17",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "ÉLECTRONIQUE / PRATIQUE",
+   "atlas": 0,
+   "index": 21,
+   "rect": [
+    0.25,
+    0.83251953125,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_18",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "MATHÉMATIQUES / TOME II",
+   "atlas": 0,
+   "index": 22,
+   "rect": [
+    0.5,
+    0.83251953125,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_19",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "HISTOIRE / DE FRANCE",
+   "atlas": 0,
+   "index": 23,
+   "rect": [
+    0.75,
+    0.83251953125,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_20",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "RACINE / THÉÂTRE",
+   "atlas": 1,
+   "index": 24,
+   "rect": [
+    0.0,
+    0.0,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_21",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "MOLIÈRE / ŒUVRES",
+   "atlas": 1,
+   "index": 25,
+   "rect": [
+    0.25,
+    0.0,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_22",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "BOTANIQUE",
+   "atlas": 1,
+   "index": 26,
+   "rect": [
+    0.5,
+    0.0,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_23",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "ATLAS",
+   "atlas": 1,
+   "index": 27,
+   "rect": [
+    0.75,
+    0.0,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_24",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "PASCAL / PENSÉES",
+   "atlas": 1,
+   "index": 28,
+   "rect": [
+    0.0,
+    0.16650390625,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_25",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "MONTAIGNE / ESSAIS",
+   "atlas": 1,
+   "index": 29,
+   "rect": [
+    0.25,
+    0.16650390625,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_26",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "LAMARTINE / POÉSIES",
+   "atlas": 1,
+   "index": 30,
+   "rect": [
+    0.5,
+    0.16650390625,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_27",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "CHIMIE",
+   "atlas": 1,
+   "index": 31,
+   "rect": [
+    0.75,
+    0.16650390625,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_28",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "MÉMOIRES",
+   "atlas": 1,
+   "index": 32,
+   "rect": [
+    0.0,
+    0.3330078125,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_29",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "",
+   "atlas": 1,
+   "index": 33,
+   "rect": [
+    0.25,
+    0.3330078125,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_30",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "",
+   "atlas": 1,
+   "index": 34,
+   "rect": [
+    0.5,
+    0.3330078125,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_31",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "",
+   "atlas": 1,
+   "index": 35,
+   "rect": [
+    0.75,
+    0.3330078125,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_32",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "",
+   "atlas": 1,
+   "index": 36,
+   "rect": [
+    0.0,
+    0.49951171875,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_33",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "",
+   "atlas": 1,
+   "index": 37,
+   "rect": [
+    0.25,
+    0.49951171875,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_34",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "",
+   "atlas": 1,
+   "index": 38,
+   "rect": [
+    0.5,
+    0.49951171875,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_35",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "",
+   "atlas": 1,
+   "index": 39,
+   "rect": [
+    0.75,
+    0.49951171875,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_36",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "",
+   "atlas": 1,
+   "index": 40,
+   "rect": [
+    0.0,
+    0.666015625,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_37",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "",
+   "atlas": 1,
+   "index": 41,
+   "rect": [
+    0.25,
+    0.666015625,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_38",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "",
+   "atlas": 1,
+   "index": 42,
+   "rect": [
+    0.5,
+    0.666015625,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_39",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "",
+   "atlas": 1,
+   "index": 43,
+   "rect": [
+    0.75,
+    0.666015625,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_40",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "",
+   "atlas": 1,
+   "index": 44,
+   "rect": [
+    0.0,
+    0.83251953125,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_41",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "",
+   "atlas": 1,
+   "index": 45,
+   "rect": [
+    0.25,
+    0.83251953125,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_42",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "",
+   "atlas": 1,
+   "index": 46,
+   "rect": [
+    0.5,
+    0.83251953125,
+    0.25,
+    0.16650390625
+   ]
+  },
+  {
+   "id": "reliure_43",
+   "kind": "hardcover",
+   "source": "generee",
+   "titre": "CORNEILLE / THÉÂTRE",
+   "atlas": 1,
+   "index": 47,
+   "rect": [
+    0.75,
+    0.83251953125,
+    0.25,
+    0.16650390625
+   ]
+  }
+ ]
+}

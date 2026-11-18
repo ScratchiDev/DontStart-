@@ -99,7 +99,10 @@ func build(mother: HouseRoom) -> void:
 		if r.has_method("furnish"):
 			# (nombre d'enfants de la coque : les suivants sont les meubles, voir Autotest.furniture_boxes, B1)
 			r.set_meta("coque", r.get_child_count())
+			# (chrono par pièce, budget R5 de la passe : « ÉTAGE <id> meublé en N ms »)
+			var tf := Time.get_ticks_usec()
 			r.furnish(self)
+			print("ÉTAGE %s meublé en %d ms" % [id, roundi((Time.get_ticks_usec() - tf) / 1000.0)])
 
 
 func _make_room(id: String, d: Dictionary, y0: float, h: float) -> HouseRoom:
