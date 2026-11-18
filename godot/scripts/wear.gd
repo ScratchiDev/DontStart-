@@ -8,7 +8,7 @@ extends RefCounted
 ## depuis furnish() ou _ready (elles existent aussi en rendu logiciel).
 ##
 ## Règles :
-##  - rendu logiciel (Main.software_renderer(), donc Qualite.soft()) : decal() rend null, SAUF avec
+##  - rendu logiciel (Qualite.soft(), c'est-à-dire Main.software_renderer()) : decal() rend null, SAUF avec
 ##    opts.story = true (empreintes, taches du récit) ; les aides rendent alors un tableau vide ;
 ##  - préréglage Basse (Qualite.effective() == BASSE) : pas de décalques décoratifs non plus (rien n'est
 ##    chargé) ; le changement de préréglage prend effet au prochain lancement ;
@@ -176,7 +176,7 @@ static func variants(kind: String) -> int:
 
 ## Décalques décoratifs permis : vraie carte graphique et préréglage au-dessus de Basse.
 static func deco_on() -> bool:
-	if Main.software_renderer():
+	if Qualite.soft():
 		return false
 	return Qualite.effective() > Qualite.BASSE
 

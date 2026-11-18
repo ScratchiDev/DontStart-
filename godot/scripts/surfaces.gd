@@ -140,7 +140,7 @@ static func _hd_for(m: BaseMaterial3D) -> Texture2D:
 ## Programme le remplacement de grime.png par les masques HD à la prochaine image (vraie carte
 ## graphique seulement). Appelé par build() ; sans effet en rendu logiciel.
 static func schedule_hd(mats: Dictionary) -> void:
-	if Main.software_renderer():
+	if Qualite.soft():
 		return
 	var tree := Engine.get_main_loop() as SceneTree
 	if tree == null:

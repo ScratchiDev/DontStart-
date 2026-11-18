@@ -225,6 +225,8 @@ func _wear() -> void:
 	_put("rouille", Vector3(2.4, 1.18, z + 0.02), nb, up, 0.6, 0.16, {"depth": 0.06}, "rouille")
 	# en bas : éraflures au-dessus de la plinthe, crasse de pied de mur sur les trois murs
 	_put("eraflure", Vector3(0.6, 0.42, z), nb, up, 0.9, 0.45, {"variant": 0}, "eraflure")
+	# éraflures claires dans le vernis du parquet, devant le coffre (meuble traîné)
+	_put("eraflure", Vector3(-2.05, 0.0, -0.85), Vector3.UP, Vector3.RIGHT, 0.5, 0.9, {"variant": 1}, "eraflure (parquet)")
 	var wb := Wear.wall_base(room, 0.22, {"sides": ["z0", "x0", "x1"]})
 	placed["crasse_pied_mur"] = wb.size()
 	_label("crasse_pied_mur", Vector3(1.9, 0.3, z + 0.08))
