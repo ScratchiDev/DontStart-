@@ -665,7 +665,7 @@ def crasse_pied_mur(v, W=1024, H=128):
     g = np.clip((y - front) / (PL - front), 0.0, 1.0)
     # plus ou moins sale le long du mur (meubles déplacés, passages), sans couture (périodique)
     along = 0.55 + 0.45 * sstep(-1.2, 1.0, spectral(1, W, 2.4, seed + 7, kmin=2.0 / W)[0][None, :])
-    wall = 0.62 * g ** 1.5 * along * (0.72 + 0.28 * np.tanh(n2)) * (0.9 + 0.1 * np.tanh(n3)) * (y < PL + 0.01)
+    wall = 0.82 * g ** 1.4 * along * (0.72 + 0.28 * np.tanh(n2)) * (0.9 + 0.1 * np.tanh(n3)) * (y < PL + 0.01)
     # traînées verticales légères (eau de lavage qui a coulé, bas de serpillière)
     drips = sstep(0.6, 1.6, spectral(H, W, 1.6, seed + 6, kmin=6.0 / W, ax=1.0, ay=0.12)) * g * 0.25
     wall = np.clip(wall + drips * (y < PL + 0.01), 0.0, 0.85)
@@ -708,7 +708,7 @@ def coin(v, S=512):
     specks = sstep(2.0, 2.9, spectral(S, S, 0.6, seed + 2, kmin=30.0 / S))
     fib = sstep(1.2, 2.2, spectral(S, S, 1.4, seed + 5, kmin=12.0 / S, ax=1.0, ay=0.25))   # filaments (toiles)
     body = (1.0 - sstep(0.0, 0.5, r * (1.0 + 0.25 * n))) ** 1.6
-    a = 0.72 * body * (0.72 + 0.28 * np.tanh(spectral(S, S, 1.8, seed + 3, kmin=6.0 / S)))
+    a = 0.8 * body * (0.72 + 0.28 * np.tanh(spectral(S, S, 1.8, seed + 3, kmin=6.0 / S)))
     a = np.clip(a + specks * body * 0.7 + fib * body * 0.25, 0, 0.92)
     a *= edge_fade(S, S, 0.03, seed + 4)
     rgb = np.zeros((S, S, 3))

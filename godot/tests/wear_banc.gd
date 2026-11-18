@@ -125,8 +125,9 @@ func _decal_rules() -> void:
 	var d6 := Wear.decal(self, "trainee", Vector3.ZERO, Vector3.BACK, Vector3.UP, 0.3, 0.3, {"color": Color(1, 0.9, 0.8, 0.5), "alpha": 0.5, "mix": 0.2})
 	check("teinte, alpha et albedo_mix", d6 != null and is_equal_approx(d6.modulate.a, 0.25) and is_equal_approx(d6.albedo_mix, 0.2))
 	var d7 := Wear.decal(self, "traces_doigts", Vector3.ZERO, Vector3.BACK, Vector3.UP, 0.3, 0.3, {"vitre": true})
-	check("vitre : albedo_mix × VITRE_MIX (la trace se voit dans le reflet)", d7 != null
-		and is_equal_approx(d7.albedo_mix, float(Wear.STYLE.traces_doigts.mix) * Wear.VITRE_MIX) and d7.texture_orm != null)
+	check("vitre : albedo_mix × VITRE_MIX, alpha × VITRE_ALPHA (la trace se voit dans le reflet)", d7 != null
+		and is_equal_approx(d7.albedo_mix, float(Wear.STYLE.traces_doigts.mix) * Wear.VITRE_MIX)
+		and is_equal_approx(d7.modulate.a, Wear.VITRE_ALPHA) and d7.texture_orm != null)
 
 
 func _fallback() -> void:
@@ -197,6 +198,8 @@ func _wall_base() -> void:
 						bad.append("%s devant %s" % [id, door.id])
 			if not (absf(p.y - 0.11) < 1e-4 and is_equal_approx(dd.size.z, 0.22) and dd.size.x <= Wear.BAND_MAX + 1e-4):
 				bad.append("%s : hauteur ou taille" % id)
+			if not (is_equal_approx(dd.upper_fade, Wear.HELPER_FADE) and is_equal_approx(dd.lower_fade, Wear.HELPER_FADE)):
+				bad.append("%s : fondus" % id)
 			var to_c := r.center() - p
 			to_c.y = 0.0
 			if n.dot(to_c) <= 0.0:

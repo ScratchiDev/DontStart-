@@ -22,8 +22,13 @@ extends RefCounted
 ##
 ## Godot mélange la couleur d'un décalque selon alpha × albedo_mix, mais sa normale et son ORM selon
 ## l'alpha seul : opts.mix bas = la tache change surtout la rugosité (reflet mat ou mouillé). Sur une
-## vitre, un miroir ou un écran (opts.vitre = true), albedo_mix est multiplié par VITRE_MIX : une trace de
-## doigts ou une traînée s'y voit dans le reflet (gras = plus mat), pas comme une peinture blanche.
+## vitre, un miroir ou un écran (opts.vitre = true), albedo_mix est multiplié par VITRE_MIX et l'alpha
+## par VITRE_ALPHA : une trace de doigts ou une traînée s'y voit dans le reflet (gras = plus mat), pas
+## comme une peinture blanche.
+##
+## Le décalque ne fait que remplacer (en partie) la couleur, il ne la multiplie pas : sa teinte doit être
+## proche de celle de la surface (PATH_TINT pour les sols ; opts.color sinon, valeurs > 1 permises pour
+## éclaircir, comme RING_LIGHT). Godot ne change pas la transparence d'une matière (verre alpha).
 ##
 ## Coût : un décalque lit 2 ou 3 textures par pixel couvert (Forward+ par grappes) : viser 8 à 15
 ## décalques décoratifs par pièce, de taille raisonnable.
@@ -94,8 +99,8 @@ const STYLE := {
 	"suie": {"depth": 0.3, "mix": 0.9},
 	"chemin_usure": {"depth": 0.1, "mix": 0.65},
 	"empreinte": {"depth": 0.08, "mix": 0.4},
-	"crasse_pied_mur": {"depth": 0.12, "mix": 0.8},
-	"coin": {"depth": 0.9, "mix": 0.8},
+	"crasse_pied_mur": {"depth": 0.12, "mix": 0.9},
+	"coin": {"depth": 0.9, "mix": 0.9},
 }
 
 const NORMAL_FADE := 0.35
@@ -114,8 +119,13 @@ const PATH_TINT := {
 	"parquet": Color(0.63, 0.51, 0.39), "moquette": Color(0.47, 0.32, 0.27), "carrelage": Color(0.57, 0.5, 0.44),
 }
 const PATH_MIX := {"parquet": 0.6, "moquette": 0.55, "carrelage": 0.3}
-## Vitres, miroirs, écrans (opts.vitre = true) : facteur sur albedo_mix.
+## Vitres, miroirs, écrans (opts.vitre = true) : facteurs sur albedo_mix et sur l'alpha (donc sur la
+## rugosité apportée : un gras à 0,8 sur un verre à 0,05 brillait comme de la craie sous la lampe).
 const VITRE_MIX := 0.3
+const VITRE_ALPHA := 0.6
+## Fondus le long de la normale des aides wall_base et ceiling_corners (leur boîte n'est pas centrée sur
+## la surface : avec les 0,3 par défaut, la bande perdait un quart de sa force).
+const HELPER_FADE := 0.08
 ## Auréoles d'eau blanchâtres dans un vernis sombre (rond_tasse, opts.color).
 const RING_LIGHT := Color(1.6, 1.55, 1.45)
 ## Empreinte : taille du décalque (largeur, longueur) en m ; le pied en occupe environ 62 % × 88 %.
@@ -163,8 +173,22 @@ static func _load(path: String) -> Texture2D:
 	if path == "":
 		return null
 	if not _tex.has(path):
+		if _tex.is_empty():
+			_hook_release()
 		_tex[path] = load(path) as Texture2D
 	return _tex[path]
+
+
+## Vide le cache des textures. Appelé tout seul quand Godot quitte (sortie de la racine de l'arbre) :
+## sinon Godot signale des ressources encore utilisées à la sortie.
+static func release() -> void:
+	_tex = {}
+
+
+static func _hook_release() -> void:
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree and tree.root and not tree.root.tree_exiting.is_connected(release):
+		tree.root.tree_exiting.connect(release)
 
 
 ## Nombre de variantes d'un genre (0 : genre inconnu).
@@ -220,7 +244,7 @@ static func basis_for(normal: Vector3, up: Vector3, rot := 0.0) -> Basis:
 ## size_u × size_v : taille sur la surface (m).
 ## opts : variant (int ; sinon hachage de la position), story (bool : existe aussi en rendu logiciel),
 ##   depth (m, épaisseur de projection), color (Color : teinte et alpha), alpha (multiplie l'alpha),
-##   mix (albedo_mix), vitre (bool : vitre, miroir, écran ; mix × VITRE_MIX), rot (degrés autour de la
+##   mix (albedo_mix), vitre (bool : vitre, miroir, écran ; mix × VITRE_MIX, alpha × VITRE_ALPHA), rot (degrés autour de la
 ##   normale), normal_fade, upper_fade, lower_fade,
 ##   fade_begin, fade_length (distance_fade), cull_mask, name, world (bool).
 ## Rend le Decal (déjà dans l'arbre), ou null (rendu logiciel hors récit, Basse, genre ou fichiers absents).
@@ -246,6 +270,8 @@ static func decal(parent: Node, kind: String, center: Vector3, normal: Vector3, 
 	d.size = Vector3(maxf(size_u, 0.001), maxf(float(opts.get("depth", st.get("depth", 0.2))), 0.001), maxf(size_v, 0.001))
 	var col: Color = opts.get("color", st.get("color", Color.WHITE))
 	col.a *= float(opts.get("alpha", 1.0))
+	if bool(opts.get("vitre", false)):
+		col.a *= VITRE_ALPHA
 	d.modulate = col
 	var mix := float(opts.get("mix", st.get("mix", 1.0)))
 	if bool(opts.get("vitre", false)):
@@ -353,6 +379,10 @@ static func wall_base(room: HouseRoom, h := 0.22, opts := {}) -> Array:
 		var inward: Vector3 = sd[5]
 		var o := opts.duplicate()
 		o.world = true
+		if not o.has("upper_fade"):
+			o.upper_fade = HELPER_FADE
+		if not o.has("lower_fade"):
+			o.lower_fade = HELPER_FADE
 		if not o.has("variant"):
 			o.variant = hash_pos(Vector3(face, room.y0, 0.0), (String(room.room_id).hash() & 0xFFFF) + int(axis == "z"))
 		for sp in subtract_spans(sd[3], sd[4], gaps):
@@ -394,6 +424,10 @@ static func ceiling_corners(room: HouseRoom, opts := {}) -> Array:
 		o.world = true
 		if not o.has("depth"):
 			o.depth = size * 1.2
+		if not o.has("upper_fade"):
+			o.upper_fade = HELPER_FADE
+		if not o.has("lower_fade"):
+			o.lower_fade = HELPER_FADE
 		if not o.has("rot"):
 			o.rot = hash01(c, 7) * 360.0
 		var d := decal(room, kind, c, nrm, Vector3.UP, size, size, o)

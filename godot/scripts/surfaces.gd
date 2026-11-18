@@ -97,6 +97,7 @@ static func world_uv(m: BaseMaterial3D, meters: float, aniso := false) -> BaseMa
 static func grime(m: BaseMaterial3D, scale := 0.5, hd := 0) -> BaseMaterial3D:
 	if _grime_tex == null:
 		_grime_tex = load(DIR + "grime.png")
+		_hook_release()
 	m.detail_enabled = true
 	m.detail_albedo = _grime_tex
 	m.detail_blend_mode = BaseMaterial3D.BLEND_MODE_MUL
@@ -153,6 +154,21 @@ static func schedule_hd(mats: Dictionary) -> void:
 				ResourceLoader.load_threaded_request(p, "Texture2D")
 	if not tree.process_frame.is_connected(_swap_hd):
 		tree.process_frame.connect(_swap_hd, CONNECT_ONE_SHOT)
+	_hook_release()
+
+
+## Oublie les textures gardées en variables statiques (grime.png, masques HD) quand Godot quitte : sans
+## cela, Godot signale des ressources encore utilisées à la sortie.
+static func _release() -> void:
+	_hd.clear()
+	_hd_mats = {}
+	_grime_tex = null
+
+
+static func _hook_release() -> void:
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree and tree.root and not tree.root.tree_exiting.is_connected(_release):
+		tree.root.tree_exiting.connect(_release)
 
 
 ## Le remplacement : charge les trois masques, puis parcourt les matières du dictionnaire partagé et de
