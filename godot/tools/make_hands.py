@@ -669,9 +669,14 @@ def lamp_profile(L, head_len=0.068):
         (L - 0.0310, 0.0198),
         (L - 0.0040, 0.0198),
         (L - 0.0012, 0.0190),        # chanfrein arrière
-        (L, 0.0170),
-        (L, 0.0040),
-        (L + 0.0004, 0.0),
+        (L, 0.0172),
+        (L + 0.0002, 0.0158),        # anneau du culot
+        (L + 0.0002, 0.0140),
+        (L - 0.0003, 0.0132),        # rainure
+        (L + 0.0004, 0.0124),
+        (L + 0.0014, 0.0100),        # bouchon bombé
+        (L + 0.0021, 0.0060),
+        (L + 0.0024, 0.0),
     ]
     return p
 
@@ -680,7 +685,7 @@ def build_lamp(L, seg=72):
     """Rend les surfaces de la lampe (repère de la lampe : axe Z, face avant en z=0, culot en z=+L ;
     le faisceau part vers -Z)."""
     prof = lamp_profile(L)
-    body = lathe(prof, seg, 'lampe_corps', v_of=lambda z: z / (L + 0.001))
+    body = lathe(prof, seg, 'lampe_corps', v_of=lambda z: z / (L + 0.003))
     # réflecteur parabolique (face intérieure, tournée vers l'avant) : du bord du verre au culot de l'ampoule
     rp = []
     f = 0.0062                       # distance focale : l'ampoule au foyer
@@ -722,7 +727,7 @@ def build_sleeve(center, axis, e1, e2, rx, ry, length=0.42, cuff=0.055, seed=3, 
     Bord-côte serré et côtelé (ribs côtes), ourlet roulé (épaisseur visible), puis le corps de la manche,
     plus ample, froncé au-dessus du bord-côte (plis). Couleur de sommet : occlusion des plis."""
     rng = np.random.default_rng(seed)
-    nseg = 96
+    nseg = 64
     th = np.linspace(0, 2 * np.pi, nseg + 1)
     # chemin du profil : (avance le long de l'axe, rayon ajouté, côté intérieur ?)
     path = []
@@ -738,7 +743,7 @@ def build_sleeve(center, axis, e1, e2, rx, ry, length=0.42, cuff=0.055, seed=3, 
     for k in range(n_cuff + 1):
         t = cuff * k / n_cuff
         path.append((t, 0.006 + 0.0012 * math.sin(math.pi * k / n_cuff), False))
-    n_body = 70
+    n_body = 46
     for k in range(1, n_body + 1):
         t = cuff + (length - cuff) * (k / n_body) ** 1.35
         u = (t - cuff) / 0.12
@@ -877,7 +882,43 @@ def write_glb(path, nodes, extras=None):
 
 # ----------------------------------------------------------------------------- assemblage
 
-LAMP_L = 0.215
+def sculpt_fist(h, G, tf, V, F, params):
+    """Ce que le skinning linéaire ne donne pas : les têtes des métacarpiens qui saillent sur le dos du
+    poing fermé (selon la flexion MCP) et les tendons extenseurs tendus du poignet aux jointures. Petit
+    déplacement le long des normales (mètres), sur la main posée et subdivisée."""
+    N = vertex_normals(V, F)
+    dorsal = tf(h.dorsal) - tf(np.zeros(3))
+    G0 = G['wrist.R']
+    dors_p = normalize((G0[:3, :3] @ h.dorsal))
+    dors_l = normalize(tf(dors_p) - tf(np.zeros(3)))
+    wrist = tf(h.joint_pos(G, 'wrist.R'))
+    disp = np.zeros(len(V))
+    for f in '2345':
+        b = 'finger%s-1.R' % f
+        flex = params.get(b, (0, 0, 0))[0]
+        k = np.clip(flex / 50.0, 0.0, 1.3)
+        J = tf(h.joint_pos(G, b))
+        # tête du métacarpien : un peu en arrière de l'articulation, côté dos
+        mc = h.parent[b] if h.parent[b] in h.head else None
+        back = normalize(tf(h.joint_pos(G, mc)) - J) if mc else -dors_l
+        C = J + back * 0.006 + dors_l * 0.004
+        d = np.linalg.norm(V - C, axis=1)
+        side = np.clip((V - J) @ dors_l / 0.008 + 0.5, 0, 1)
+        disp += 0.0019 * k * np.exp(-(d / 0.0075) ** 2) * side
+        # tendon extenseur : du milieu du poignet (côté dos) vers la jointure
+        A = wrist + dors_l * 0.012
+        B = J + back * 0.012 + dors_l * 0.003
+        ab = B - A
+        t = np.clip(((V - A) @ ab) / (ab @ ab), 0, 1)
+        q = A + np.outer(t, ab)
+        dd = np.linalg.norm(V - q, axis=1)
+        env = np.sin(np.pi * np.clip((t - 0.25) / 0.75, 0, 1)) * (t > 0.25)
+        up = ((V - q) @ dors_l) > -0.004
+        disp += 0.0008 * np.exp(-(dd / 0.0030) ** 2) * env * up * (0.6 + 0.4 * k)
+    return V + N * disp[:, None]
+
+
+LAMP_L = 0.235
 
 
 def switch_boot(ax_pos, ang, lampR, z_front, w=0.015, h=0.0095, height=0.0022, seg=20):
@@ -946,11 +987,12 @@ def assemble(mh, name, wrist=(-10.0, -32.0, 0.0), elbow=-50.0, fit=None, log=pri
     # --- la main : lissage léger des zones tassées, une subdivision, normales
     Pl = tf(P)
     V2, F2, FT2, VT2 = catmull_clark(Pl, h.F, h.FT, mh.VT)
+    V2 = sculpt_fist(h, G, tf, V2, F2, params)
     # --- la lampe : le culot 12 mm derrière l'auriculaire, l'interrupteur devant la pulpe du pouce
     sv = -Pl[:, 2]                               # abscisse le long de l'axe (vers l'avant)
     radial = np.linalg.norm(Pl[:, :2], axis=1)
     touching = radial < grip.r + 0.012
-    s_tail = sv[touching].min() - 0.012
+    s_tail = sv[touching].min() + 0.003
     s_front = s_tail + LAMP_L
     padl = tf(padw)
     s_pad = -padl[2]
@@ -1220,10 +1262,10 @@ def ambient_occlusion(points, normals, occ_V, occ_T, rays=48, dist=0.05, seed=1,
 
 SKIN = {
     # couleurs sRGB : dos de la main, paume, rougeurs (articulations, pulpe), ongle
-    'alexandre': dict(dos=(203, 156, 132), paume=(222, 176, 156), rouge=(196, 128, 108), ongle=(218, 168, 160),
-                      veines=0.7, taches=14, seed=11),
-    'aurelia': dict(dos=(216, 170, 150), paume=(230, 186, 170), rouge=(208, 138, 122), ongle=(226, 178, 172),
-                    veines=0.45, taches=8, seed=23),
+    'alexandre': dict(dos=(192, 150, 128), paume=(210, 172, 154), rouge=(186, 128, 110), ongle=(212, 168, 160),
+                      veines=1.0, taches=14, seed=11),
+    'aurelia': dict(dos=(206, 166, 148), paume=(220, 184, 170), rouge=(198, 138, 124), ongle=(220, 176, 170),
+                    veines=0.6, taches=8, seed=23),
 }
 
 FINGER_BONES = ['finger%d-%d.R' % (f, k) for f in range(1, 6) for k in (1, 2, 3)]
@@ -1363,28 +1405,29 @@ def bake_skin(h, hand, mh, name, out_dir, occluders, res=2048, ao_res=512, log=p
                 crease += near * palm * np.exp(-(((s * mm) - off - 0.25 * (lat * mm / 4.0) ** 2) / 0.32) ** 2) * smooth01(1 - np.abs(lat * mm) / 8.0)
     wr = np.clip(wr, 0, 1.5)
     crease = np.clip(crease, 0, 1.2)
-    height -= wr * 0.000055 + crease * 0.00016
+    height -= wr * 0.00008 + crease * 0.00018
     # ---------------------------------------------------------------- dos de la main : veines, micro-relief
     back = (~on_finger) & (dorsal_n > 0.2)
     backw = smooth01((dorsal_n - 0.2) / 0.4) * (~on_finger)
-    A = np.stack([h.fwd * 140.0, h.lat * 900.0, h.dorsal * 600.0])
-    vn = nz.fbm(P @ A.T + 3.1, 3)
-    vein = np.clip(1.0 - np.abs(vn) * 9.0, 0, 1) ** 2 * backw * cfg['veines']
+    A = np.stack([h.fwd * 38.0, h.lat * 230.0, h.dorsal * 120.0])
+    vn = nz.fbm(P @ A.T + 3.1, 2)
+    vein = smooth01(1.0 - np.abs(vn) * 6.0) * backw * cfg['veines']
+    vein *= smooth01((nz2(P * 60.0) - 0.35) / 0.2)       # (veines par endroits, pas un réseau partout)
     # pas de veines au poignet/avant-bras (sous la manche) ni près des jointures
     along = (P - h.head['wrist.R']) @ h.fwd
     vein *= smooth01((along - 0.005) / 0.02) * smooth01((0.075 - along) / 0.02)
-    height += vein * 0.00022
+    height += vein * 0.00030
     # micro-relief losangé (dos de la main, dos des doigts)
     d1 = normalize(h.fwd + h.lat * 0.9)
     d2 = normalize(h.fwd - h.lat * 0.9)
     hatch = (np.abs(np.sin(P @ d1 * 2600.0 + nz(P * 700) * 4)) ** 8 + np.abs(np.sin(P @ d2 * 2600.0 + nz2(P * 700) * 4)) ** 8)
     hatchw = np.clip(dorsal_n, 0, 1) * (1 - nail_w)
-    height -= hatch * hatchw * 0.000010
+    height -= hatch * hatchw * 0.000022
     # pores : petites cuvettes
     pv = nz(P * 2600.0)
     pores = smooth01((pv - 0.70) / 0.12) * (1 - nail_w)
-    height -= pores * 0.000014
-    height += nz.fbm(P * 1800.0, 2) * 0.000008 * (1 - nail_w)
+    height -= pores * 0.000030
+    height += nz.fbm(P * 1800.0, 2) * 0.000016 * (1 - nail_w)
     # ---------------------------------------------------------------- albédo
     dos = srgb(cfg['dos'])
     paume = srgb(cfg['paume'])
@@ -1398,7 +1441,7 @@ def bake_skin(h, hand, mh, name, out_dir, occluders, res=2048, ao_res=512, log=p
     # variations basses fréquences (marbrures légèrement rouges)
     m1 = nz.fbm(P * 60.0, 3)
     m2 = nz2.fbm(P * 260.0, 3)
-    col *= (1.0 + m1[:, None] * np.array([0.10, 0.12, 0.13]) + m2[:, None] * 0.05)
+    col *= (1.0 + m1[:, None] * np.array([0.12, 0.15, 0.17]) + m2[:, None] * 0.06)
     col += (np.clip(m1, 0, None) * 0.06)[:, None] * (rouge - dos)[None, :]
     # pulpe des doigts et bout des doigts : plus rouges
     tip = on_finger & (seg == 3)
@@ -1413,7 +1456,7 @@ def bake_skin(h, hand, mh, name, out_dir, occluders, res=2048, ao_res=512, log=p
     # plis : un peu plus sombres
     col *= (1.0 - 0.10 * np.clip(wr, 0, 1) - 0.16 * np.clip(crease, 0, 1))[:, None]
     # veines : bleu-vert très léger
-    col += (vein * 0.07)[:, None] * np.array([-0.9, -0.15, 0.55])[None, :]
+    col += (vein * 0.04)[:, None] * np.array([-0.9, -0.25, 0.45])[None, :]
     # taches de rousseur rares (dos de la main et des doigts)
     for i in range(cfg['taches']):
         c = P[back][rng.integers(0, back.sum())] if back.any() else None
@@ -1502,7 +1545,7 @@ def bake_lamp(lamp_parts, name, out_dir, occluders, prof, L=LAMP_L, res=(1024, 2
     u = (np.arange(W) + 0.5) / W
     v = (np.arange(H) + 0.5) / H
     U, Vv = np.meshgrid(u, v)
-    z = Vv * (L + 0.001)
+    z = Vv * (L + 0.003)
     # rayon du profil à ce z (pour l'échelle et la position 3D)
     pz = np.array([p[0] for p in prof])
     pr = np.array([p[1] for p in prof])
@@ -1548,7 +1591,7 @@ def bake_lamp(lamp_parts, name, out_dir, occluders, prof, L=LAMP_L, res=(1024, 2
     hgt -= scr * 0.00001
     # usure de la prise : la peinture s'est polie sous les doigts (zone moletée)
     # albédo : noir anodisé légèrement bleuté, alu nu, poussière dans les creux
-    black = np.array([0.030, 0.031, 0.036])
+    black = np.array([0.042, 0.043, 0.049])
     alu = np.array([0.62, 0.62, 0.60])
     dust = np.array([0.20, 0.18, 0.16])
     alb = black[None, None, :] * (1.0 + wn[..., None] * 0.25)
@@ -1561,7 +1604,7 @@ def bake_lamp(lamp_parts, name, out_dir, occluders, prof, L=LAMP_L, res=(1024, 2
     # face arrière (culot) et bague : un peu plus mates
     # normales
     m_per_px_u = circ_m / W
-    m_per_px_v = (L + 0.001) / H
+    m_per_px_v = (L + 0.003) / H
     gy, gx = np.gradient(hgt)
     gx = gx / m_per_px_u
     gy = gy / m_per_px_v
@@ -1570,7 +1613,7 @@ def bake_lamp(lamp_parts, name, out_dir, occluders, prof, L=LAMP_L, res=(1024, 2
     # occlusion par la main : texels du corps → points 3D (repère de la lampe posée)
     sub = 4
     us, vs = U[::sub, ::sub], Vv[::sub, ::sub]
-    zs = vs * (L + 0.001)
+    zs = vs * (L + 0.003)
     rs = np.interp(zs, pz[order], pr[order])
     # la surface du corps posée : même transformation que les sommets (translation le long de z)
     off = body.V[:, 2].min() - 0.0      # (z de la face avant dans le repère final, au plus petit)
@@ -1579,7 +1622,7 @@ def bake_lamp(lamp_parts, name, out_dir, occluders, prof, L=LAMP_L, res=(1024, 2
     angs = us * 2 * np.pi
     pts = np.dstack([np.cos(angs) * rs, np.sin(angs) * rs, zs - s_front]).reshape(-1, 3)
     # normale du profil (approximée : radiale, corrigée par la pente)
-    dr_dz = np.gradient(rs, axis=0) / ((L + 0.001) / (H / sub))
+    dr_dz = np.gradient(rs, axis=0) / ((L + 0.003) / (H / sub))
     nr = np.dstack([np.cos(angs), np.sin(angs), -dr_dz])
     nr = normalize(nr.reshape(-1, 3))
     occV, occT = occluders
@@ -1657,7 +1700,7 @@ def bake_sleeve(sleeve, name, out_dir, fabric_dir, res=(1024, 2048), log=print):
     alb = alb + fl[..., None]
     os.makedirs(out_dir, exist_ok=True)
     pa = os.path.join(out_dir, 'manche_%s_albedo.jpg' % name)
-    pn = os.path.join(out_dir, 'manche_%s_normal.png' % name)
+    pn = os.path.join(out_dir, 'manche_%s_normal.jpg' % name)
     save_rgb(pa, np.clip(alb, 0, 1))
     save_rgb(pn, n_out * 0.5 + 0.5)
     write_import(pa)
@@ -1672,7 +1715,7 @@ def sleeve_uv_to_atlas(UV):
 
 ## Poignet (flexion palmaire, déviation ulnaire) et roulis : le dos de la main face à la caméra, l'avant-bras
 ## qui sort en bas de l'image (cherché avec la caméra du jeu : voir viewmodel.gd, REST_POS / REST_ROT).
-POSE = dict(wrist=(10.0, -35.0, 0.0), elbow=-60.0)
+POSE = dict(wrist=(20.0, -32.0, 0.0), elbow=-50.0)
 
 
 def build_variant(mh, name, out_dir, fit=None, tex=2048, log=print, pose=POSE):

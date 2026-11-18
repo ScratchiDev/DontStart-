@@ -6,6 +6,7 @@ extends Node
 ##         -- --shots=DIR [--rendu-complet] [--hero=aurelia] [--vues=mere_nuit,mur_20cm,…] [--seul=avec|sans]
 ## Vues : mere_nuit, couloir_nuit, sdb_eclairee, chambre_jour (jour simulé : soleil et ciel clair, pour
 ## juger la peau en pleine lumière), mur_20cm (face au mur, l'œil à 20 cm : intersection), regard_bas.
+## « --retro » : style rétro (pixels) pour ce lancement.
 ## Chaque capture : <vue>_avec.png, <vue>_sans.png ; journal « MAINS <vue> … ».
 
 const MAIN := preload("res://scenes/main.tscn")
@@ -45,6 +46,10 @@ func _run() -> void:
 			vues = Array(a.substr(7).split(",", false))
 		elif a.begins_with("--seul="):
 			seul = a.substr(7)
+		elif a == "--retro":
+			Game.style_retro = true
+	if Game.style_retro:
+		Game.apply_settings()
 	main = MAIN.instantiate()
 	add_child(main)
 	player = main.player
@@ -66,7 +71,7 @@ func _run() -> void:
 	for v in vues:
 		await _view(String(v), seul)
 	print("MAINS BANC %s" % ("OK" if fails == 0 else "ÉCHEC %d" % fails))
-	get_tree().quit(0 if fails == 0 else 1)
+	Game.quit_game(0 if fails == 0 else 1)   # (sortie propre : la file de tâches vidée)
 
 
 ## Couches : la vue n'est vue que par la caméra du joueur.

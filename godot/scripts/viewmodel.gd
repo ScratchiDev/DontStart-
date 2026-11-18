@@ -33,11 +33,11 @@ const MODELS := {
 const TEX := "res://assets/models/mains/"
 ## Place de la prise dans le repère de la caméra (m) et orientation de présentation (degrés : tangage,
 ## lacet) : en bas à droite, la lampe pointée vers l'avant, un peu vers le centre.
-const REST_POS := Vector3(0.15, -0.12, -0.38)
-const REST_ROT := Vector3(-4.0, 14.0, 0.0)
+const REST_POS := Vector3(0.19, -0.12, -0.42)
+const REST_ROT := Vector3(-8.0, 6.0, 0.0)
 ## Lampe éteinte : baissée et rentrée (bras détendu).
-const LOWER_POS := Vector3(0.015, -0.05, 0.03)
-const LOWER_ROT := Vector3(-24.0, 4.0, -6.0)
+const LOWER_POS := Vector3(0.01, -0.055, 0.02)
+const LOWER_ROT := Vector3(-11.0, -2.0, -4.0)
 const Z_CLIP := 0.05
 const FOV := 62.0
 ## Distance du point visé par le faisceau (le centre de l'image).
@@ -154,7 +154,7 @@ func _skin_mat() -> BaseMaterial3D:
 	m.metallic_specular = 0.38
 	if not Main.software_renderer():
 		m.subsurf_scatter_enabled = true
-		m.subsurf_scatter_strength = 0.55
+		m.subsurf_scatter_strength = 0.4
 		m.subsurf_scatter_skin_mode = true
 		m.subsurf_scatter_transmittance_enabled = true
 		m.subsurf_scatter_transmittance_color = Color(0.95, 0.32, 0.2)
@@ -172,7 +172,7 @@ func _sleeve_mat() -> BaseMaterial3D:
 		m.albedo_texture = a
 	else:
 		m.albedo_color = Color(0.13, 0.15, 0.19) if hero == "alexandre" else Color(0.24, 0.12, 0.15)
-	var n := _tex("manche_%s_normal.png" % hero)
+	var n := _tex("manche_%s_normal.jpg" % hero)
 	if n:
 		m.normal_enabled = true
 		m.normal_texture = n
