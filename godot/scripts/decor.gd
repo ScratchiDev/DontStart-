@@ -8,6 +8,21 @@ var rng := RandomNumberGenerator.new()
 var top := 0.76
 const BOOK_COLORS := [Color(0.35, 0.1, 0.09), Color(0.12, 0.2, 0.3), Color(0.18, 0.24, 0.14), Color(0.5, 0.42, 0.22),
 	Color(0.15, 0.14, 0.13), Color(0.42, 0.32, 0.24), Color(0.26, 0.12, 0.2), Color(0.55, 0.52, 0.45)]
+## Taches du plafond et moisissure d'avant (décalques 256 px) : remplacées par celles de Wear dans dress()
+## quand les décalques décoratifs sont permis (vraie carte, au-dessus de Basse).
+var _old_traces: Array[Decal] = []
+## Reliures (lot V2-MERE, vraie carte) : couvertures de assets/textures/books/covers.json (CC0) choisies
+## pour la chambre d'une lycéenne de 2016 (romans, poésie, reliures sans titre ; pas l'encyclopédie ni
+## l'électronique, qui sont à Albert).
+const BOOK_COVERS := [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 24, 25, 28, 29, 30, 33, 34, 35, 36, 37,
+	38, 39, 40, 41, 42, 43, 44, 45, 46]
+static var _covers: Dictionary = {}
+
+
+func _notification(what: int) -> void:
+	# (les matières des reliures, gardées d'une partie à l'autre, rendues en quittant)
+	if what == NOTIFICATION_PREDELETE:
+		_covers = {}
 
 
 func build(r: Node3D) -> void:
@@ -235,6 +250,11 @@ func _shelf() -> void:
 	var x0 := shelf.position.x - size.x / 2.0 + 0.05
 	var x1 := shelf.position.x + size.x / 2.0 - 0.05
 	var z := shelf.position.z
+	# (vraie carte : les livres en un seul maillage par atlas de couvertures ; mêmes tailles, mêmes places,
+	# mêmes tirages qu'avant ; en rendu logiciel, les pavés d'avant)
+	var fancy := not Builder.soft_render() and not _book_data().is_empty()
+	var bufs := {}
+	var nb := 0
 	for li in levels.size():
 		var y: float = levels[li]
 		var x := x0
@@ -250,12 +270,22 @@ func _shelf() -> void:
 			var h := rng.randf_range(0.16, 0.25)
 			var d := rng.randf_range(0.13, 0.18)
 			var col: Color = BOOK_COLORS[rng.randi() % BOOK_COLORS.size()]
-			var bk := _b(Vector3(thick, h, d), Vector3(x + thick / 2.0, y + h / 2.0, z + 0.02), _m(col, 0.75))
-			if rng.randf() < 0.12 and x > x0 + 0.1:
-				bk.rotation.z = -0.32
-				bk.position.x += 0.03
+			var pos := Vector3(x + thick / 2.0, y + h / 2.0, z + 0.02)
+			var lean := rng.randf() < 0.12 and x > x0 + 0.1
+			if fancy:
+				var xf := Transform3D(Basis(Vector3.BACK, -0.32), pos + Vector3(0.03, 0, 0)) if lean else Transform3D(Basis(), pos)
+				book_add(bufs, xf, thick, h, d, BOOK_COVERS[(nb * 7 + li * 13) % BOOK_COVERS.size()])
+				nb += 1
+			else:
+				var bk := _b(Vector3(thick, h, d), pos, _m(col, 0.75))
+				if lean:
+					bk.rotation.z = -0.32
+					bk.position.x += 0.03
+			if lean:
 				x += 0.06
 			x += thick + 0.002
+	if fancy:
+		books_commit(bufs, self, "LivresEtagere")
 
 
 # ------------------------------------------------------------------ les murs
@@ -318,14 +348,21 @@ func _floor() -> void:
 	# lisses se voyaient dans la lueur de l'écran, dès la vue de départ)
 	# pile de livres par terre, près du lit : reliures, dos et tranches de pages
 	var y := 0.0
+	var fancy := not Builder.soft_render() and not _book_data().is_empty()
+	var bufs := {}
 	for k in 4:
 		var h := rng.randf_range(0.03, 0.05)
 		var bw := rng.randf_range(0.17, 0.22)
 		var bd := rng.randf_range(0.24, 0.3)
 		var col: Color = BOOK_COLORS[rng.randi() % BOOK_COLORS.size()]
 		var rot := rng.randf_range(-0.4, 0.4)
-		_flat_book(Vector3(bw, h, bd), Vector3(-1.85, y, 0.42), col, rot)
+		if fancy:
+			book_add(bufs, flat_book_xf(Vector3(bw, h, bd), Vector3(-1.85, y, 0.42), rot), h, bd, bw, [26, 9, 40, 29][k])
+		else:
+			_flat_book(Vector3(bw, h, bd), Vector3(-1.85, y, 0.42), col, rot)
 		y += h
+	if fancy:
+		books_commit(bufs, self, "LivresSol")
 	# boulettes de papier à côté de la corbeille
 	var ball := SphereMesh.new()
 	ball.radius = 0.024
@@ -351,6 +388,138 @@ func _flat_book(size: Vector3, at: Vector3, col: Color, rot_y: float) -> void:
 		_b(Vector3(size.x, board, size.z), Vector3(0, yb, 0), cover, 0.0, bk)
 	_b(Vector3(0.005, size.y, size.z), Vector3(-size.x / 2.0 + 0.0025, size.y / 2.0, 0), cover, 0.0, bk)
 	_b(Vector3(size.x - 0.009, size.y - 2.0 * board, size.z - 0.008), Vector3(0.0005, size.y / 2.0, 0), _m(Color(0.8, 0.76, 0.66), 0.9), 0.0, bk)
+
+
+# ------------------------------------------------------------------ reliures (lot V2-MERE, vraie carte)
+
+## covers.json (lot V1-ASSETS) lu une fois : {"rects": [[atlas, [x, y, l, h]], …], "layout", "pages",
+## "mats": [atlas 0, atlas 1, pages]} ; {} si le fichier manque.
+static func _book_data() -> Dictionary:
+	if not _covers.is_empty():
+		return _covers
+	var path := "res://assets/textures/books/covers.json"
+	if not FileAccess.file_exists(path):
+		return {}
+	var doc: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if not (doc is Dictionary):
+		return {}
+	var rects := []
+	for c in doc.covers:
+		rects.append([int(c.atlas), c.rect])
+	var mats := []
+	for p in doc.atlases:
+		var m := StandardMaterial3D.new()
+		m.albedo_texture = load(p)
+		m.roughness = 0.68
+		m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+		mats.append(m)
+	var pm := StandardMaterial3D.new()
+	pm.albedo_texture = load(doc.base.diff)
+	pm.roughness = 0.9
+	pm.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	mats.append(pm)
+	_covers = {"rects": rects, "layout": doc.layout, "pages": doc.base.pages_rect, "mats": mats}
+	return _covers
+
+
+## Repère d'un livre couché (taille x = largeur, y = épaisseur, z = hauteur du livre ; pied en « at » ;
+## tourné de rot_y) pour book_add : le plat dessus, le dos vers -x, le haut du livre vers -z.
+static func flat_book_xf(size: Vector3, at: Vector3, rot_y: float) -> Transform3D:
+	var b := Basis(Vector3(0, 1, 0), Vector3(0, 0, -1), Vector3(-1, 0, 0))
+	return Transform3D(Basis(Vector3.UP, rot_y) * b, at + Vector3(0, size.y / 2.0, 0))
+
+
+## Ajoute un livre (repère : épaisseur « t » en x, hauteur « h » en y, profondeur « d » en z, centré ; dos
+## vers +z, plat vers +x) aux tampons « bufs » : couverture « cover » (index de covers.json) prise dans son
+## atlas (dos de couverture, dos, plat ; 2 px de retrait contre les fuites des mipmaps), bloc de pages dessus
+## et sur la tranche. xf : placement. books_commit en fait les maillages.
+static func book_add(bufs: Dictionary, xf: Transform3D, t: float, h: float, d: float, cover: int) -> void:
+	var data := _book_data()
+	if data.is_empty():
+		return
+	var rc: Array = data.rects[clampi(cover, 0, data.rects.size() - 1)]
+	var key := str(rc[0])
+	if not bufs.has(key):
+		bufs[key] = SurfaceTool.new()
+		(bufs[key] as SurfaceTool).begin(Mesh.PRIMITIVE_TRIANGLES)
+	if not bufs.has("pages"):
+		bufs["pages"] = SurfaceTool.new()
+		(bufs["pages"] as SurfaceTool).begin(Mesh.PRIMITIVE_TRIANGLES)
+	var cs: SurfaceTool = bufs[key]
+	var ps: SurfaceTool = bufs["pages"]
+	var r: Array = rc[1]
+	var rx: float = r[0]
+	var ry: float = r[1]
+	var rw: float = r[2]
+	var rh: float = r[3]
+	var lay: Dictionary = data.layout
+	var sp: Array = lay.spine
+	var fr: Array = lay.front
+	var bk: Array = lay.back
+	var ins := 0.004
+	var x := t / 2.0
+	var y := h / 2.0
+	var z := d / 2.0
+	var v0 := ry + rh * ins
+	var v1 := ry + rh * (1.0 - ins)
+	# dos (+z), de gauche (côté dos de couverture, -x) à droite (côté plat, +x)
+	_quad(cs, xf, [Vector3(-x, y, z), Vector3(x, y, z), Vector3(x, -y, z), Vector3(-x, -y, z)], Vector3.BACK,
+		rx + rw * (float(sp[0]) + ins), rx + rw * (float(sp[1]) - ins), v0, v1)
+	# plat (+x), du dos (z = d/2) vers la gouttière (z = -d/2)
+	_quad(cs, xf, [Vector3(x, y, z), Vector3(x, y, -z), Vector3(x, -y, -z), Vector3(x, -y, z)], Vector3.RIGHT,
+		rx + rw * float(fr[0]), rx + rw * (float(fr[1]) - ins), v0, v1)
+	# dos de couverture (-x), de la gouttière vers le dos
+	_quad(cs, xf, [Vector3(-x, y, -z), Vector3(-x, y, z), Vector3(-x, -y, z), Vector3(-x, -y, -z)], Vector3.LEFT,
+		rx + rw * (float(bk[0]) + ins), rx + rw * float(bk[1]), v0, v1)
+	# pages : dessus et tranche (gouttière, -z), en retrait de l'épaisseur des plats
+	var pg: Array = data.pages
+	var px: float = pg[0]
+	var py: float = pg[1]
+	var pw: float = pg[2]
+	var ph: float = pg[3]
+	var e := minf(0.0025, t * 0.12)
+	_quad(ps, xf, [Vector3(-x + e, y - 0.001, -z), Vector3(x - e, y - 0.001, -z), Vector3(x - e, y - 0.001, z - 0.004), Vector3(-x + e, y - 0.001, z - 0.004)],
+		Vector3.UP, px, px + pw, py, py + ph * 0.3)
+	_quad(ps, xf, [Vector3(-x + e, y - e, -z + 0.001), Vector3(x - e, y - e, -z + 0.001), Vector3(x - e, -y + e, -z + 0.001), Vector3(-x + e, -y + e, -z + 0.001)],
+		Vector3.FORWARD, px, px + pw, py, py + ph)
+	# dessous (couverture, sombre : la tranche du bas ne se voit presque jamais)
+	_quad(cs, xf, [Vector3(-x, -y, z), Vector3(x, -y, z), Vector3(x, -y, -z), Vector3(-x, -y, -z)], Vector3.DOWN,
+		rx + rw * float(sp[0]), rx + rw * float(sp[1]), v1, v1)
+	# dessus des plats (bande de la couverture autour des pages)
+	_quad(cs, xf, [Vector3(x - e, y, -z), Vector3(x, y, -z), Vector3(x, y, z), Vector3(x - e, y, z)], Vector3.UP,
+		rx + rw * float(fr[0]), rx + rw * float(fr[1]), v0, v0)
+	_quad(cs, xf, [Vector3(-x, y, -z), Vector3(-x + e, y, -z), Vector3(-x + e, y, z), Vector3(-x, y, z)], Vector3.UP,
+		rx + rw * float(bk[0]), rx + rw * float(bk[1]), v0, v0)
+
+
+## Un quadrilatère (a, b, c, d dans le sens de lecture : haut gauche, haut droite, bas droite, bas gauche) :
+## u de u0 à u1 de gauche à droite, v de v0 à v1 de haut en bas ; triangles tournés vers « n ».
+static func _quad(st: SurfaceTool, xf: Transform3D, p: Array, n: Vector3, u0: float, u1: float, v0: float, v1: float) -> void:
+	var uv := [Vector2(u0, v0), Vector2(u1, v0), Vector2(u1, v1), Vector2(u0, v1)]
+	var wn := (xf.basis * n).normalized()
+	var w: Array[Vector3] = []
+	for q in p:
+		w.append(xf * (q as Vector3))
+	for tri in [[0, 1, 2], [0, 2, 3]]:
+		var order: Array = tri if (w[tri[1]] - w[tri[0]]).cross(w[tri[2]] - w[tri[0]]).dot(wn) < 0.0 else [tri[0], tri[2], tri[1]]
+		for i in order:
+			st.set_normal(wn)
+			st.set_uv(uv[i])
+			st.add_vertex(w[i])
+
+
+## Les maillages des tampons de book_add, dans « parent » (un par atlas, un pour les pages).
+static func books_commit(bufs: Dictionary, parent: Node3D, nm: String) -> void:
+	var data := _book_data()
+	if data.is_empty():
+		return
+	for key in bufs:
+		var mi := MeshInstance3D.new()
+		mi.name = "%s_%s" % [nm, key]
+		mi.mesh = (bufs[key] as SurfaceTool).commit()
+		mi.material_override = data.mats[2] if key == "pages" else data.mats[int(key)]
+		mi.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+		parent.add_child(mi)
 
 
 # ------------------------------------------------------------------ les traces
@@ -400,21 +569,54 @@ const JOURNAL := [
 
 func _traces() -> void:
 	# auréoles d'humidité au plafond
-	_decal("stain_water.png", Vector3(-2.2, 2.6, 1.45), Vector3.DOWN, Vector3.RIGHT, 1.5, 1.3, 0.3)
-	_decal("stain_water.png", Vector3(-2.75, 2.6, -1.9), Vector3.DOWN, Vector3.BACK, 0.8, 0.8, 0.3)
+	_old_traces.append(_decal("stain_water.png", Vector3(-2.2, 2.6, 1.45), Vector3.DOWN, Vector3.RIGHT, 1.5, 1.3, 0.3))
+	_old_traces.append(_decal("stain_water.png", Vector3(-2.75, 2.6, -1.9), Vector3.DOWN, Vector3.BACK, 0.8, 0.8, 0.3))
 	# moisissure dans le coin de la fenêtre et derrière l'armoire
-	_decal("mold.png", Vector3(-3.2, 2.15, -1.95), Vector3.RIGHT, Vector3.UP, 1.1, 0.9, 0.2)
-	_decal("mold.png", Vector3(-2.2, 2.2, -2.6), Vector3.BACK, Vector3.UP, 1.0, 0.8, 0.2)
+	_old_traces.append(_decal("mold.png", Vector3(-3.2, 2.15, -1.95), Vector3.RIGHT, Vector3.UP, 1.1, 0.9, 0.2))
+	_old_traces.append(_decal("mold.png", Vector3(-2.2, 2.2, -2.6), Vector3.BACK, Vector3.UP, 1.0, 0.8, 0.2))
 	# griffures et mots grattés au-dessus de la tête du lit
 	_decal("scratches.png", Vector3(-3.2, 1.2, 0.95), Vector3.RIGHT, Vector3.UP, 0.72, 0.36, 0.16)
-	# empreintes de pieds nus : de la porte fermée jusque sous le lit
+	# empreintes de pieds nus : de la porte fermée jusque sous le lit (Wear.footprints, lot V2-MERE : pieds
+	# mouillés en relief, six variantes, une petite rotation par pas ; mêmes pas, mêmes places, même fondu
+	# qu'avant ; décalques du récit : ils existent aussi en rendu logiciel)
 	var start := Vector3(2.7, 0.0, 1.45)
 	var stop_x := -2.0
 	var step := 0.34
 	var n := int((start.x - stop_x) / step)
+	var pts := []
+	var alphas := []
 	for i in n:
 		var left := i % 2 == 0
 		var p := start + Vector3(-i * step, 0, 0.09 if left else -0.09)
 		p.z += sin(i * 0.7) * 0.05
-		var fade := clampf(1.0 - float(i) / n * 0.5, 0.0, 1.0)
-		_decal("foot_left.png" if left else "foot_right.png", p, Vector3.UP, Vector3.LEFT, 0.27, 0.32, 0.25, Color(1, 1, 1, fade))
+		pts.append(p)
+		alphas.append(clampf(1.0 - float(i) / n * 0.5, 0.0, 1.0))
+	# (mélange fort : on doit les voir de loin, comme celles d'avant ; le relief et le mouillé en plus)
+	var feet := Wear.footprints(self, pts, {"each": true, "dir": Vector3.LEFT, "alphas": alphas, "story": true,
+		"mix": 0.85, "color": Color(0.85, 0.8, 0.75)})
+	if feet.size() < n:
+		# (décalques de Wear absents : les empreintes d'avant)
+		for d in feet:
+			(d as Node).queue_free()
+		for i in n:
+			var left := i % 2 == 0
+			_decal("foot_left.png" if left else "foot_right.png", pts[i], Vector3.UP, Vector3.LEFT, 0.27, 0.32, 0.25,
+				Color(1, 1, 1, alphas[i]))
+
+
+## Habillage différé (lot V2-MERE, appelé par room.dress_details : vraie carte, après la mesure de B16).
+## Les taches du plafond et la moisissure d'avant laissent la place à celles de Wear (auréole propre à la
+## chambre, moisissure noire le long du plafond, colonie dans le coin de la fenêtre) quand les décalques
+## décoratifs sont permis ; en Basse, celles d'avant restent.
+func dress() -> void:
+	if not Wear.deco_on() or Wear.files("tache_plafond", 0).is_empty():
+		return
+	for d in _old_traces:
+		if is_instance_valid(d):
+			d.queue_free()
+	_old_traces.clear()
+	Wear.decal(self, "tache_plafond", Vector3(-2.2, 2.6, 1.45), Vector3.DOWN, Vector3.RIGHT, 1.6, 1.4, {"variant": 0})
+	Wear.decal(self, "tache_plafond", Vector3(-2.75, 2.6, -1.9), Vector3.DOWN, Vector3.BACK, 0.85, 0.85,
+		{"variant": 0, "rot": 130.0, "alpha": 0.8})
+	Wear.decal(self, "moisissure", Vector3(-2.72, 2.43, -2.6), Vector3.BACK, Vector3.UP, 0.96, 0.36, {"variant": 0})
+	Wear.decal(self, "moisissure", Vector3(-3.2, 2.2, -1.98), Vector3.RIGHT, Vector3.UP, 0.75, 0.7, {"variant": 1})

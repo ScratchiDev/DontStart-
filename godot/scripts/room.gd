@@ -66,6 +66,31 @@ var _tape_mat: StandardMaterial3D
 var _furn_wood: StandardMaterial3D
 var _brass_mat: StandardMaterial3D
 var _key_mat: StandardMaterial3D
+## Passe « triple A » (lot V2-MERE) : l'ordinateur cathodique, le lit, le visage, l'usure.
+var screen_mesh: MeshInstance3D      # l'écran : le quad de 0,38 × 0,29 (calotte bombée hors rendu logiciel)
+var screen_glass: MeshInstance3D     # vitre bombée devant le tube (vraie carte seulement ; cachée en rétro)
+var _plastic: StandardMaterial3D     # plastique ivoire jauni de l'ordinateur (vraie carte)
+var _mon_led: StandardMaterial3D     # voyant vert du moniteur : il suit l'écran (power_on)
+var _mon_led_on := -1
+var _night_top := 0.55               # dessus du chevet, de la commode (objets de détail posés dessus)
+var _dresser_top := 0.8
+## Gain HDR du phosphore en rendu net : brightness 1,45 (séance, convocation) × 1,52 ≈ 2,2, au-dessus du
+## seuil du halo (1,0) : les lettres irradient. Rétro : 1, l'écran d'avant.
+const SCREEN_HDR_GAIN := 2.2 / 1.45
+const SCREEN_HALATION := 0.3
+## Couche de rendu de la vitre de l'écran (vue par toutes les caméras) : la lueur de l'écran (screen_light,
+## une lampe placée devant lui) ne l'éclaire pas, sinon son reflet faisait une tache au milieu de la dalle.
+const LAYER_SCREEN_GLASS := 16
+
+
+func _notification(what: int) -> void:
+	# (atlas des légendes du clavier et ouïes, gardés d'une partie à l'autre, rendus en quittant ; le
+	# _notification de Builder libère ses propres caches)
+	if what == NOTIFICATION_PREDELETE:
+		_kb_atlas = null
+		_kb_cells = {}
+		_vent_tex = []
+		_mouse_tex = null
 
 
 func _ready() -> void:
@@ -175,7 +200,13 @@ func _build_furniture() -> void:
 	_retint(desk)
 	_dress_desk(desk)
 	_build_keyboard(Vector3(pc_x, desk_top, -2.0))
-	prop("computerMouse", Vector3(1.62, desk_top, -2.02), -8.0, Vector3(0.065, 0, 0), false)
+	var mouse := prop("computerMouse", Vector3(1.62, desk_top, -2.02), -8.0, Vector3(0.065, 0, 0), false)
+	if not Builder.soft_render():
+		# (vraie carte) une souris à deux boutons des années 1990, modelée, à la place du Kenney caché
+		_hide_meshes(mouse)
+		var mm := _mesh_node(_mouse_mesh(), _mouse_mat(), self, "Souris")
+		mm.position = mouse.position
+		mm.rotation.y = mouse.rotation.y
 	_hide_meshes(prop("books", Vector3(0.68, desk_top, -2.08), -14.0, Vector3(0.26, 0, 0), false))
 	_book_stack(Vector3(0.68, desk_top, -2.08), deg_to_rad(-14.0))
 	prop("lampRoundTable", Vector3(0.6, desk_top, -2.42), 20.0, Vector3(0, 0.4, 0), false)
@@ -190,7 +221,9 @@ func _build_furniture() -> void:
 	var shelf := prop("bookcaseOpen", Vector3(2.78, 0, -2.36), 0.0, Vector3(0.75, 1.8, 0.4))
 	_retint(shelf)
 	_dress_bookcase(shelf)
-	prop("televisionVintage", Vector3(2.78, (shelf.get_meta("size") as Vector3).y, -2.36), 0.0, Vector3(0.48, 0, 0), false)
+	# une télé à tube de 1990 (Poly Haven, television_02) : chargée ici, avant la mesure de B16, elle est
+	# en cache pour la chambre d'amis
+	prop("televisionVintage", Vector3(2.78, (shelf.get_meta("size") as Vector3).y, -2.36), 0.0, Vector3(0.44, 0, 0), false, {}, "", "television_02")
 
 	# lit (mur de gauche, tête vers la fenêtre), chevet, réveil, nounours
 	var bed := prop("bedSingle", Vector3(-2.65, 0, 1.58), 0.0, Vector3(1.05, 0.55, 2.0), true,
@@ -201,7 +234,8 @@ func _build_furniture() -> void:
 	_dress_bed(bed)
 	_build_teddy(Vector3(-2.35, 0.43, 2.25), -110.0)
 	var night := prop("cabinetBedDrawerTable", Vector3(-2.92, 0, 0.3), 90.0, Vector3(0.48, 0.55, 0.42))
-	_build_clock(Vector3(-2.95, (night.get_meta("size") as Vector3).y, 0.32))
+	_night_top = (night.get_meta("size") as Vector3).y
+	_build_clock(Vector3(-2.95, _night_top, 0.32))
 
 	# armoire (coin du fond à gauche) : la disquette est dedans
 	var wardrobe := prop("bookcaseClosedDoors", Vector3(-2.55, 0, -2.3), 0.0, Vector3(1.0, 2.05, 0.55), true, {}, "Ouvrir l'armoire")
@@ -223,6 +257,7 @@ func _build_furniture() -> void:
 	var dresser := model("painted_wooden_cabinet", Vector3(0.75, 0, 2.38), 180.0, Vector3(0, 0.8, 0), true,
 		{"fit": "y", "name": "sideTableDrawers"})
 	var dtop := (dresser.get_meta("size") as Vector3).y
+	_dresser_top = dtop
 	_build_photo(Vector3(0.95, dtop, 2.42))
 	prop("plantSmall1", Vector3(0.5, dtop, 2.42), 0.0, Vector3(0, 0.26, 0), false)
 	# coussin tombé par terre (tissu tissé, comme les tapis) : gonflé au centre, cousu sur le pourtour
@@ -308,10 +343,19 @@ func _build_duvet(bed: Node3D) -> void:
 	st.generate_normals()
 	var mi := MeshInstance3D.new()
 	mi.mesh = st.commit()
-	# couvre-lit en laine tissée (la matière des tapis) ; faces avant vers le haut et vers l'extérieur
-	mi.material_override = _rug_mat(Color(0.3, 0.13, 0.14))
+	# couverture en lin lavé bordeaux (Poly Haven rough_linen) ; faces avant vers le haut et vers l'extérieur
+	mi.material_override = _linen(Color(0.3, 0.12, 0.13))
 	mi.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
 	add_child(mi)
+
+
+## Lin lavé (Poly Haven rough_linen, CC0 : une répétition tous les 27 cm, en coordonnées du monde) teint
+## de la couleur « c » : le lin d'origine est bleu clair, d'environ (0,57 ; 0,67 ; 0,8), d'où la division.
+## Sans la texture : la laine tissée des tapis, comme avant.
+func _linen(c: Color) -> StandardMaterial3D:
+	if not ResourceLoader.exists("res://assets/textures/rough_linen/rough_linen_albedo.jpg"):
+		return _rug_mat(c)
+	return Surfaces.pbr("rough_linen/rough_linen", 0.27, Color(c.r / 0.57, c.g / 0.67, c.b / 0.8), 0.9)
 
 
 func _build_clock(top: Vector3) -> void:
@@ -434,7 +478,8 @@ static func _at(pos: Vector3, rot := Vector3.ZERO) -> Transform3D:
 ## Tige (cylindre) de a à b, de rayon r : [maillage, Transform3D] pour _merged.
 func _rod(a: Vector3, b: Vector3, r: float, seg := 8) -> Array:
 	var v := b - a
-	return [_cm(r, r, v.length(), seg), Transform3D(Basis(Quaternion(Vector3.UP, v.normalized())), (a + b) / 2.0)]
+	# (bouts chanfreinés hors rendu logiciel : Builder.cylinder_mesh ; un CylinderMesh comme avant sinon)
+	return [Builder.cylinder_mesh(r, r, v.length(), seg), Transform3D(Basis(Quaternion(Vector3.UP, v.normalized())), (a + b) / 2.0)]
 
 
 ## L'armoire de la disquette (Kenney, gardée : ses portes s'ouvrent, sa boîte d'interaction et l'étagère de
@@ -628,6 +673,19 @@ func _book_stack(at: Vector3, rot_y: float) -> void:
 	add_child(holder)
 	var covers := [Color(0.3, 0.1, 0.09), Color(0.12, 0.18, 0.26), Color(0.2, 0.24, 0.15)]
 	var dims := [Vector3(0.18, 0.035, 0.25), Vector3(0.16, 0.028, 0.23), Vector3(0.15, 0.04, 0.21)]
+	if not Builder.soft_render():
+		# vraie carte : de vraies reliures (covers.json, decor.gd) : Stendhal, Molière, Lamartine
+		var dec := load("res://scripts/decor.gd") as GDScript
+		if not (dec.call("_book_data") as Dictionary).is_empty():
+			var bufs := {}
+			var yb := 0.0
+			for k in 3:
+				var sz: Vector3 = dims[k]
+				var foot := Vector3(0.01 * k, yb, -0.01 * k)
+				dec.call("book_add", bufs, dec.call("flat_book_xf", sz, foot, [0.0, 0.12, -0.08][k]), sz.y, sz.z, sz.x, [12, 25, 30][k])
+				yb += sz.y
+			dec.call("books_commit", bufs, holder, "Reliures")
+			return
 	var pages := _plain(Color(0.8, 0.76, 0.66), 0.9)
 	var y := 0.0
 	for k in 3:
@@ -655,42 +713,48 @@ func _dress_bed(bed: Node3D) -> void:
 	var hx := size.x / 2.0 - 0.025          # axe des montants
 	var hz := size.z / 2.0 - 0.012
 	var iron := _grimy(_plain(Color(0.055, 0.055, 0.06), 0.42, 0.55), 1.2)
+	var soft := Builder.soft_render()
 	var parts := []
 	var knobs := []
-	# tête (vers -z, côté fenêtre) et pied : montants, traverses, barreaux
+	# tête (vers -z, côté fenêtre) et pied : montants, traverses, barreaux (tubes aux bouts chanfreinés hors
+	# rendu logiciel : Builder.cylinder_mesh)
 	for end in [[-hz, 1.02, 0.97, 0.56], [hz, 0.8, 0.75, 0.5]]:
 		var z: float = end[0]
 		var hp: float = end[1]
 		var r_top: float = end[2]
 		var r_mid: float = end[3]
 		for sx in [-1.0, 1.0]:
-			parts.append([_cm(0.019, 0.019, hp, 10), _at(Vector3(sx * hx, hp / 2.0, z))])
-			knobs.append([_sm(0.03, 10), _at(Vector3(sx * hx, hp + 0.022, z))])
+			parts.append([Builder.cylinder_mesh(0.019, 0.019, hp, 10 if soft else 16), _at(Vector3(sx * hx, hp / 2.0, z))])
+			knobs.append([_sm(0.03, 10 if soft else 16), _at(Vector3(sx * hx, hp + 0.022, z))])
+			# bague de laiton sous la boule
+			if not soft:
+				knobs.append([Builder.cylinder_mesh(0.023, 0.021, 0.018, 16), _at(Vector3(sx * hx, hp - 0.004, z))])
 		for y in [r_top, r_mid, 0.26]:
-			parts.append(_rod(Vector3(-hx, y, z), Vector3(hx, y, z), 0.012 if y != r_top else 0.015, 8))
+			parts.append(_rod(Vector3(-hx, y, z), Vector3(hx, y, z), 0.012 if y != r_top else 0.015, 8 if soft else 12))
 		var n := 9
 		for k in n:
 			var x := lerpf(-hx, hx, float(k + 1) / float(n + 1))
-			parts.append(_rod(Vector3(x, r_mid, z), Vector3(x, r_top, z), 0.0065, 6))
+			parts.append(_rod(Vector3(x, r_mid, z), Vector3(x, r_top, z), 0.0065, 6 if soft else 8))
 	# longerons
 	for sx in [-1.0, 1.0]:
-		parts.append([_bm(Vector3(0.03, 0.05, 2.0 * hz)), _at(Vector3(sx * hx, 0.255, 0))])
+		parts.append([Builder.box_mesh(Vector3(0.03, 0.05, 2.0 * hz)), _at(Vector3(sx * hx, 0.255, 0))])
 	var holder := Node3D.new()
 	holder.name = "LitFer"
 	bed.add_child(holder)
 	_merged(parts, iron, holder)
 	_merged(knobs, _brass(), holder)
-	# sommier, matelas (drap blanc), oreiller
-	_merged([[_bm(Vector3(2.0 * hx - 0.04, 0.03, 2.0 * hz - 0.04)), _at(Vector3(0, 0.235, 0))]], mats.dark, holder)
+	# sommier, matelas (drap blanc, arêtes arrondies hors rendu logiciel), oreiller rembourré
+	_merged([[Builder.box_mesh(Vector3(2.0 * hx - 0.04, 0.03, 2.0 * hz - 0.04)), _at(Vector3(0, 0.235, 0))]], mats.dark, holder)
 	var sheet := _grimy(_plain(Color(0.72, 0.7, 0.64), 1.0), 1.0)
-	_merged([[_bm(Vector3(2.0 * hx - 0.05, 0.15, 2.0 * hz - 0.05)), _at(Vector3(0, 0.3, 0))]], sheet, holder)
+	var msize := Vector3(2.0 * hx - 0.05, 0.15, 2.0 * hz - 0.05)
+	_merged([[_bm(msize) if soft else Builder.rounded_box_mesh(msize, 0.04, 4), _at(Vector3(0, 0.3, 0))]], sheet, holder)
 	var pillow := MeshInstance3D.new()
-	pillow.mesh = _sm(0.5, 16)
-	pillow.material_override = sheet
+	pillow.name = "Oreiller"
+	pillow.mesh = pillow_mesh(0.64, 0.38, 0.14, 16)
+	pillow.material_override = _linen(Color(0.74, 0.72, 0.67))
 	pillow.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
-	pillow.position = Vector3(0.02, 0.43, -hz + 0.25)
-	pillow.rotation = Vector3(-0.12, 0.05, 0.0)
-	pillow.scale = Vector3(0.66, 0.13, 0.34)
+	pillow.position = Vector3(0.02, 0.375 + 0.06, -hz + 0.42)
+	pillow.rotation = Vector3(-0.06, 0.06, 0.02)
 	holder.add_child(pillow)
 
 
@@ -702,6 +766,9 @@ func _build_keyboard(at: Vector3) -> void:
 	root.position = at
 	add_child(root)
 	var tilt := Basis(Vector3.RIGHT, deg_to_rad(3.0))
+	if not Builder.soft_render():
+		_build_keyboard_aaa(root, tilt)
+		return
 	_merged([[_bm(Vector3(0.44, 0.024, 0.17)), Transform3D(tilt, Vector3(0, 0.014, 0))]], mats.beige, root)
 	var keys := []
 	var pitch := 0.0255
@@ -722,6 +789,274 @@ func _build_keyboard(at: Vector3) -> void:
 	_merged(keys, _key_mat, root)
 
 
+## Clavier AZERTY de 105 touches (années 1990) : par rangée, [z de la rangée (en pas de touche, depuis la
+## rangée des fonctions), [[légende, largeur, profondeur], …]] ; « | » : un vide de cette largeur. Les
+## touches de 2 de profondeur (Entrée, + et Entrée du pavé) descendent sur la rangée suivante.
+const KB_U := 0.0185
+const KB_ROWS := [
+	[0.0, [["ESC", 1], ["|", 1], ["F1", 1], ["F2", 1], ["F3", 1], ["F4", 1], ["|", 0.5], ["F5", 1], ["F6", 1], ["F7", 1],
+		["F8", 1], ["|", 0.5], ["F9", 1], ["F10", 1], ["F11", 1], ["F12", 1], ["|", 0.25], ["IMPR", 1], ["DEF", 1], ["PAU", 1]]],
+	[1.5, [["²", 1], ["1", 1], ["2", 1], ["3", 1], ["4", 1], ["5", 1], ["6", 1], ["7", 1], ["8", 1], ["9", 1], ["0", 1],
+		[")", 1], ["=", 1], ["←", 2], ["|", 0.25], ["INS", 1], ["ORIG", 1], ["PG↑", 1], ["|", 0.25], ["NUM", 1], ["/", 1],
+		["*", 1], ["-", 1]]],
+	[2.5, [["TAB", 1.5], ["A", 1], ["Z", 1], ["E", 1], ["R", 1], ["T", 1], ["Y", 1], ["U", 1], ["I", 1], ["O", 1], ["P", 1],
+		["^", 1], ["$", 1], ["|", 0.25], ["↵", 1.25, 2], ["|", 0.25], ["SUP", 1], ["FIN", 1], ["PG↓", 1], ["|", 0.25],
+		["7", 1], ["8", 1], ["9", 1], ["+", 1, 2]]],
+	[3.5, [["VERR", 1.75], ["Q", 1], ["S", 1], ["D", 1], ["F", 1], ["G", 1], ["H", 1], ["J", 1], ["K", 1], ["L", 1], ["M", 1],
+		["Ù", 1], ["*", 1], ["|", 4.75], ["4", 1], ["5", 1], ["6", 1]]],
+	[4.5, [["⇧", 1.25], ["<", 1], ["W", 1], ["X", 1], ["C", 1], ["V", 1], ["B", 1], ["N", 1], [",", 1], [";", 1], [":", 1],
+		["!", 1], ["⇧", 2.75], ["|", 1.25], ["↑", 1], ["|", 1.25], ["1", 1], ["2", 1], ["3", 1], ["ENT", 1, 2]]],
+	[5.5, [["CTRL", 1.5], ["|", 1], ["ALT", 1.5], [" ", 7], ["AGR", 1.5], ["|", 1], ["CTRL", 1.5], ["|", 0.25], ["←", 1],
+		["↓", 1], ["→", 1], ["|", 0.25], ["0", 2], [".", 1]]],
+]
+## Touches gris foncé (fonctions, modificateurs, pavé de direction, opérateurs du pavé numérique).
+const KB_DARK := ["ESC", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", "IMPR", "DEF", "PAU",
+	"INS", "ORIG", "PG↑", "SUP", "FIN", "PG↓", "NUM", "/", "*", "-", "+", "ENT", "TAB", "↵", "VERR", "⇧", "CTRL", "ALT",
+	"AGR", "←", "↑", "↓", "→"]
+## Les touches les plus tapées : un peu plus claires et lustrées, l'encre usée.
+const KB_WORN := ["E", "A", "S", "R", "T", "I", "N", " ", "↵", "O", "L"]
+## Police des légendes : 5 × 7 points par caractère (bits de gauche à droite, 7 lignes).
+const KB_FONT := {
+	"A": [14, 17, 17, 31, 17, 17, 17], "B": [30, 17, 17, 30, 17, 17, 30], "C": [14, 17, 16, 16, 16, 17, 14],
+	"D": [30, 17, 17, 17, 17, 17, 30], "E": [31, 16, 16, 30, 16, 16, 31], "F": [31, 16, 16, 30, 16, 16, 16],
+	"G": [14, 17, 16, 23, 17, 17, 15], "H": [17, 17, 17, 31, 17, 17, 17], "I": [14, 4, 4, 4, 4, 4, 14],
+	"J": [7, 2, 2, 2, 2, 18, 12], "K": [17, 18, 20, 24, 20, 18, 17], "L": [16, 16, 16, 16, 16, 16, 31],
+	"M": [17, 27, 21, 21, 17, 17, 17], "N": [17, 17, 25, 21, 19, 17, 17], "O": [14, 17, 17, 17, 17, 17, 14],
+	"P": [30, 17, 17, 30, 16, 16, 16], "Q": [14, 17, 17, 17, 21, 18, 13], "R": [30, 17, 17, 30, 20, 18, 17],
+	"S": [15, 16, 16, 14, 1, 1, 30], "T": [31, 4, 4, 4, 4, 4, 4], "U": [17, 17, 17, 17, 17, 17, 14],
+	"V": [17, 17, 17, 17, 17, 10, 4], "W": [17, 17, 17, 21, 21, 21, 10], "X": [17, 17, 10, 4, 10, 17, 17],
+	"Y": [17, 17, 10, 4, 4, 4, 4], "Z": [31, 1, 2, 4, 8, 16, 31],
+	"0": [14, 17, 19, 21, 25, 17, 14], "1": [4, 12, 4, 4, 4, 4, 14], "2": [14, 17, 1, 2, 4, 8, 31],
+	"3": [31, 2, 4, 2, 1, 17, 14], "4": [2, 6, 10, 18, 31, 2, 2], "5": [31, 16, 30, 1, 1, 17, 14],
+	"6": [6, 8, 16, 30, 17, 17, 14], "7": [31, 1, 2, 4, 8, 8, 8], "8": [14, 17, 17, 14, 17, 17, 14],
+	"9": [14, 17, 17, 15, 1, 2, 12],
+	"²": [12, 2, 4, 14, 0, 0, 0], ")": [8, 4, 2, 2, 2, 4, 8], "=": [0, 0, 31, 0, 31, 0, 0], "^": [4, 10, 17, 0, 0, 0, 0],
+	"$": [4, 15, 20, 14, 5, 30, 4], "Ù": [8, 4, 17, 17, 17, 17, 14], "*": [0, 4, 21, 14, 21, 4, 0],
+	"<": [2, 4, 8, 16, 8, 4, 2], ",": [0, 0, 0, 0, 12, 4, 8], ";": [0, 12, 12, 0, 12, 4, 8], ":": [0, 12, 12, 0, 12, 12, 0],
+	"!": [4, 4, 4, 4, 4, 0, 4], "/": [0, 1, 2, 4, 8, 16, 0], "-": [0, 0, 0, 31, 0, 0, 0], "+": [0, 4, 4, 31, 4, 4, 0],
+	".": [0, 0, 0, 0, 0, 12, 12], "←": [0, 4, 8, 31, 8, 4, 0], "→": [0, 4, 2, 31, 2, 4, 0], "↑": [4, 14, 21, 4, 4, 4, 4],
+	"↓": [4, 4, 4, 4, 21, 14, 4], "↵": [1, 1, 5, 9, 31, 8, 4], "⇧": [4, 10, 17, 27, 10, 10, 14],
+}
+static var _kb_atlas: ImageTexture
+static var _kb_cells := {}             # légende -> case de l'atlas (1, 2… ; 0 = aucune)
+
+
+## Atlas des légendes (1024², 16 × 16 cases de 64 px, niveaux de gris : 1 = encre) : une case par légende,
+## la légende en haut à gauche (un caractère : points de 3 px, soit environ 4 mm sur la touche ; plusieurs :
+## points de 2 px), comme une sérigraphie.
+static func _kb_legends() -> void:
+	if _kb_atlas != null:
+		return
+	var img := Image.create(1024, 1024, false, Image.FORMAT_L8)
+	var n := 0
+	for row in KB_ROWS:
+		for e in row[1]:
+			var lab: String = e[0]
+			if lab == "|" or lab == " " or _kb_cells.has(lab):
+				continue
+			n += 1
+			_kb_cells[lab] = n
+			var s := 3 if lab.length() == 1 else 2
+			var x0 := (n % 16) * 64 + 10
+			var y0 := (n / 16) * 64 + 9
+			for ch in lab:
+				var g: Array = KB_FONT.get(ch, [])
+				for ry in g.size():
+					var bits: int = g[ry]
+					for cx in 5:
+						if bits & (16 >> cx):
+							img.fill_rect(Rect2i(x0 + cx * s, y0 + ry * s, s, s), Color.WHITE)
+				x0 += 6 * s
+	img.generate_mipmaps()
+	_kb_atlas = ImageTexture.create_from_image(img)
+
+
+const KEY_SHADER := """
+shader_type spatial;
+render_mode cull_back;
+uniform sampler2D legends : hint_default_black, filter_linear_mipmap_anisotropic;
+uniform vec3 light_cap : source_color = vec3(0.72, 0.69, 0.62);
+uniform vec3 dark_cap : source_color = vec3(0.47, 0.45, 0.41);
+uniform vec3 ink : source_color = vec3(0.1, 0.095, 0.09);
+// INSTANCE_CUSTOM : r = case de la légende / 255 (0 : aucune), g = usure (0 à 1), b = 1 touche claire, 0 foncée
+varying flat float v_cell;
+varying float v_wear;
+varying float v_shade;
+void vertex() {
+	v_cell = INSTANCE_CUSTOM.r * 255.0;
+	v_wear = INSTANCE_CUSTOM.g;
+	v_shade = INSTANCE_CUSTOM.b;
+}
+void fragment() {
+	vec3 base = mix(dark_cap, light_cap, v_shade) * (1.0 + 0.07 * v_wear);
+	float k = 0.0;
+	if (v_cell >= 0.5 && UV2.x >= 0.0 && UV2.x <= 1.0 && UV2.y >= 0.0 && UV2.y <= 1.0) {
+		float c = floor(v_cell + 0.5);
+		vec2 cell = vec2(mod(c, 16.0), floor(c / 16.0));
+		k = texture(legends, (cell + clamp(UV2, 0.02, 0.98)) / 16.0).r;
+	}
+	ALBEDO = mix(base, ink, k * (1.0 - 0.55 * v_wear));
+	ROUGHNESS = mix(0.6, 0.34, v_wear);
+	SPECULAR = 0.45;
+}
+"""
+
+
+## Le clavier, vraie carte : socle de plastique ivoire (rebord chanfreiné, cuvette des touches), 102 touches
+## sculptées (bords inclinés, dessus arrondi) en MultiMesh, une par taille de touche, légendes de l'atlas
+## (_kb_legends) choisies par instance (KEY_SHADER), touches claires et foncées, touches usées ; trois voyants
+## (« verr num » allumé). Même place et même emprise que le clavier d'avant (0,455 × 0,175).
+func _build_keyboard_aaa(root: Node3D, tilt: Basis) -> void:
+	var kb := Node3D.new()
+	kb.name = "Socle"
+	kb.transform.basis = tilt
+	root.add_child(kb)
+	# socle : profil qui monte (repère tourné : z du balayage = hauteur, y du balayage = vers le fond)
+	var up := Transform3D(Basis(Vector3.RIGHT, -PI / 2.0), Vector3.ZERO)
+	var case_buf := MeshBuf.new()
+	var well_y := -0.012                 # la cuvette est décalée de 12 mm vers l'avant (voyants au fond)
+	_rr_sweep(case_buf, [[0.2275, 0.0875, 0.012, 0.0, 0.0], [0.2275, 0.0875, 0.012, 0.0145, 0.0],
+		[0.2245, 0.0845, 0.009, 0.018, 0.0], [0.2115, 0.0665, 0.004, 0.018, well_y], [0.2105, 0.0655, 0.0035, 0.008, well_y]],
+		"fcff", Vector3.ZERO, Vector3.BACK, up, 4, Callable(), true)
+	_mesh_node(case_buf.mesh(), _pc_plastic(false), kb, "Coque")
+	# touches
+	_kb_legends()
+	var sm := ShaderMaterial.new()
+	var sh := Shader.new()
+	sh.code = KEY_SHADER
+	sm.shader = sh
+	sm.set_shader_parameter("legends", _kb_atlas)
+	var groups := {}                     # « largeur×profondeur » -> [[x, z, case, usure, clair], …]
+	for row in KB_ROWS:
+		var zr: float = row[0]
+		var xu := 0.0
+		for e in row[1]:
+			var lab: String = e[0]
+			var w := float(e[1])
+			var d := float(e[2]) if e.size() > 2 else 1.0
+			if lab != "|":
+				var key := "%s×%s" % [w, d]
+				if not groups.has(key):
+					groups[key] = []
+				(groups[key] as Array).append([(xu + w / 2.0 - 11.25) * KB_U, (zr + d / 2.0 - 3.25) * KB_U - well_y,
+					int(_kb_cells.get(lab, 0)), 1.0 if KB_WORN.has(lab) else 0.0, 0.0 if KB_DARK.has(lab) else 1.0])
+			xu += w
+	for key in groups:
+		var wd: PackedStringArray = (key as String).split("×")
+		var mesh := _keycap_mesh(float(wd[0]) * KB_U, float(wd[1]) * KB_U)
+		var list: Array = groups[key]
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.use_custom_data = true
+		mm.mesh = mesh
+		mm.instance_count = list.size()
+		for i in list.size():
+			var k: Array = list[i]
+			mm.set_instance_transform(i, Transform3D(Basis(), Vector3(k[0], 0.0105, k[1])))
+			mm.set_instance_custom_data(i, Color(float(k[2]) / 255.0, k[3], k[4], 0.0))
+		var mmi := MultiMeshInstance3D.new()
+		mmi.name = "Touches_" + key.replace("×", "x")
+		mmi.multimesh = mm
+		mmi.material_override = sm
+		mmi.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+		kb.add_child(mmi)
+	# voyants au-dessus du pavé numérique (verr num allumé, en vert)
+	var off := _plain(Color(0.08, 0.1, 0.08), 0.3)
+	var on := _plain(Color(0.2, 0.5, 0.2), 0.3)
+	on.emission_enabled = true
+	on.emission = Color(0.3, 1.0, 0.3)
+	on.emission_energy_multiplier = 2.0
+	for i in 3:
+		_box(Vector3(0.005, 0.0012, 0.0028), Vector3((19.0 + i - 11.25) * KB_U + 0.009, 0.0182, -0.071), on if i == 0 else off, false, kb, 0.0)
+
+
+## Une touche sculptée de « w » × « d » (m, emprise au pied), base à y = 0, dessus à 11,5 mm : flancs
+## inclinés (2,1 mm de retrait), dessus un peu vers l'arrière, arête du dessus chanfreinée ; UV2 du dessus
+## : la case de légende sur le carré de gauche (0 à 1, haut de la légende vers le fond du clavier).
+static func _keycap_mesh(w: float, d: float) -> ArrayMesh:
+	var hw0 := w / 2.0 - 0.0008
+	var hd0 := d / 2.0 - 0.0008
+	var hw1 := hw0 - 0.0021
+	var hd1 := hd0 - 0.0024
+	var yc1 := 0.0004
+	var h := 0.0115
+	var side := minf(2.0 * hw1, 2.0 * hd1)
+	var up := Transform3D(Basis(Vector3.RIGHT, -PI / 2.0), Vector3.ZERO)
+	var buf := MeshBuf.new()
+	var legend := func(p: Vector3) -> Vector2:
+		return Vector2((p.x + hw1) / side, (yc1 + hd1 - p.y) / side)
+	_rr_sweep(buf, [[hw0, hd0, 0.0016, 0.0, 0.0], [hw1 + 0.0007, hd1 + 0.0007, 0.0024, h - 0.0009, yc1],
+		[hw1, hd1, 0.0018, h, yc1]], "fc", Vector3.ZERO, Vector3.BACK, up, 3, Callable(), true, legend)
+	return buf.mesh(true)
+
+
+## Souris (vraie carte) : coque bombée sur un contour en superellipse (5,8 × 9,8 cm), plus haute vers
+## l'arrière (3,4 cm), flancs presque droits, dessous plat. UV : la vue de dessus (fentes des boutons dans
+## _mouse_mat). L'avant (le câble) vers -z.
+static func _mouse_mesh() -> ArrayMesh:
+	var a := 0.029
+	var b := 0.049
+	var na := 48
+	var nr := 12
+	var outline := Builder.superellipse(a, b, 2.6, na)
+	var buf := MeshBuf.new()
+	var hmax := func(z: float) -> float:
+		return 0.034 * (0.68 + 0.32 * smoothstep(-0.045, 0.03, z))
+	for i in nr:
+		var rho := 1.0 - float(i) / nr
+		for j in na:
+			var o: Vector2 = outline[j] * rho
+			var y: float = hmax.call(o.y) * sqrt(maxf(0.0, 1.0 - pow(rho, 5.0)))
+			buf.add(Vector3(o.x, y, o.y), Vector3.ZERO, Vector2(o.x / (2.0 * a) + 0.5, o.y / (2.0 * b) + 0.5))
+	var top := buf.add(Vector3(0.0, hmax.call(0.0), 0.0), Vector3.ZERO, Vector2(0.5, 0.5))
+	var ctr := Vector3(0.0, -0.01, 0.0)
+	for i in nr - 1:
+		for j in na:
+			var p0 := i * na + j
+			var p1 := i * na + (j + 1) % na
+			var q0 := p0 + na
+			var q1 := p1 + na
+			buf.tri(p0, p1, q1, buf.v[p0] - ctr)
+			buf.tri(p0, q1, q0, buf.v[p0] - ctr)
+	for j in na:
+		var p0 := (nr - 1) * na + j
+		var p1 := (nr - 1) * na + (j + 1) % na
+		buf.tri(p0, p1, top, Vector3.UP)
+	buf.smooth_normals()
+	# dessous plat (sommets à part : arête nette)
+	var c0 := buf.add(Vector3.ZERO, Vector3.DOWN, Vector2(0.5, 0.5))
+	var ring := PackedInt32Array()
+	for j in na:
+		var o: Vector2 = outline[j]
+		ring.append(buf.add(Vector3(o.x, 0.0, o.y), Vector3.DOWN, Vector2(o.x / (2.0 * a) + 0.5, o.y / (2.0 * b) + 0.5)))
+	for j in na:
+		buf.tri(c0, ring[j], ring[(j + 1) % na], Vector3.DOWN)
+	return buf.mesh()
+
+
+static var _mouse_tex: ImageTexture
+
+
+## Plastique de la souris : l'ivoire du clavier, les fentes des deux boutons (une en travers à 1,2 cm
+## de l'avant du sommet, une au milieu jusqu'au bout) dessinées dans une petite image vue de dessus.
+func _mouse_mat() -> StandardMaterial3D:
+	if _mouse_tex == null:
+		var img := Image.create(128, 256, true, Image.FORMAT_L8)
+		img.fill(Color.WHITE)
+		var vs := int((-0.012 / 0.098 + 0.5) * 256.0)
+		img.fill_rect(Rect2i(14, vs - 1, 100, 3), Color(0.18, 0.18, 0.18))
+		img.fill_rect(Rect2i(63, 0, 3, vs), Color(0.18, 0.18, 0.18))
+		img.generate_mipmaps()
+		_mouse_tex = ImageTexture.create_from_image(img)
+	var m := StandardMaterial3D.new()
+	m.albedo_texture = _mouse_tex
+	var t := _pc_tint(Vector3(0, 0.2, 0))
+	m.albedo_color = Color(0.66 * t.r, 0.62 * t.g, 0.52 * t.b)
+	m.roughness = 0.5
+	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+	return _grimy(m, 2.0)
+
+
 ## Le nounours, assis sur la couette au pied du lit (sphères : peluche brune, museau clair, yeux et truffe).
 func _build_teddy(at: Vector3, rot_deg: float) -> void:
 	var root := Node3D.new()
@@ -729,8 +1064,9 @@ func _build_teddy(at: Vector3, rot_deg: float) -> void:
 	root.position = at
 	root.rotation_degrees.y = rot_deg
 	add_child(root)
-	var ball := _sm(0.5, 14)
-	var small := _sm(0.5, 8)
+	var soft := Builder.soft_render()
+	var ball := _sm(0.5, 14 if soft else 24)
+	var small := _sm(0.5, 8 if soft else 12)
 	var sc := func(v: Vector3, p: Vector3, r := Vector3.ZERO) -> Array:
 		return [ball, Transform3D(Basis.from_euler(r).scaled_local(v), p)]
 	var fur := [
@@ -743,8 +1079,15 @@ func _build_teddy(at: Vector3, rot_deg: float) -> void:
 		sc.call(Vector3(0.065, 0.06, 0.11), Vector3(-0.055, 0.03, 0.08)),             # jambes
 		sc.call(Vector3(0.065, 0.06, 0.11), Vector3(0.055, 0.03, 0.08)),
 	]
-	_merged(fur, _grimy(_plain(Color(0.36, 0.25, 0.16), 1.0), 2.0), root)
-	_merged([sc.call(Vector3(0.06, 0.048, 0.05), Vector3(0, 0.232, 0.066))], _grimy(_plain(Color(0.62, 0.5, 0.36), 1.0), 2.0), root)
+	# peluche bouclée (Poly Haven curly_teddy_natural, CC0 ; crème d'origine, d'environ (0,91 ; 0,83 ; 0,73),
+	# teinte en brun) ; sans la texture, l'aplat d'avant
+	var curly := ResourceLoader.exists("res://assets/textures/curly_teddy_natural/curly_teddy_natural_albedo.jpg")
+	var fur_mat := Surfaces.pbr("curly_teddy_natural/curly_teddy_natural", 0.2, Color(0.39, 0.3, 0.22), 1.2) if curly \
+		else _grimy(_plain(Color(0.36, 0.25, 0.16), 1.0), 2.0)
+	var snout_mat := Surfaces.pbr("curly_teddy_natural/curly_teddy_natural", 0.12, Color(0.68, 0.6, 0.49), 0.8) if curly \
+		else _grimy(_plain(Color(0.62, 0.5, 0.36), 1.0), 2.0)
+	_merged(fur, fur_mat, root)
+	_merged([sc.call(Vector3(0.06, 0.048, 0.05), Vector3(0, 0.232, 0.066))], snout_mat, root)
 	_merged([[small, Transform3D(Basis().scaled(Vector3(0.026, 0.018, 0.018)), Vector3(0, 0.247, 0.092))],
 		[small, Transform3D(Basis().scaled(Vector3(0.016, 0.016, 0.016)), Vector3(-0.032, 0.272, 0.07))],
 		[small, Transform3D(Basis().scaled(Vector3(0.016, 0.016, 0.016)), Vector3(0.032, 0.272, 0.07))]],
@@ -912,6 +1255,13 @@ func _bulbs_glow(lamp: Node3D) -> void:
 
 
 func _process(_delta: float) -> void:
+	# voyant vert du moniteur : allumé avec l'écran (terminal : power_on, extinction du tube)
+	if _mon_led and screen_mat:
+		var po: Variant = screen_mat.get_shader_parameter("power_on")
+		var lit := 1 if po == null or float(po) > 0.5 else 0
+		if lit != _mon_led_on:
+			_mon_led_on = lit
+			_mon_led.emission_energy_multiplier = 2.5 * lit
 	if _bulb_mat == null or ceiling_light == null:
 		return
 	var e := ceiling_light.light_energy if ceiling_light.is_visible_in_tree() else 0.0
@@ -940,10 +1290,15 @@ func _build_pc() -> void:
 	var x := pc_x
 	var z := pc_z
 	var base := desk_top
-	# unité centrale beige, fente de disquette, voyant
-	_box(Vector3(0.52, 0.13, 0.44), Vector3(x, base + 0.065, z), mats.beige)
-	_box(Vector3(0.2, 0.012, 0.01), Vector3(x - 0.09, base + 0.075, z + 0.221), mats.dark)
-	_box(Vector3(0.05, 0.02, 0.01), Vector3(x + 0.17, base + 0.06, z + 0.221), mats.dark)
+	var soft := Builder.soft_render()
+	# (lot V2-MERE) coques modelées en code : unité centrale aux arêtes arrondies, moniteur à façade
+	# chanfreinée, dalle en retrait, capot et entonnoir arrière (_build_pc_shell) ; plastique ivoire jauni
+	# vers le haut. Mêmes places, même collision, mêmes objets interactifs qu'avant.
+	var pcf := Node3D.new()
+	pcf.name = "Ordinateur"
+	pcf.position = Vector3(x, base, z)
+	add_child(pcf)
+	_build_pc_shell(pcf, soft)
 	# autocollant d'inventaire du laboratoire, sur le flanc de l'unité centrale
 	var sticker := _quad(Vector2(0.13, 0.049), Vector3(x + 0.2615, base + 0.07, z + 0.08), _image_mat("ceraf_label.png", 0.5), PI / 2.0)
 	sticker.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -951,27 +1306,8 @@ func _build_pc() -> void:
 	st_it.used.connect(func(_i: Interactable) -> void:
 		Game.hint("« CERAF · INVENTAIRE N° 0312. Propriété du CERAF, ne pas sortir du site. » L'ordinateur de ta mère vient d'un laboratoire.", 5.0))
 	led_mat = _plain(Color(0.15, 0.1, 0.03), 0.4)
-	_box(Vector3(0.016, 0.01, 0.006), Vector3(x + 0.03, base + 0.075, z + 0.223), led_mat)
-	# moniteur cathodique : coque avec un creux pour la dalle (CSG)
+	_box(Vector3(0.012, 0.006, 0.003), Vector3(0.03, 0.075, 0.2255), led_mat, false, pcf)
 	var my := base + 0.13
-	var csg := CSGCombiner3D.new()
-	add_child(csg)
-	var body := CSGBox3D.new()
-	body.size = Vector3(0.46, 0.4, 0.3)
-	body.position = Vector3(x, my + 0.2, z + 0.07)
-	body.material = mats.beige
-	csg.add_child(body)
-	var back := CSGBox3D.new()
-	back.size = Vector3(0.34, 0.31, 0.2)
-	back.position = Vector3(x, my + 0.19, z - 0.15)
-	back.material = mats.beige
-	csg.add_child(back)
-	var hole := CSGBox3D.new()
-	hole.operation = CSGShape3D.OPERATION_SUBTRACTION
-	hole.size = Vector3(0.39, 0.3, 0.06)
-	hole.position = Vector3(x, my + 0.215, z + 0.22)
-	hole.material = mats.black_plastic
-	csg.add_child(hole)
 	# l'écran : le terminal est dessiné dans un SubViewport, puis affiché avec un shader de tube
 	var vp := SubViewport.new()
 	vp.size = Vector2i(640, 480)
@@ -986,7 +1322,15 @@ func _build_pc() -> void:
 	terminal.screen_mat = screen_mat
 	screen_center = Vector3(x, my + 0.215, z + 0.193)
 	var screen := _quad(Vector2(0.38, 0.29), screen_center, screen_mat)
+	screen.name = "Ecran"
 	screen.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	screen_mesh = screen
+	if not soft:
+		# le tube : une calotte bombée de 1,5 cm (même cadre de 0,38 × 0,29, mêmes UV que le quad), et
+		# devant, une vitre transparente (reflets de la pièce, une main grasse dans la rugosité)
+		screen.mesh = _dome_mesh(0.19, 0.145, 0.015)
+		screen.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+		_build_screen_glass()
 	var it := _interactable(LABEL_INSERT, Vector3(1.0, 0.8, 0.8), Vector3(x, base + 0.3, z + 0.2))
 	pc_it = it
 	it.used.connect(func(_i: Interactable) -> void:
@@ -1002,7 +1346,7 @@ func _build_pc() -> void:
 			Game.hint("L'écran clignote. Il attend quelque chose."))
 	# le bouton d'éjection, sous la fente : la disquette ne ressort pas (§ 4.3). Il n'est visé qu'une
 	# fois la disquette dans le lecteur (la grande boîte « Insérer la disquette » est alors coupée).
-	_box(Vector3(0.022, 0.009, 0.006), Vector3(x + 0.035, base + 0.052, z + 0.222), mats.dark)
+	_box(Vector3(0.022, 0.009, 0.004), Vector3(0.035, 0.052, 0.2255), mats.dark, false, pcf)
 	# (la boîte dépasse de 3 cm le collisionneur de l'unité centrale, pour que le rayon la trouve)
 	eject_it = _interactable("Éjecter la disquette", Vector3(0.3, 0.1, 0.12), Vector3(x - 0.05, base + 0.065, z + 0.29))
 	eject_it.enabled = false
@@ -1022,6 +1366,418 @@ func _build_pc() -> void:
 	pc.position = screen_center
 	pc.build()
 	pc_dev = pc
+
+
+## Les coques de l'ordinateur, dans le repère « Ordinateur » (origine au pied de l'unité centrale, sur le
+## bureau ; avant vers +z) : unité centrale (0,52 × 0,13 × 0,44, arêtes arrondies, façade chanfreinée),
+## façade du lecteur 3½ (fente, voyant et bouton d'éjection aux places d'avant), interrupteur, moniteur
+## (_MONITOR_RINGS), plaque de marque, bouton et voyant du moniteur, ouïes (vraie carte). En rendu logiciel :
+## les mêmes formes dans la matière beige d'avant, sans ouïes.
+func _build_pc_shell(pcf: Node3D, soft: bool) -> void:
+	var plastic := _pc_plastic(soft)
+	var unit := MeshBuf.new()
+	_rr_sweep(unit, [[0.253, 0.058, 0.007, 0.22, 0.0], [0.26, 0.065, 0.011, 0.214, 0.0],
+		[0.26, 0.065, 0.011, -0.214, 0.0], [0.253, 0.058, 0.007, -0.22, 0.0]], "cfc",
+		Vector3.BACK, Vector3.FORWARD, Transform3D(Basis(), Vector3(0, 0.065, 0)), 4, _pc_tint)
+	_mesh_node(unit.mesh(), plastic, pcf, "UniteCentrale", true)
+	var mon := MeshBuf.new()
+	_rr_sweep(mon, _MONITOR_RINGS, "ffcfcfcffc", Vector3.BACK, Vector3.FORWARD,
+		Transform3D(Basis(), Vector3(0, MONITOR_Y, 0)), 3 if soft else 6, _pc_tint)
+	_mesh_node(mon.mesh(), plastic, pcf, "Moniteur", true)
+	# lecteur de disquettes 3½ dans une baie : façade sombre, fente (la disquette y entre : insert_floppy),
+	# voyant (led_mat, posé par _build_pc) et bouton d'éjection
+	var bezel := _plain(Color(0.16, 0.155, 0.15), 0.5)
+	var parts := [[Builder.box_mesh(Vector3(0.21, 0.04, 0.005)), _at(Vector3(-0.05, 0.066, 0.2215))]]
+	_merged(parts, bezel, pcf)
+	_box(Vector3(0.1, 0.008, 0.002), Vector3(-0.09, 0.075, 0.2245), mats.dark, false, pcf, 0.0)
+	# l'interrupteur (à la place du pavé sombre d'avant) et la rainure du capot
+	_box(Vector3(0.05, 0.02, 0.008), Vector3(0.17, 0.06, 0.222), mats.black_plastic, false, pcf)
+	_box(Vector3(0.012, 0.012, 0.004), Vector3(0.17, 0.06, 0.2265), mats.dark, false, pcf, 0.0)
+	_box(Vector3(0.5, 0.0016, 0.0012), Vector3(0, 0.112, 0.2203), mats.dark, false, pcf, 0.0)
+	# moniteur : plaque de marque (sombre, un filet d'aluminium), bouton marche, voyant vert
+	var mz := 0.222
+	var my := MONITOR_Y
+	_box(Vector3(0.062, 0.013, 0.0016), Vector3(-0.15, my + 0.03, mz + 0.0008), mats.dark, false, pcf, 0.0)
+	_box(Vector3(0.05, 0.0022, 0.0006), Vector3(-0.15, my + 0.0315, mz + 0.0019), mats.metal, false, pcf, 0.0)
+	_box(Vector3(0.024, 0.012, 0.007), Vector3(0.165, my + 0.03, mz + 0.0025), plastic, false, pcf)
+	for k in 2:
+		var knob := MeshInstance3D.new()
+		knob.mesh = Builder.cylinder_mesh(0.0065, 0.007, 0.006, 16)
+		knob.material_override = mats.black_plastic
+		knob.rotation.x = PI / 2.0
+		knob.position = Vector3(0.09 + 0.026 * k, my + 0.03, mz + 0.003)
+		knob.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+		pcf.add_child(knob)
+	_mon_led = _plain(Color(0.05, 0.12, 0.05), 0.35)
+	_mon_led.emission_enabled = true
+	_mon_led.emission = Color(0.35, 1.0, 0.3)
+	_mon_led.emission_energy_multiplier = 0.0
+	_box(Vector3(0.006, 0.004, 0.003), Vector3(0.138, my + 0.03, mz + 0.0012), _mon_led, false, pcf, 0.0)
+	if soft:
+		return
+	# ouïes : sur le dessus de l'entonnoir (plan entre ses anneaux 8 et 9) et sur la façade de l'unité
+	var r8: Array = _MONITOR_RINGS[8]
+	var r9: Array = _MONITOR_RINGS[9]
+	var y8: float = r8[4] + r8[1]
+	var y9: float = r9[4] + r9[1]
+	var z8: float = r8[3]
+	var z9: float = r9[3]
+	var k := (y8 - y9) / (z8 - z9)
+	var zc := -0.075
+	var vent := MeshInstance3D.new()
+	vent.name = "Ouies"
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(0.22, 0.2)
+	vent.mesh = pm
+	vent.material_override = _vent_mat(plastic)
+	vent.rotation.x = -atan(k)
+	vent.position = Vector3(0, my + y8 + (zc - z8) * k, zc) + Vector3(0, cos(atan(k)), -sin(atan(k))) * 0.0007
+	vent.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+	vent.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	pcf.add_child(vent)
+	var grille := MeshInstance3D.new()
+	grille.name = "OuiesUnite"
+	var gq := QuadMesh.new()
+	gq.size = Vector2(0.075, 0.034)
+	grille.mesh = gq
+	grille.material_override = vent.material_override
+	grille.position = Vector3(-0.2, 0.066, 0.2206)
+	grille.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+	grille.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	pcf.add_child(grille)
+
+
+## Bas du moniteur au-dessus du bureau (il repose sur l'unité centrale, haute de 0,13 m, sur deux patins).
+const MONITOR_Y := 0.134
+## Profil du moniteur, de la dalle vers l'arrière : [demi-largeur, demi-hauteur, rayon des coins, z, centre
+## en y] (repère du moniteur : son pied à y = 0, sa façade à z = 0,222 ; l'écran, centré à y = 0,215 et
+## z = 0,193, est posé par _build_pc). 0 : fond du creux, derrière le tube ; 1 : bord du cadre (il couvre le
+## bord du tube) ; 1→2 : pente intérieure ; 2→3 et 4→5 : chanfreins de 5 mm ; 3→4 : la façade ; 5→6 : le
+## capot ; 6→7 : chanfrein ; 7→8 : épaulement ; 8→9 : l'entonnoir (dessus en pente, ouïes) ; 9→10 : le dos.
+const _MONITOR_RINGS := [
+	[0.193, 0.148, 0.02, 0.187, 0.215],
+	[0.186, 0.141, 0.018, 0.205, 0.215],
+	[0.202, 0.157, 0.024, 0.2195, 0.215],
+	[0.206, 0.161, 0.026, 0.222, 0.215],
+	[0.225, 0.195, 0.026, 0.222, 0.2],
+	[0.23, 0.2, 0.031, 0.217, 0.2],
+	[0.23, 0.2, 0.031, 0.075, 0.2],
+	[0.224, 0.194, 0.028, 0.069, 0.199],
+	[0.205, 0.178, 0.03, 0.06, 0.196],
+	[0.172, 0.152, 0.045, -0.205, 0.162],
+	[0.165, 0.145, 0.04, -0.229, 0.161],
+]
+
+
+## Plastique de l'ordinateur et du clavier : ambientCG Plastic004 (CC0 ; grain dans la carte de normales),
+## teint en ivoire, satiné, jauni vers le haut par la couleur des sommets (_pc_tint), crasse fine. En rendu
+## logiciel : le beige d'avant (aucune variante de shader neuve).
+func _pc_plastic(soft: bool) -> StandardMaterial3D:
+	if soft or not ResourceLoader.exists("res://assets/textures/Plastic004/Plastic004_albedo.jpg"):
+		return mats.beige
+	if _plastic == null:
+		var m := Surfaces.pbr("Plastic004/Plastic004", 0.6, Color(1.55, 1.56, 1.34), 0.45, false, false, 0.52)
+		m.vertex_color_use_as_albedo = true
+		_plastic = _grimy(m, 2.0)
+	return _plastic
+
+
+## Jaunissement du plastique (couleur des sommets, multipliée à l'albédo) : ivoire en bas, jaune paille sur
+## le dessus du moniteur (la lumière et la chaleur du tube). p : repère « Ordinateur », y au-dessus du bureau.
+func _pc_tint(p: Vector3) -> Color:
+	var k := smoothstep(0.03, 0.56, p.y)
+	return Color(1.0, 0.985 - 0.04 * k, 0.95 - 0.13 * k)
+
+
+## MeshInstance3D d'un maillage construit, dans « parent ». gi : compté dans la cuisson VoxelGI.
+func _mesh_node(mesh: Mesh, mat: Material, parent: Node3D, nm: String, gi := false) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	mi.name = nm
+	mi.mesh = mesh
+	mi.material_override = mat
+	if not gi:
+		mi.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+	parent.add_child(mi)
+	return mi
+
+
+## Ouïes moulées : fentes en creux (albédo sombre au fond, relief tiré d'une carte de hauteur par
+## Image.bump_map_to_normal_map, comme Builder._normal_from_height), sur le plastique ivoire. Image faite
+## une fois (256 × 128, 14 fentes dans le sens de v).
+static var _vent_tex: Array = []
+
+
+func _vent_mat(plastic: StandardMaterial3D) -> StandardMaterial3D:
+	if _vent_tex.is_empty():
+		var w := 256
+		var hh := 128
+		var hgt := Image.create(w, hh, false, Image.FORMAT_RGBA8)
+		var alb := Image.create(w, hh, false, Image.FORMAT_RGBA8)
+		for y in hh:
+			for x in w:
+				# fentes de 7 px tous les 18 px, arrondies aux bouts, à 10 px des bords
+				var cx := fposmod(float(x) - 6.0, 18.0)
+				var dx := absf(cx - 4.5) / 3.5
+				var dy := maxf(0.0, maxf(14.0 - y, y - (hh - 14.0))) / 3.5
+				var inside := Vector2(dx, dy).length() if dy > 0.0 else dx
+				var e := 1.0 if x < 8 or x > w - 9 else smoothstep(0.75, 1.15, inside)
+				hgt.set_pixel(x, y, Color(e, e, e))
+				var a := lerpf(0.08, 1.0, e)
+				alb.set_pixel(x, y, Color(a, a, a))
+		hgt.bump_map_to_normal_map(6.0)
+		hgt.generate_mipmaps()
+		alb.generate_mipmaps()
+		_vent_tex = [ImageTexture.create_from_image(alb), ImageTexture.create_from_image(hgt)]
+	var m := StandardMaterial3D.new()
+	m.albedo_texture = _vent_tex[0]
+	# (couleur du dessus du moniteur : celle du plastique jauni, à plat)
+	var t := _pc_tint(Vector3(0, 0.5, 0))
+	var base := Color(0.66, 0.62, 0.52)
+	m.albedo_color = Color(base.r * t.r, base.g * t.g, base.b * t.b)
+	m.normal_enabled = true
+	m.normal_texture = _vent_tex[1]
+	m.normal_scale = 0.8
+	m.roughness = plastic.roughness
+	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+	return _grimy(m, 2.0)
+
+
+## Calotte d'écran : un rectangle de 2 hw × 2 hh bombé de « sag » au centre (bord plan, à z = 0), mêmes UV
+## qu'un QuadMesh (u vers la droite, v vers le bas), normales exactes, face vers +z.
+static func _dome_mesh(hw: float, hh: float, sag: float, nx := 20, ny := 16) -> ArrayMesh:
+	var buf := MeshBuf.new()
+	for j in ny + 1:
+		for i in nx + 1:
+			var u := float(i) / nx
+			var v := float(j) / ny
+			var px := (u - 0.5) * 2.0 * hw
+			var py := (0.5 - v) * 2.0 * hh
+			var fx := 1.0 - (px / hw) * (px / hw)
+			var fy := 1.0 - (py / hh) * (py / hh)
+			var dzx := sag * (-2.0 * px / (hw * hw)) * fy
+			var dzy := sag * fx * (-2.0 * py / (hh * hh))
+			buf.add(Vector3(px, py, sag * fx * fy), Vector3(-dzx, -dzy, 1.0).normalized(), Vector2(u, v))
+	for j in ny:
+		for i in nx:
+			var a := j * (nx + 1) + i
+			buf.tri(a, a + 1, a + nx + 2, Vector3.BACK)
+			buf.tri(a, a + nx + 2, a + nx + 1, Vector3.BACK)
+	return buf.mesh()
+
+
+## La vitre du tube, 3 mm devant le phosphore : verre presque noir et transparent, reflet net (sonde de la
+## pièce, lampes), fresnel aux bords, et une main grasse (ambientCG Fingerprints004, CC0) qui ne se voit que
+## dans le reflet (rugosité). Vraie carte seulement ; cachée en rétro (set_screen_glow_style).
+func _build_screen_glass() -> void:
+	var m := ShaderMaterial.new()
+	var sh := Shader.new()
+	sh.code = GLASS_SHADER
+	m.shader = sh
+	var prints := "res://assets/decals/acg/Fingerprints004_albedo.png"
+	if ResourceLoader.exists(prints):
+		m.set_shader_parameter("prints", load(prints))
+	screen_glass = MeshInstance3D.new()
+	screen_glass.name = "VitreEcran"
+	screen_glass.mesh = _dome_mesh(0.19, 0.145, 0.0155)
+	screen_glass.material_override = m
+	screen_glass.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	screen_glass.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+	screen_glass.position = screen_center + Vector3(0, 0, 0.003)
+	screen_glass.layers = Builder.layer_bit(LAYER_SCREEN_GLASS)
+	add_child(screen_glass)
+
+
+const GLASS_SHADER := """
+shader_type spatial;
+render_mode blend_premul_alpha, depth_draw_never, cull_back, specular_schlick_ggx;
+uniform sampler2D prints : hint_default_transparent, filter_linear_mipmap, repeat_disable;
+// la main : 0,2 m de large, posée en bas à droite de la dalle (mètres depuis le coin haut gauche)
+uniform vec2 print_at = vec2(0.17, 0.09);
+uniform float print_size = 0.2;
+void fragment() {
+	vec2 m = UV * vec2(0.38, 0.29);
+	vec2 pu = (m - print_at) / print_size;
+	float p = 0.0;
+	if (pu.x >= 0.0 && pu.x <= 1.0 && pu.y >= 0.0 && pu.y <= 1.0) {
+		p = texture(prints, pu).a;
+	}
+	vec2 e = abs(UV - 0.5) * 2.0;
+	float edge = smoothstep(0.75, 1.0, max(e.x, e.y));
+	float f = pow(1.0 - clamp(dot(NORMAL, VIEW), 0.0, 1.0), 5.0);
+	ALBEDO = vec3(0.012, 0.014, 0.014);
+	METALLIC = 0.0;
+	SPECULAR = 0.5;
+	ROUGHNESS = clamp(0.06 + p * 0.32 + edge * 0.12, 0.0, 1.0);
+	ALPHA = clamp(0.05 + f * 0.45 + p * 0.04 + edge * 0.06, 0.0, 1.0);
+}
+"""
+
+
+## Tampon de maillage (sommets, normales, UV, UV2, couleurs, indices) pour les coques modelées en code.
+## Chaque triangle est tourné vers la normale voulue (sens des aiguilles d'une montre vu de devant, comme
+## Godot l'attend).
+class MeshBuf:
+	var v := PackedVector3Array()
+	var n := PackedVector3Array()
+	var uv := PackedVector2Array()
+	var uv2 := PackedVector2Array()
+	var col := PackedColorArray()
+	var idx := PackedInt32Array()
+
+	func add(p: Vector3, nn: Vector3, t: Vector2, c := Color.WHITE, t2 := Vector2(-1.0, -1.0)) -> int:
+		v.append(p)
+		n.append(nn)
+		uv.append(t)
+		uv2.append(t2)
+		col.append(c)
+		return v.size() - 1
+
+	func tri(a: int, b: int, c: int, want: Vector3) -> void:
+		if (v[b] - v[a]).cross(v[c] - v[a]).dot(want) < 0.0:
+			idx.append_array([a, b, c])
+		else:
+			idx.append_array([a, c, b])
+
+	## Normales lissées d'après les triangles (pondérées par leur aire), pour les formes libres.
+	func smooth_normals() -> void:
+		for i in n.size():
+			n[i] = Vector3.ZERO
+		for t in range(0, idx.size(), 3):
+			var a := idx[t]
+			var b := idx[t + 1]
+			var c := idx[t + 2]
+			var f := -(v[b] - v[a]).cross(v[c] - v[a])
+			n[a] += f
+			n[b] += f
+			n[c] += f
+		for i in n.size():
+			n[i] = n[i].normalized() if n[i].length() > 1e-12 else Vector3.UP
+
+	func mesh(with_uv2 := false) -> ArrayMesh:
+		var arr := []
+		arr.resize(Mesh.ARRAY_MAX)
+		arr[Mesh.ARRAY_VERTEX] = v
+		arr[Mesh.ARRAY_NORMAL] = n
+		arr[Mesh.ARRAY_TEX_UV] = uv
+		if with_uv2:
+			arr[Mesh.ARRAY_TEX_UV2] = uv2
+		arr[Mesh.ARRAY_COLOR] = col
+		arr[Mesh.ARRAY_INDEX] = idx
+		var raw := ArrayMesh.new()
+		raw.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+		var st := SurfaceTool.new()
+		st.create_from(raw, 0)
+		st.generate_tangents()
+		return st.commit()
+
+
+## Coque balayée le long de rectangles arrondis. rings : [a, b, r, z, yc] = demi-largeur (x), demi-hauteur
+## (y), rayon des coins, position en z, centre en y. Le profil va de l'intérieur vers l'extérieur et de
+## l'avant (+z) vers l'arrière (fond d'un creux → bord → façade → flancs → dos) ; flip = true pour un profil
+## qui monte vers +z (touches, socle du clavier, une fois tournés). kinds : une lettre par bande, « f »
+## face plane (sa normale), « c » chanfrein (à chaque bout, la normale de la bande voisine ou du fond : la
+## lumière y glisse comme sur une arête arrondie, les faces restent planes). cap0, cap1 : normale d'un fond
+## plat au premier, au dernier anneau (Vector3.ZERO : pas de fond). xf : placement ; tint(xf * p) : couleur de
+## sommet ; uv2_cap(p) : UV2 des sommets du fond cap1 (légendes des touches), (-1, -1) ailleurs. UV : u =
+## abscisse le long du contour (m), v = longueur du profil (m). seg : segments par coin.
+static func _rr_sweep(buf: MeshBuf, rings: Array, kinds: String, cap0: Vector3, cap1: Vector3, xf := Transform3D(),
+		seg := 4, tint := Callable(), flip := false, uv2_cap := Callable()) -> void:
+	var nr := rings.size()
+	var m := 4 * (seg + 1)
+	var P: Array = []
+	var tc := PackedVector3Array()
+	tc.resize(m)
+	for i in nr:
+		var rg: Array = rings[i]
+		var a: float = rg[0]
+		var b: float = rg[1]
+		var r: float = minf(rg[2], minf(a, b))
+		var ring := PackedVector3Array()
+		ring.resize(m)
+		var j := 0
+		for k in 4:
+			var sx := 1.0 if k == 0 or k == 3 else -1.0
+			var sy := 1.0 if k < 2 else -1.0
+			for s in seg + 1:
+				var th := PI / 2.0 * (k + float(s) / seg)
+				ring[j] = Vector3(sx * (a - r) + r * cos(th), float(rg[4]) + sy * (b - r) + r * sin(th), float(rg[3]))
+				tc[j] = Vector3(-sin(th), cos(th), 0.0)
+				j += 1
+		P.append(ring)
+	var sg := -1.0 if flip else 1.0
+	var bn: Array = []
+	for i in nr - 1:
+		var lo: PackedVector3Array = P[i]
+		var hi: PackedVector3Array = P[i + 1]
+		var row := PackedVector3Array()
+		row.resize(m)
+		for j in m:
+			var nn := (hi[j] - lo[j]).cross(tc[j]) * sg
+			row[j] = nn.normalized() if nn.length() > 1e-10 else Vector3(tc[j].y, -tc[j].x, 0.0)
+		bn.append(row)
+	var vlen := PackedFloat32Array()
+	vlen.resize(nr)
+	vlen[0] = 0.0
+	for i in nr - 1:
+		var lo: PackedVector3Array = P[i]
+		var hi: PackedVector3Array = P[i + 1]
+		var s := 0.0
+		for j in m:
+			s += (hi[j] - lo[j]).length()
+		vlen[i + 1] = vlen[i] + s / m
+	var nb := xf.basis.orthonormalized()
+	for i in nr - 1:
+		var kind := kinds.substr(i, 1) if i < kinds.length() else "f"
+		var rows := [PackedInt32Array(), PackedInt32Array()]
+		for e in 2:
+			var ri := i + e
+			var ring: PackedVector3Array = P[ri]
+			var u := 0.0
+			var ids := PackedInt32Array()
+			for j in m + 1:
+				var jj := j % m
+				if j > 0:
+					u += ring[jj].distance_to(ring[j - 1])
+				var nn: Vector3 = bn[i][jj]
+				if kind == "c":
+					var other := i - 1 if e == 0 else i + 1
+					if other >= 0 and other < nr - 1:
+						nn = bn[other][jj]
+					elif e == 0 and cap0 != Vector3.ZERO:
+						nn = cap0
+					elif e == 1 and cap1 != Vector3.ZERO:
+						nn = cap1
+				var p := xf * ring[jj]
+				ids.append(buf.add(p, (nb * nn).normalized(), Vector2(u, vlen[ri]), tint.call(p) if tint.is_valid() else Color.WHITE))
+			rows[e] = ids
+		for j in m:
+			var want := nb * (bn[i][j] as Vector3)
+			var a0: int = rows[0][j]
+			var a1: int = rows[0][j + 1]
+			var b1: int = rows[1][j + 1]
+			var b0: int = rows[1][j]
+			buf.tri(a0, a1, b1, want)
+			buf.tri(a0, b1, b0, want)
+	for e in 2:
+		var dir: Vector3 = cap0 if e == 0 else cap1
+		if dir == Vector3.ZERO:
+			continue
+		var ri := 0 if e == 0 else nr - 1
+		var ring: PackedVector3Array = P[ri]
+		var rg: Array = rings[ri]
+		var ctr := Vector3(0.0, float(rg[4]), float(rg[3]))
+		var nn := (nb * dir).normalized()
+		var with2 := e == 1 and uv2_cap.is_valid()
+		var pc := xf * ctr
+		var c0 := buf.add(pc, nn, Vector2(ctr.x, ctr.y), tint.call(pc) if tint.is_valid() else Color.WHITE,
+			uv2_cap.call(ctr) if with2 else Vector2(-1.0, -1.0))
+		var ids := PackedInt32Array()
+		for j in m:
+			var p := xf * ring[j]
+			ids.append(buf.add(p, nn, Vector2(ring[j].x, ring[j].y), tint.call(p) if tint.is_valid() else Color.WHITE,
+				uv2_cap.call(ring[j]) if with2 else Vector2(-1.0, -1.0)))
+		for j in m:
+			buf.tri(c0, ids[j], ids[(j + 1) % m], nn)
 
 
 ## L'ordinateur de ta mère vu comme un appareil de la maison (« pc_manon ») : il n'est pas connecté,
@@ -1111,6 +1867,7 @@ func _build_lights() -> void:
 	screen_light.omni_range = 2.5
 	screen_light.omni_attenuation = 1.8
 	screen_light.shadow_enabled = true
+	screen_light.light_cull_mask = 0xFFFFF & ~Builder.layer_bit(LAYER_SCREEN_GLASS)
 	add_child(screen_light)
 	screen_light.global_position = screen_center + Vector3(0, 0.12, 0.7)
 	# plafonnier, éteint
@@ -1138,6 +1895,13 @@ func set_screen_glow_style(retro: bool) -> void:
 		screen_mat.set_shader_parameter("base_glow", 0.035 if retro else 0.012)
 		screen_mat.set_shader_parameter("vig_outer", 0.62 if retro else 0.95)
 		screen_mat.set_shader_parameter("vig_inner", 0.18 if retro else 0.45)
+		# (lot V2-MERE) rendu net : le phosphore au-dessus de 1 (le halo de l'image le fait irradier), un
+		# peu de halation, lignes de balayage sans moiré ; rétro : l'écran d'avant
+		screen_mat.set_shader_parameter("hdr_gain", 1.0 if retro else SCREEN_HDR_GAIN)
+		screen_mat.set_shader_parameter("halation", 0.0 if retro else SCREEN_HALATION)
+		screen_mat.set_shader_parameter("scan_aa", 0.0 if retro else 1.0)
+	if screen_glass:
+		screen_glass.visible = not retro
 
 
 func _build_dust() -> void:
@@ -1187,6 +1951,144 @@ func _build_dust() -> void:
 	p.draw_pass_1 = q
 	p.position = Vector3(0, H / 2.0, 0)
 	add_child(p)
+
+
+# ------------------------------------------------------------------ habillage différé (lot V2-MERE)
+
+## Objets de décor (Builder.detail) et usure (Wear) de la chambre : appelé par Main après la mesure de B16,
+## seulement avec une vraie carte graphique (R3). Rien d'interactif, aucune collision, rien sur le trajet
+## départ → bureau → armoire → porte : tout est posé sur des meubles ou contre les murs.
+func dress_details() -> void:
+	_detail_objects()
+	_wear_room()
+	if decor and decor.has_method("dress"):
+		decor.dress()
+
+
+func _detail_objects() -> void:
+	# un réveil mécanique sur la commode, arrêté lui aussi à 3 h 12 (le radio-réveil du chevet clignote)
+	var clk := detail("alarm_clock_01", Vector3(0.665, _dresser_top, 2.46), 194.0, Vector3.ZERO, {"sync": true})
+	if clk:
+		_set_clock_hands(clk, 3, 12, 41)
+	# trois cartes postales scotchées au mur, autour du tableau en liège
+	_postcard(4, Vector3(0.78, 1.84, -2.6 + 0.0035), -7.0)
+	_postcard(11, Vector3(0.72, 1.64, -2.6 + 0.0045), 5.0)
+	_postcard(17, Vector3(1.94, 1.76, -2.6 + 0.0035), 4.0)
+	# le baladeur, couché sur le chevet ; la manette rangée à côté des cassettes vidéo
+	var wk := detail("portable_cassette_player", Vector3(-2.84, _night_top + 0.021, 0.16), 0.0, Vector3.ZERO, {"sync": true})
+	if wk:
+		wk.rotation = Vector3(-PI / 2.0, deg_to_rad(104.0), 0.0)
+	detail("gamepad", Vector3(2.9, 0.762, -2.36), 200.0, Vector3(0.32, 0.0, 0.34), {"sync": true})
+	# un coussin carré à chevrons, debout contre la tête du lit, derrière l'oreiller (le coussin droit du
+	# modèle, tourné face à la pièce ; l'autre, couché, est caché)
+	var tp := detail("throw_pillows_01", Vector3(-2.64, 0.375, 0.9), 0.0, Vector3(0.8, 0.0, 0.0), {"sync": true})
+	if tp:
+		var p1 := tp.find_child("throw_pillows_01_pillow01", true, false) as Node3D
+		if p1:
+			p1.visible = false
+		var p2 := tp.find_child("throw_pillows_01_pillow02", true, false) as Node3D
+		if p2:
+			tp.rotation_degrees.y = 14.6
+			var b := _aabb_of(p2, self)
+			tp.position += Vector3(-2.66 - b.get_center().x, 0.0, 0.615 - b.position.z)
+	# câbles du clavier et de la souris, jusqu'à l'arrière de l'unité centrale (par sa droite)
+	if decor and decor.has_method("_tube"):
+		var t := desk_top
+		var cable := _grimy(_plain(Color(0.55, 0.53, 0.48), 0.55), 2.0)
+		decor._tube([Vector3(1.25, t + 0.012, -2.086), Vector3(1.4, t + 0.0035, -2.112), Vector3(1.495, t + 0.0035, -2.17),
+			Vector3(1.5, t + 0.0035, -2.4), Vector3(1.44, t + 0.03, -2.56)], 0.0032, cable)
+		decor._tube([Vector3(1.616, t + 0.01, -2.07), Vector3(1.6, t + 0.0032, -2.13), Vector3(1.54, t + 0.0032, -2.2),
+			Vector3(1.535, t + 0.0032, -2.42), Vector3(1.45, t + 0.04, -2.57)], 0.0026, cable)
+
+
+## Règle les aiguilles d'un réveil Poly Haven (alarm_clock_01 : nœuds « houd_hand », « minute_hand »,
+## « second_hand », tournant autour de leur origine, cadran vers +z) sur h:m:s.
+func _set_clock_hands(holder: Node3D, h: int, mnt: int, s: int) -> void:
+	var want := {"houd_hand": (float(h % 12) + mnt / 60.0) / 12.0, "minute_hand": (mnt + s / 60.0) / 60.0,
+		"second_hand": s / 60.0}
+	for nm in want:
+		var hand := holder.find_child(nm, true, false) as MeshInstance3D
+		if hand == null or hand.mesh == null:
+			continue
+		# la pointe : le sommet le plus loin de l'axe, dans le repère du cadran
+		var tip := Vector2.ZERO
+		for si in hand.mesh.get_surface_count():
+			var verts: PackedVector3Array = hand.mesh.surface_get_arrays(si)[Mesh.ARRAY_VERTEX]
+			for p in verts:
+				var q := hand.transform.basis * p
+				if Vector2(q.x, q.y).length() > tip.length():
+					tip = Vector2(q.x, q.y)
+		var now := atan2(tip.x, tip.y)          # angle depuis midi, sens des aiguilles d'une montre
+		hand.transform.basis = Basis(Vector3.BACK, now - TAU * float(want[nm])) * hand.transform.basis
+
+
+## Une carte postale de postcard_set_01 (Poly Haven ; la k-ième des 20), au mur en « pos » (centre de la
+## carte, face vers +z), penchée de « roll » degrés, deux bouts de ruban adhésif en haut.
+func _postcard(k: int, pos: Vector3, roll: float) -> void:
+	var h := detail("postcard_set_01", pos, 0.0, Vector3.ZERO, {"sync": true})
+	if h == null:
+		return
+	var keep := "postcard_%02d" % k
+	var card: Node3D = null
+	for n in h.find_children("postcard_*", "MeshInstance3D", true, false):
+		if String(n.name) == keep:
+			card = n as Node3D
+		else:
+			(n as Node3D).visible = false
+	var model := h.get_node_or_null("Modele") as Node3D
+	if card == null or model == null:
+		return
+	var box := _aabb_of(card, h)
+	model.position -= box.get_center()
+	h.rotation.z = deg_to_rad(roll)
+	if _tape_mat == null:
+		_tape_mat = _plain(Color(0.74, 0.7, 0.56), 0.5)
+	for sx in [-1.0, 1.0]:
+		var t := _box(Vector3(0.034, 0.012, 0.0006), Vector3(sx * (box.size.x / 2.0 - 0.01), box.size.y / 2.0 - 0.006, 0.0008), _tape_mat, false, h, 0.0)
+		t.rotation.z = sx * 0.6
+		t.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+
+## Usure de la chambre (Wear, lot V1-USURE) : crasse de pied de mur, coulures sous la fenêtre, traces de
+## doigts autour de l'interrupteur et des poignées de l'armoire, chemins usés (porte → bureau, porte → lit),
+## poussière sur l'appui de fenêtre et sur l'armoire. (Taches du plafond et moisissure : decor.dress.)
+## Rien en Basse ni en rendu logiciel (Wear.deco_on).
+func _wear_room() -> void:
+	if not Wear.deco_on():
+		return
+	Wear.wall_base(self, 0.22, {"gaps": [Rect2(-3.06, -2.6, 1.02, 0.6), Rect2(2.4, -2.6, 0.77, 0.46),
+		Rect2(1.97, -2.6, 0.3, 0.42)]})
+	var fz := (WIN_Z0 + WIN_Z1) / 2.0
+	# (l'eau blanchit le vernis sombre du lambris : des coulures plus claires que le bois)
+	var wood_leak := Color(0.85, 0.76, 0.63)
+	Wear.decal(self, "coulure", Vector3(-W / 2.0 + 0.012, 0.6, -1.06), Vector3.RIGHT, Vector3.UP, 0.3, 0.62,
+		{"world": true, "variant": 0, "color": wood_leak, "mix": 0.85})
+	Wear.decal(self, "coulure", Vector3(-W / 2.0 + 0.012, 0.66, 0.16), Vector3.RIGHT, Vector3.UP, 0.24, 0.5,
+		{"world": true, "variant": 3, "color": wood_leak, "mix": 0.75})
+	# traces de doigts : l'interrupteur (plaque et mur autour), les poignées des portes de l'armoire
+	Wear.decal(self, "traces_doigts", Vector3(W / 2.0 - 0.012, 1.24, 0.72), Vector3.LEFT, Vector3.UP, 0.2, 0.24,
+		{"world": true, "variant": 0, "color": Color(0.5, 0.46, 0.4), "mix": 0.45})
+	for d in wardrobe_doors:
+		var holder := d.get_node_or_null("Moulures") as Node3D
+		var dm := d as MeshInstance3D
+		if holder == null or dm == null or holder.scale.x == 0.0:
+			continue
+		var ab := dm.get_aabb()
+		var s := Vector3(1.0 / holder.scale.x, 1.0 / holder.scale.y, 1.0 / holder.scale.z)
+		var x0 := ab.position.x * s.x
+		var x1 := ab.end.x * s.x
+		# la charnière est à l'origine de la porte : la poignée, du côté opposé
+		var inner := x1 if absf(x0) < absf(x1) else x0
+		var c := Vector3(inner - signf(inner) * 0.07, ab.position.y * s.y + 0.74, 0.004)
+		Wear.decal(holder, "traces_doigts", c, Vector3.BACK, Vector3.UP, 0.16, 0.22,
+			{"variant": 0, "color": Color(0.45, 0.36, 0.3), "mix": 0.4, "depth": 0.03})
+	# chemins usés dans le vernis du parquet : de la porte au bureau, de la porte au lit (le long du tapis)
+	Wear.path(self, [Vector2(2.85, 1.42), Vector2(1.75, 1.5), Vector2(1.62, 0.3), Vector2(1.36, -1.28)], 0.5)
+	Wear.path(self, [Vector2(1.75, 1.55), Vector2(0.2, 1.63), Vector2(-1.85, 1.5)], 0.45)
+	# poussière : l'appui de la fenêtre, le dessus de l'armoire
+	Wear.decal(self, "poussiere", Vector3(-W / 2.0 + 0.1, WIN_Y0 - 0.002, fz), Vector3.UP, Vector3.RIGHT, 1.6, 0.24,
+		{"world": true, "alpha": 0.8})
+	Wear.decal(self, "poussiere", Vector3(-2.55, 2.14, -2.3), Vector3.UP, Vector3.BACK, 1.05, 0.6, {"world": true})
 
 
 # ------------------------------------------------------------------ actions
@@ -1325,14 +2227,25 @@ func face_scare(p: Node) -> void:
 		return
 	var cam: Camera3D = p.camera
 	var face: Node3D = (load("res://assets/models/face/LeePerrySmith.glb") as PackedScene).instantiate()
-	var mat := StandardMaterial3D.new()
-	mat.albedo_texture = load("res://assets/models/face/Map-COL.jpg")
-	mat.albedo_color = Color(0.55, 0.53, 0.5)
-	mat.roughness = 0.7
+	var soft := Builder.soft_render()
+	var mat: Material
+	if soft:
+		# (rendu logiciel : la matière d'avant, aucune variante de shader neuve pendant le sursaut)
+		var sm0 := StandardMaterial3D.new()
+		sm0.albedo_texture = load("res://assets/models/face/Map-COL.jpg")
+		sm0.albedo_color = Color(0.55, 0.53, 0.5)
+		sm0.roughness = 0.7
+		mat = sm0
+	else:
+		mat = _face_material()
 	for mi in face.find_children("*", "MeshInstance3D", true, false):
 		(mi as MeshInstance3D).material_override = mat
-	# orbites vides (repère du modèle scanné)
+	# orbites vides (repère du modèle scanné) ; vraie carte : plus profondes (le pourtour s'assombrit dans
+	# FACE_SHADER), et un fond humide qui accroche la lumière d'en dessous
 	var black := _plain(Color(0.0, 0.0, 0.0), 1.0)
+	if not soft:
+		black = _plain(Color(0.006, 0.004, 0.004), 0.07)
+		black.metallic_specular = 0.9
 	for ex in [-0.70, 0.52]:
 		var eye := MeshInstance3D.new()
 		var sm := SphereMesh.new()
@@ -1340,7 +2253,7 @@ func face_scare(p: Node) -> void:
 		sm.height = 0.42
 		eye.mesh = sm
 		eye.material_override = black
-		eye.position = Vector3(ex, 1.68, 1.98)
+		eye.position = Vector3(ex, 1.68, 1.98 if soft else 1.9)
 		face.add_child(eye)
 	var under := OmniLight3D.new()
 	under.light_color = Color(1.0, 0.82, 0.75)
@@ -1366,18 +2279,20 @@ func face_scare(p: Node) -> void:
 	var post := get_tree().get_first_node_in_group("retro")
 	if post:
 		post.material.set_shader_parameter("corruption", 1.0)
-	var head: Node3D = p.head
-	var base := head.position
+	# la secousse de la tête : la couche « présence » de la caméra (lot V2-PRESENCE ; sans effet tant
+	# qu'elle n'existe pas). Jamais en « Sursauts réduits » (ce chemin-là s'arrête plus haut).
+	get_tree().call_group("presence", "add_trauma", 1.0, true)
 	var t := 0.0
 	while t < 1.0:
 		face.global_position -= fwd * 0.006   # il avance
 		under.light_energy = 0.9 if rng.randf() < 0.65 else 0.15
 		if not ceiling_dead:
 			ceiling_light.light_energy = 2.5 if rng.randf() < 0.5 else 0.2
-		head.position = base + Vector3(rng.randf_range(-1, 1), rng.randf_range(-1, 1), 0) * 0.012 * (1.0 - t)
+		# (les deux tirages de l'ancienne secousse, gardés : la suite des tirages ne change pas)
+		rng.randf_range(-1, 1)
+		rng.randf_range(-1, 1)
 		await get_tree().create_timer(0.04, false).timeout
 		t += 0.04
-	head.position = base
 	face.visible = false
 	screen_light.light_energy = screen_e
 	if post:
@@ -1390,6 +2305,52 @@ func face_scare(p: Node) -> void:
 	var y2: float = p.yaw
 	back.tween_method(func(k: float) -> void: p.set_look(lerpf(y2, p.seat_yaw, k), lerpf(0.02, -0.05, k)), 0.0, 1.0, 1.4)
 	await back.finished
+
+## La peau du visage, vraie carte (lot V2-MERE) : la carte de normales du scan (déjà livrée), rugosité
+## de 0,32 (front, nez : la peau grasse luit) à 0,5, orbites creusées (le pourtour des yeux s'assombrit), le
+## cou fondu dans le noir (plus de disque coupé sous les épaules) ; transluminescence de la peau (passe
+## plein écran) seulement à partir d'Élevée, ni en rendu logiciel, ni en rétro. Repère du modèle scanné
+## (non mis à l'échelle) : yeux en (-0,70 ; 1,68) et (0,52 ; 1,68), haut du crâne à y = 4, épaules à -4.
+func _face_material() -> ShaderMaterial:
+	var sss := Qualite.extras_on() and Qualite.at_least(Qualite.ELEVEE)
+	var sh := Shader.new()
+	sh.code = FACE_SHADER.replace("{MODE}", ", sss_mode_skin" if sss else "") \
+		.replace("{SSS}", "SSS_STRENGTH = 0.55 * fade;" if sss else "")
+	var m := ShaderMaterial.new()
+	m.shader = sh
+	m.set_shader_parameter("albedo_tex", load("res://assets/models/face/Map-COL.jpg"))
+	m.set_shader_parameter("normal_tex", load("res://assets/models/face/Infinite-Level_02_Tangent_SmoothUV.jpg"))
+	return m
+
+
+const FACE_SHADER := """
+shader_type spatial;
+render_mode cull_back, diffuse_burley, specular_schlick_ggx{MODE};
+uniform sampler2D albedo_tex : source_color, filter_linear_mipmap;
+uniform sampler2D normal_tex : hint_normal, filter_linear_mipmap;
+uniform vec3 tint = vec3(0.55, 0.53, 0.5);
+uniform vec3 eye_l = vec3(-0.7, 1.68, 1.95);
+uniform vec3 eye_r = vec3(0.52, 1.68, 1.95);
+uniform vec2 neck = vec2(-1.75, -0.7);
+varying vec3 obj;
+void vertex() {
+	obj = VERTEX;
+}
+void fragment() {
+	vec3 a = texture(albedo_tex, UV).rgb * tint;
+	float d = min(distance(obj, eye_l), distance(obj, eye_r));
+	float sock = smoothstep(0.3, 1.05, d);
+	float fade = smoothstep(neck.x, neck.y, obj.y);
+	ALBEDO = a * mix(0.1, 1.0, sock) * fade;
+	NORMAL_MAP = texture(normal_tex, UV).rgb;
+	ROUGHNESS = clamp(mix(0.32, 0.5, smoothstep(1.2, 3.5, abs(obj.y - 1.2))) + (1.0 - fade) * 0.4, 0.0, 1.0);
+	SPECULAR = 0.5 * fade * mix(0.3, 1.0, sock);
+	AO = mix(0.3, 1.0, sock);
+	AO_LIGHT_AFFECT = 0.7;
+	{SSS}
+}
+"""
+
 
 ## Fin de la séance : la clé de la chambre et un mot d'Albert glissent sous la porte.
 func key_under_door() -> void:

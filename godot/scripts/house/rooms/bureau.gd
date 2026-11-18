@@ -21,6 +21,7 @@ extends HouseRoom
 ## « portable_verrouille », « portable_lu », « cameras_regardees », « lumiere » {room, on}.
 ## (L'imprimante émet elle-même « page_imprimee » et « page_prise » {id}.)
 
+const COULOIR := preload("res://scripts/house/rooms/couloir.gd")   # _tube_mesh, _round_corners (câble réseau)
 const XW := 4.812         # faces du papier peint
 const XE := 9.188
 const ZN := 2.012
@@ -1026,12 +1027,28 @@ func unplug_box() -> void:
 
 
 func _network_cable() -> void:
-	# du seuil de P7 (le morceau du couloir s'arrête là) le long du mur ouest, puis du mur sud, jusqu'à la box
-	var y := 0.008
+	# du seuil de P7 (le morceau du couloir s'arrête là) le long du mur ouest, puis du mur sud, jusqu'à la box ;
+	# le même câble que dans le couloir (couloir.gd : tube rond de 6 mm blanc cassé, coudes arrondis, posé au sol)
+	var r := 0.003
+	var y := r + 0.0005
 	var xw := XW + 0.059      # devant la plinthe
 	var pts := [Vector3(4.81, 0.015, CABLE_Z), Vector3(4.83, y, CABLE_Z), Vector3(xw, y, CABLE_Z), Vector3(xw, y, 6.2),
 		Vector3(5.38, y, 6.2), Vector3(5.41, 0.016, 6.17)]
-	_cable(pts, Vector3.UP, [Vector3(xw, y, 4.7), Vector3(xw, y, 5.4), Vector3(xw, y, 6.0), Vector3(5.1, y, 6.2)], 0.003)
+	var cable := MeshInstance3D.new()
+	cable.name = "Cable"
+	cable.mesh = COULOIR._tube_mesh(COULOIR._round_corners(PackedVector3Array(pts)), r, 6 if Builder.soft_render() else 8)
+	cable.material_override = _plain(Color(0.62, 0.62, 0.59), 0.5)
+	add_child(cable, true)
+	# scotch gris aux mêmes endroits (un tirage chacun, dans le même ordre qu'avant)
+	for p in [Vector3(xw, y, 4.7), Vector3(xw, y, 5.4), Vector3(xw, y, 6.0), Vector3(5.1, y, 6.2)]:
+		var best := 0
+		var best_d := INF
+		for i in pts.size() - 1:
+			var dd := Haunt._seg_dist(p, pts[i], pts[i + 1])
+			if dd < best_d:
+				best_d = dd
+				best = i
+		_tape(p, (pts[best + 1] - pts[best]).normalized(), Vector3.UP, r)
 	_box(Vector3(0.016, 0.012, 0.02), Vector3(5.42, 0.018, 6.16), _plain(Color(0.85, 0.87, 0.9), 0.2))
 	_look("Regarder le câble", Vector3(0.12, 0.08, 1.2), Vector3(xw, 0.04, 5.5), TXT_CABLE, 2.0)
 
