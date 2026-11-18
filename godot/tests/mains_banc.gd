@@ -14,7 +14,8 @@ extends Node
 ## (médianes autour des points « Pouce » et « Dos » du modèle) et teinte médiane de la peau entre 10° et
 ## 30° ; M10 (chambre_jour) manche / peau ≤ 1,2 en luminance. AVEC et SANS : M8 (regard_bas, inventaire,
 ## mur_20cm, devant_pc) la lampe éclaire autant avec les mains : hors de la vue (masque dilaté), luminance
-## moyenne et part de l'image éclairée (L > 60/255) à ± 10 % de la capture sans les mains.
+## moyenne à ± 10 % de la capture sans les mains, part de l'image éclairée (L > 60/255) pas moins de -10 %
+## (elle peut croître : le rond de lumière n'est plus caché sous la main ; jugée si elle fait ≥ 2 %).
 ## « --retro » : style rétro (pixels) pour ce lancement.
 ## Chaque capture : <vue>_avec.png, <vue>_sans.png ; journal « MAINS <vue> … ».
 
@@ -26,6 +27,7 @@ var player: CharacterBody3D
 var shots := ""
 var _mask_name := ""
 var fails := 0
+var _diag: Array = []          # (diagnostic : « glow », « ssr », « ssao », « ampoule » coupés)
 
 
 func _ready() -> void:
@@ -58,6 +60,8 @@ func _run() -> void:
 			seul = a.substr(7)
 		elif a == "--retro":
 			Game.style_retro = true
+		elif a.begins_with("--diag="):
+			_diag = Array(a.substr(7).split(",", false))
 	if Game.style_retro:
 		Game.apply_settings()
 	main = MAIN.instantiate()
@@ -68,6 +72,16 @@ func _run() -> void:
 	if main.reflections_busy():
 		await main.reflections_settled
 	Viewmodel.figee = true
+	if _diag.has("glow"):
+		main.env.glow_enabled = false
+	if _diag.has("ssr"):
+		main.env.ssr_enabled = false
+	if _diag.has("ssao"):
+		main.env.ssao_enabled = false
+	if _diag.has("ampoule") and player.viewmodel.bulb_mat:
+		player.viewmodel.bulb_mat.emission_enabled = false
+	if not _diag.is_empty():
+		print("MAINS diagnostic : coupé ", _diag)
 	main.menu.hide_all()
 	main.hud.fade.color.a = 0.0
 	Game.phase = "room"
@@ -245,7 +259,11 @@ func _view(v: String, seul: String) -> void:
 		var da: float = a.lit / maxf(b.lit, 0.001) - 1.0
 		print("MAINS %s faisceau : luminance hors de la vue %.1f / %.1f (%+.0f %%), part éclairée %.1f %% / %.1f %% (%+.0f %%)" % [
 			v, a.lum * 255.0, b.lum * 255.0, dl * 100.0, a.lit * 100.0, b.lit * 100.0, da * 100.0])
-		check("M8 %s : la lampe éclaire autant avec les mains (± 10 %%)" % v, absf(dl) <= 0.10 and (absf(da) <= 0.10 or absf(a.lit - b.lit) < 0.004),
+		# (luminance à ± 10 % ; part éclairée : pas moins de -10 %. Elle peut croître : le rond de lumière,
+		# qui vise le point visé par la lampe, n'est plus caché sous la main en bas à droite. Part éclairée
+		# jugée seulement si elle fait au moins 2 % de l'image sans les mains : en dessous, quelques pixels
+		# au-dessus du seuil font ± 40 %)
+		check("M8 %s : la lampe éclaire autant avec les mains (± 10 %%)" % v, absf(dl) <= 0.10 and (da >= -0.10 or b.lit < 0.02),
 			"luminance %+.0f %%, part éclairée %+.0f %%" % [dl * 100.0, da * 100.0])
 	Game.mains_visibles = true
 

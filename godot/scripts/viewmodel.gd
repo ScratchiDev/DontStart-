@@ -35,8 +35,8 @@ extends Node3D
 ## regard vers le sol, recul devant un mur, main baissée quand un obstacle est tout près du poing.
 ##
 ## La lampe du joueur (SpotLight3D) : l'axe de la lampe à l'écran vise le centre de l'image (à 3-5 m) ;
-## la lumière vise ce même point, sur l'axe « tête de la lampe → point visé », mais RECULÉE derrière la
-## tête jusqu'à la profondeur de sa place d'origine (sous la caméra). Le rond de lumière, sa taille et son
+## la lumière vise ce même point depuis sa place d'origine (sous la caméra), qui est sur le prolongement
+## de cet axe, ~0,6 m derrière la tête de la lampe (à ~5 cm près). Le rond de lumière, sa taille et son
 ## énergie sont donc ceux de la 0.3.3 (mains cachées), quelle que soit la pose de la main : partie de la
 ## tête (60 cm devant l'œil), elle éclairait deux fois moins de surface en regardant le sol et brûlait un
 ## mur proche. La tête de la lampe reste l'origine visible (ampoule, verre). Elle n'éclaire pas la main.
@@ -69,8 +69,8 @@ const LOWER_POS := Vector3(-0.015, -0.035, -0.02)
 const LOWER_ROT := Vector3(-26.0, 14.0, -4.0)
 ## Regard vers le sol (tangage de la caméra de -25° à -60°) : la lampe accompagne le regard (un peu plus
 ## bas et en avant ; à peine inclinée, l'axe reste près du centre de l'image).
-const LOOK_DOWN_POS := Vector3(-0.01, 0.03, -0.01)
-const LOOK_DOWN_ROT := Vector3(2.0, 0.0, 0.0)
+const LOOK_DOWN_POS := Vector3(0.0, 0.012, 0.0)
+const LOOK_DOWN_ROT := Vector3(0.0, 0.0, 0.0)
 const Z_CLIP := 0.05
 const FOV := 62.0
 ## Distance du point visé par le faisceau (le centre de l'image).
@@ -94,7 +94,10 @@ const BAL_EVERY := 10
 const BAL_GAIN_MAX := 12.0
 const BAL_LOW := 0.9
 const BAL_HIGH := 1.7
-const BAL_CONTRAST := 2.2
+const BAL_CONTRAST := 1.9
+## Plancher de la luminance affichée du dos de la main, lampe allumée (× 0,4 éteinte), et plafond.
+const BAL_FLOOR := 0.11
+const BAL_CEIL := 0.55
 ## Pose figée (bancs de captures) ; l'autotest fige aussi la pose.
 static var figee := false
 
@@ -128,6 +131,7 @@ var _tints := {}                       # teinte des matières touchées par le f
 var _beam_tint := Color(0.8, 0.7, 0.6)
 var _beam_dist := INF
 var _sss_gain := 1.0
+var _base_rot := Vector3.ZERO      # rotation de la pose sans les petits mouvements (retard, marche, souffle, peur)
 # équilibre mesuré sur l'image
 var _rd: RenderingDevice
 var _atlas := RID()
@@ -332,7 +336,7 @@ func _update_proxies(delta: float) -> void:
 		var p := proxies[k]
 		p.global_position = fist + dir * d2
 		p.omni_range = d2 + 1.2
-		p.light_color = _soft_color(l.light_color, 0.5)
+		p.light_color = _soft_color(l.light_color, 0.7)
 		var want := minf(float(c[0]) / maxf(_att(d2, p.omni_range, 1.0), 0.0001), PROXY_MAX_FACTOR * l.light_energy) * _bal_cap
 		p.light_energy = want if figee or Game.autotest else lerpf(p.light_energy, want, 1.0 - exp(-10.0 * delta))
 		p.visible = true
@@ -353,7 +357,7 @@ func _update_proxies(delta: float) -> void:
 	var col := base
 	if amb_w > 0.0:
 		col = base.lerp(amb / amb_w, clampf(amb_w * 2.0, 0.0, 0.6))
-	fill.light_color = _soft_color(Color(col.r, col.g, col.b), 0.3).lightened(0.05)
+	fill.light_color = _soft_color(Color(col.r, col.g, col.b), 0.6).lightened(0.05)
 	fill.light_energy = (0.07 * lvl + 0.05 * clampf(amb_w, 0.0, 1.0)) * _bal_gain
 	fill.visible = true
 	_limit_proxies()
@@ -366,25 +370,19 @@ static func _soft_color(c: Color, k: float) -> Color:
 	return Color(c.r, c.g, c.b).lerp(Color(l, l, l), k)
 
 
-## Aucune lumière de la vue (remplaçantes, rebond) ne donne à la main plus de 2 fois la suivante
-## (l'appoint compte) : pas de pouce brûlant à côté d'un dos de main noir.
+## Aucune lumière de la vue (remplaçantes, rebond) ne donne à la main plus de 2 fois l'appoint, qui
+## éclaire tout ce que l'œil voit de la main : l'appoint monte à la moitié de la plus forte (on ne baisse
+## pas la plus forte : la main resterait noire la nuit). Pas de pouce brûlant à côté d'un dos noir.
 func _limit_proxies() -> void:
 	var fist := pivot.global_position
-	var recv := []
-	for l: OmniLight3D in proxies + [bounce, fill]:
+	var top := 0.0
+	for l: OmniLight3D in proxies + [bounce]:
 		if not l.visible or l.light_energy <= 0.0:
 			continue
-		var r := l.light_energy * _att(fist.distance_to(l.global_position), l.omni_range, l.omni_attenuation)
-		recv.append([r, l])
-	if recv.size() < 2:
-		return
-	recv.sort_custom(func(a, b): return a[0] > b[0])
-	for i in range(recv.size() - 1):
-		var l: OmniLight3D = recv[i][1]
-		var nxt: float = recv[i + 1][0]
-		if l != fill and float(recv[i][0]) > 2.0 * nxt and nxt > 0.0:
-			l.light_energy *= 2.0 * nxt / float(recv[i][0])
-			recv[i][0] = 2.0 * nxt
+		top = maxf(top, l.light_energy * _att(fist.distance_to(l.global_position), l.omni_range, l.omni_attenuation))
+	var fa := _att(fist.distance_to(fill.global_position), fill.omni_range, fill.omni_attenuation)
+	if fa > 0.0 and fill.light_energy * fa < top * 0.5:
+		fill.light_energy = top * 0.5 / fa
 
 
 # ------------------------------------------------------------------ matières
@@ -654,6 +652,7 @@ func _process(delta: float) -> void:
 	rot += Vector3(rad_to_deg(_lag.y), rad_to_deg(_lag.x), rad_to_deg(_lag.x) * 0.6)
 	pivot.position = pos
 	pivot.rotation_degrees = rot
+	_base_rot = REST_ROT.lerp(REST_ROT + LOWER_ROT, lw) + LOOK_DOWN_ROT * dw + Vector3(8.0, 6.0, 0.0) * _retreat
 	_update_sss()
 	_update_light(on, wall)
 	_update_proxies(delta)
@@ -742,32 +741,31 @@ func _tint_of(collider: Object) -> Color:
 	return c
 
 
-## La lampe du joueur vise le centre de l'image ; elle est posée sur l'axe « tête de la lampe → point
-## visé », reculée jusqu'à la profondeur de sa place d'origine (sous la caméra) : même rond de lumière
-## que mains cachées. Sans traverser un mur ; elle n'éclaire pas la main (couche de la vue retirée).
+## La lampe du joueur vise le point visé par la lampe (le centre de l'image à AIM_DIST) depuis sa place
+## d'origine (sous la caméra), qui est sur le prolongement de l'axe de la lampe, ~0,6 m derrière sa tête :
+## même rond de lumière que mains cachées. Elle n'éclaire pas la main (couche de la vue retirée).
 func _update_light(on: bool, wall: float) -> void:
 	if light == null or head == null:
 		return
 	var cam := camera.global_transform
-	var hp := head.global_position
-	# (la tête de la lampe peut être au-delà d'un mur tout proche : on reste de ce côté)
+	var head_p := head.global_position
+	var hp := head_p
+	# (la tête de la lampe peut être au-delà d'un mur tout proche : le rayon du rebond part de ce côté)
 	var hit := _ray_hits(cam.origin, hp)
 	if not hit.is_empty():
 		hp = cam.origin + (hit.position - cam.origin) * 0.85
 	var fwd := -cam.basis.z
-	# le faisceau suit un peu les mouvements de la main (retard, marche, peur)
-	var anim := pivot.transform.basis * Basis.from_euler(REST_ROT * (PI / 180.0)).inverse()
+	# le faisceau suit un peu les petits mouvements de la main (retard, marche, souffle, peur), pas la main
+	# baissée devant un obstacle ni le bras rentré : il reste où il serait mains cachées
+	var anim := pivot.transform.basis * Basis.from_euler(_base_rot * (PI / 180.0)).inverse()
 	var dir := (cam.basis * (anim * (cam.basis.inverse() * fwd))).normalized()
 	dir = fwd.lerp(dir, 0.6).normalized()
 	var aim := cam.origin + dir * AIM_DIST
 	var up := cam.basis.y
-	var axis := (aim - hp).normalized()
-	var depth_rest := (cam * light_rest.origin - cam.origin).dot(fwd)
-	var back := ((hp - cam.origin).dot(fwd) - depth_rest) / maxf(axis.dot(fwd), 0.3)
-	var lp := hp - axis * maxf(back, 0.0)
-	var h2 := _ray_hits(cam.origin, lp)
-	if not h2.is_empty():
-		lp = cam.origin + (h2.position - cam.origin) * 0.8
+	# la lumière : à sa place d'origine (sous la caméra, sur le prolongement de l'axe de la lampe à ~5 cm
+	# près : l'axe tête → point visé, reculé de ~0,6 m, y passe), visant le point visé par la lampe. Même
+	# rond de lumière que mains cachées, même quand la main se baisse devant un mur.
+	var lp := cam * light_rest.origin
 	light.global_transform = Transform3D(Basis.looking_at(aim - lp, up), lp)
 	light.light_cull_mask = light_mask_rest & ~(1 << (LAYER - 1))
 	# l'ampoule et le rebond sur la main suivent la puissance de la lampe
@@ -781,14 +779,14 @@ func _update_light(on: bool, wall: float) -> void:
 		_beam_dist = INF
 	else:
 		_beam_dist = hp.distance_to(bh.position)
-		_beam_tint = _beam_tint.lerp(_soft_color(_tint_of(bh.collider), 0.5), 0.25 if not (figee or Game.autotest) else 1.0)
+		_beam_tint = _beam_tint.lerp(_soft_color(_tint_of(bh.collider), 0.7), 0.25 if not (figee or Game.autotest) else 1.0)
 	var k := 0.0 if _beam_dist == INF else clampf(0.45 / (_beam_dist * _beam_dist + 0.2), 0.0, 1.0)
 	var near := clampf(1.0 - (wall - 0.3) / 1.6, 0.0, 1.0) if wall < INF else 0.0
 	# (la lumière revient de là où le faisceau éclaire : devant la main, un peu au-dessus ; elle rase le
 	# dos de la main et frappe les jointures et les doigts repliés)
 	var bdir := (aim - hp).normalized()
 	bounce.global_position = pivot.global_position + bdir * 0.38 + cam.basis.y * 0.10 - cam.basis.x * 0.04
-	var lc := light.light_color
+	var lc := _soft_color(light.light_color, 0.35)
 	bounce.light_color = Color(lc.r * _beam_tint.r, lc.g * _beam_tint.g, lc.b * _beam_tint.b).lightened(0.1)
 	bounce.light_energy = (0.22 + 0.4 * maxf(k, near)) * clampf(f, 0.0, 1.5) * lerpf(1.0, _bal_cap, 0.7)
 	bounce.visible = bounce.light_energy > 0.0005
@@ -982,19 +980,28 @@ func _balance_apply(data: PackedByteArray, pts: Array, fmt: int, frozen: bool, d
 	var lo := back if thumb < 0.0 else minf(back, thumb)
 	var hi := back if thumb < 0.0 else maxf(back, thumb)
 	var contrast := hi / maxf(lo, 0.008)
-	if back < BAL_LOW * sc:
-		want = BAL_LOW * sc / maxf(back, 0.01)
-	elif back > BAL_HIGH * sc and back > 0.06:
-		want = BAL_HIGH * sc / back
+	# (plancher absolu : lampe allumée, la main se lit toujours, même devant un fond noir)
+	var floor_l := BAL_FLOOR if bool(player.get("flash_on")) else BAL_FLOOR * 0.4
+	var low := maxf(BAL_LOW * sc, floor_l)
+	if back < low:
+		want = low / maxf(back, 0.01)
+	elif back > maxf(BAL_HIGH * sc, floor_l * 1.5) and back > 0.06:
+		want = maxf(BAL_HIGH * sc, floor_l * 1.5) / back
+	# (plafond absolu : une main trop claire, toute proche, fait un halo (glow) sur toute l'image)
+	if back > BAL_CEIL:
+		want = minf(want, BAL_CEIL / back)
 	if contrast > BAL_CONTRAST:
 		# (trop d'écart : on baisse d'abord les remplaçantes et le rebond ; l'appoint ne monte que si le dos
 		# de la main est aussi plus sombre que la scène)
 		_bal_cap = maxf(_bal_cap * 0.85, 0.3)
-		if back < BAL_LOW * sc or _bal_cap <= 0.31:
+		if back < low or _bal_cap <= 0.31:
 			want = maxf(want, minf(contrast / BAL_CONTRAST, 1.6))
-	else:
+	elif want >= 1.0:
 		_bal_cap = minf(_bal_cap * 1.05, 1.0)
 	# (dans la bande : l'appoint redescend doucement, il reste au plus bas qui suffit)
 	var step := clampf(pow(want, 0.75), 0.7, 1.45) if want != 1.0 else 0.97
+	# (trop clair alors que l'appoint est déjà au plus bas : les remplaçantes et le rebond baissent)
+	if want < 1.0 and _bal_gain * step < 1.0:
+		_bal_cap = clampf(_bal_cap * step, 0.3, 1.0)
 	_bal_gain = clampf(_bal_gain * step, 1.0, BAL_GAIN_MAX)
 	bal_stats = {"scene": sc, "dos": back, "pouce": thumb, "gain": _bal_gain, "cap": _bal_cap, "ecart": contrast}

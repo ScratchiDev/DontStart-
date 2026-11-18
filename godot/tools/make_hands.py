@@ -1475,10 +1475,11 @@ def ambient_occlusion(points, normals, occ_V, occ_T, rays=48, dist=0.05, seed=1,
 # ----------------------------------------------------------------------------- la peau
 
 SKIN = {
-    # couleurs sRGB : dos de la main, paume, rougeurs (articulations, pulpe), ongle
-    'alexandre': dict(dos=(190, 152, 134), paume=(208, 172, 156), rouge=(182, 128, 112), ongle=(210, 168, 160),
+    # couleurs sRGB : dos de la main, paume, rougeurs (articulations, pulpe), ongle (teinte du dos ≈ 16° :
+    # sous la lampe chaude, la peau reste entre 15° et 30°, pas jaune)
+    'alexandre': dict(dos=(192, 149, 133), paume=(210, 169, 155), rouge=(182, 124, 110), ongle=(210, 166, 160),
                       veines=1.0, taches=14, seed=11),
-    'aurelia': dict(dos=(204, 166, 150), paume=(218, 184, 170), rouge=(194, 138, 126), ongle=(218, 176, 170),
+    'aurelia': dict(dos=(206, 163, 149), paume=(220, 181, 169), rouge=(194, 134, 124), ongle=(218, 174, 170),
                     veines=0.6, taches=8, seed=23, bord=0.985,
                     vernis=(118, 20, 38)),     # vernis cerise écaillé (une ado des années 90)
 }
