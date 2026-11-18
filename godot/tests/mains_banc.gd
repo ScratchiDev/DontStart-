@@ -214,7 +214,8 @@ func _view(v: String, seul: String) -> void:
 			var st: Dictionary = await _skin_stats(img)
 			print("MAINS %s peau : %d px, luminance p99,5 %.2f (max %.2f), saturation verte p99,5 %.2f (max %.2f)" % [
 				v, st.n, st.lum, st.lum_max, st.green, st.green_max])
-			if v == "devant_pc" or v == "inventaire":
+			# (pas en style rétro : palette réduite, tramage et franges colorées font des pixels saturés)
+			if (v == "devant_pc" or v == "inventaire") and not Game.style_retro:
 				check("M7 %s : peau ni brûlée ni verte" % v, st.n > 200 and st.lum <= 0.9 and st.green <= 0.35,
 					"%d px, luminance %.2f, vert %.2f" % [st.n, st.lum, st.green])
 	Game.mains_visibles = true

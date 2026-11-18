@@ -856,7 +856,7 @@ def build_sleeve(center, axis, e1, e2, rx, ry, length=0.42, cuff=0.055, seed=3, 
 
 # ----------------------------------------------------------------------------- le bracelet (Aurèlia)
 
-def build_bracelet(V, center, axis, e1, e2, along0=-0.0015, width=0.0068, thick=0.0024, slack=0.0009, nseg=192, ntube=16):
+def build_bracelet(V, center, axis, e1, e2, along0=0.0025, width=0.0068, thick=0.0024, slack=0.0009, nseg=192, ntube=16):
     """Bracelet brésilien (fils noués à chevrons) autour du poignet, juste avant le bord-côte de la manche.
     V : peau posée (repère de la vue) ; center : centre de la section du poignet ; axis : vers le coude ;
     along0 : position du bracelet le long de l'axe (m, < 0 = vers le coude). Le bracelet suit l'enveloppe
