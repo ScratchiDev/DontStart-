@@ -83,9 +83,12 @@ VARIANTES = {
                       hand=[('armslegs/r-hand-fingers-diameter-decr.target', 0.10)],
                       longueur=0.186),     # main de garçon de 16 ans, poignet → bout du majeur (m)
     'aurelia': dict(gender='female', young=0.58, minweight=0.55, minmuscle=0.35, maxmuscle=0.0,
-                    hand=[('armslegs/r-hand-fingers-diameter-decr.target', 0.45),
-                          ('armslegs/r-hand-fingers-length-incr.target', 0.20)],
-                    longueur=0.171),
+                    hand=[('armslegs/r-hand-fingers-diameter-decr.target', 0.95),
+                          ('armslegs/r-hand-fingers-length-incr.target', 0.30),
+                          ('armslegs/r-lowerarm-scale-horiz-decr.target', 0.55),
+                          ('armslegs/r-lowerarm-scale-depth-decr.target', 0.45),
+                          ('armslegs/r-lowerarm-muscle-decr.target', 0.5)],
+                    longueur=0.171, bracelet=True),
 }
 ETHNIES = [('caucasian', 0.6), ('african', 0.2), ('asian', 0.2)]
 
@@ -392,10 +395,26 @@ def fit_grip(hand, r=0.019, tilt=18.0, squeeze=0.0012, cup=(0, 2, 5, 9), back=0.
     return params, grip
 
 
-def fit_thumb(hand, params, grip, squeeze=0.0012, aim=25.0, log=print):
-    """Pouce allongé sur la lampe, pointé vers la tête (l'interrupteur sous la pulpe) : rotation de la
-    trapézo-métacarpienne (3 angles), flexion MCP et IP. Rend la position de la pulpe (contact)."""
+def grip_angle(hand, grip, P):
+    """Angle (degrés) autour de l'axe de la lampe, compté depuis le côté proximal (vers le poignet,
+    -perp) vers le dos de la main (+dorsal) : 0 = côté poignet, 90 = côté paume / dos."""
+    perp = normalize(np.cross(grip.g, hand.dorsal))
+    if perp @ hand.fwd < 0:
+        perp = -perp
+    rel = np.atleast_2d(P) - grip.c
+    rel = rel - np.outer(rel @ grip.g, grip.g)
+    return np.degrees(np.arctan2(rel @ hand.dorsal, rel @ (-perp)))
+
+
+def fit_thumb(hand, params, grip, squeeze=0.0012, ang=45.0, nail_back=0.0, rest=0.0013, log=print):
+    """Pouce allongé sur la lampe, pointé vers la tête, la pulpe posée sur l'interrupteur : rotation de la
+    trapézo-métacarpienne (3 angles), flexion MCP et IP. ang : place de la pulpe autour de l'axe (voir
+    grip_angle ; vers le dos de la main, pour que l'ongle se voie depuis l'œil) ; nail_back : l'ongle
+    penché vers l'arrière de la lampe (degrés : la dernière phalange un peu relevée, comme quand on
+    appuie de la pulpe) ; rest : hauteur de la pulpe au-dessus du corps (le capuchon de l'interrupteur).
+    Rend la position de la pulpe (contact)."""
     from scipy.optimize import minimize
+    from scipy.spatial import cKDTree
     bidx = {b: i for i, b in enumerate(hand.bones)}
     bv = hand.bone_of_vertex()
     bones = ['finger1-1.R', 'finger1-2.R', 'finger1-3.R']
@@ -405,14 +424,15 @@ def fit_thumb(hand, params, grip, squeeze=0.0012, aim=25.0, log=print):
     wfi = wf[idx]
     allow = squeeze + (1.0 - np.clip((wfi - 0.15) / 0.6, 0, 1)) * 0.005
     seg = [bv[idx] == i for i in ids]
-    # l'index (déjà posé) : le pouce ne doit pas y entrer
-    iid = [bidx['finger2-%d.R' % k] for k in (1, 2, 3)]
+    # le reste de la main (déjà posé : index, paume) : le pouce ne doit pas y entrer
     G0 = hand.pose(params)
-    idx_index = np.where(hand.W[:, iid].sum(1) > 0.5)[0]
-    Pidx = _skin_subset(hand, G0, idx_index)
-    from scipy.spatial import cKDTree
-    tree = cKDTree(Pidx)
-    cos_aim = math.cos(math.radians(aim))
+    other = np.where(hand.W[:, ids].sum(1) < 0.05)[0]
+    Po = _skin_subset(hand, G0, other)
+    near = np.linalg.norm(Po - grip.c, axis=1) < 0.09
+    tree = cKDTree(Po[near])
+    cos_aim = math.cos(math.radians(12.0))
+    sin_back = math.sin(math.radians(nail_back))
+    a_t = math.radians(ang)
 
     def build(x):
         pr = dict(params)
@@ -421,43 +441,64 @@ def fit_thumb(hand, params, grip, squeeze=0.0012, aim=25.0, log=print):
         pr[bones[2]] = (x[4], 0.0, 0.0)
         return pr
 
-    def cost(x):
+    def parts(x):
         pr = build(x)
         G = hand.pose(pr)
         Pp = _skin_subset(hand, G, idx)
+        return G, Pp
+
+    def cost(x):
+        G, Pp = parts(x)
         d, s = grip.dist(Pp)
         pen = np.clip(-(d + allow), 0, None)
         c = 4e6 * np.sum(pen ** 2)
-        for k in (1, 2):
-            m = seg[k]
-            c += 3e4 * (d[m].min() + squeeze * 0.6) ** 2
-        # la dernière phalange vise la tête de la lampe
+        # la pulpe repose sur le capuchon (rest au-dessus du corps), la phalange proximale près du corps
+        m2 = seg[2]
+        k = np.argmin(d[m2])
+        c += 3e4 * (d[m2][k] - rest) ** 2
+        c += 3e4 * max(0.0, d[seg[1]].min() - 0.0025) ** 2
+        # pas de pénétration du capuchon : rien du pouce sous « rest » près de la pulpe
+        # place de la pulpe autour de l'axe
+        pa = math.radians(float(grip_angle(hand, grip, Pp[m2][k])[0]))
+        c += 6.0 * (math.atan2(math.sin(pa - a_t), math.cos(pa - a_t))) ** 2
+        # la dernière phalange suit la lampe, vers la tête ; l'ongle penché vers l'arrière
         h3 = hand.joint_pos(G, bones[2])
         t3 = hand.joint_pos(G, bones[2], 'tail')
         dirn = normalize(t3 - h3)
         c += 200.0 * max(0.0, cos_aim - float(dirn @ grip.g)) ** 2
-        # pas d'entrée dans l'index
+        # l'ongle regarde vers l'extérieur de la lampe (pas de profil), penché de nail_back vers l'arrière
+        nail = (G[bones[2]][:3, :3] @ hand.frame[bones[2]])[:, 2]
+        rad = Pp[m2][k] - grip.c
+        rad = normalize(rad - grip.g * (rad @ grip.g))
+        want = normalize(rad * math.cos(math.radians(nail_back)) - grip.g * sin_back)
+        c += 40.0 * (1.0 - float(nail @ want)) ** 2
+        # pas d'entrée dans la main (index, paume)
         dd, _ = tree.query(Pp[wfi > 0.5], k=1)
-        c += 2e5 * np.sum(np.clip(0.004 - dd, 0, None) ** 2)
-        c += 0.0005 * (x[0] ** 2 + x[1] ** 2 + x[2] ** 2) + 0.001 * (x[4] - 15) ** 2
+        c += 2e5 * np.sum(np.clip(0.003 - dd, 0, None) ** 2)
+        c += 0.0004 * (x[0] ** 2 + x[1] ** 2 + x[2] ** 2) + 0.002 * (x[4] - 10) ** 2 + 0.001 * (x[3] - 5) ** 2
         return c
 
     best = None
-    for x0 in ([0, 0, 0, 10, 10], [20, -20, 0, 10, 10], [-20, 20, 0, 10, 10], [20, 20, 20, 15, 10], [0, -30, -20, 5, 5]):
+    for x0 in ([0, 0, 0, 10, 0], [20, -20, 0, 10, 0], [-20, 20, 0, 10, 0], [20, 20, 20, 15, 5],
+               [0, -30, -20, 5, -5], [-25, -10, 15, 5, 0], [10, 30, -15, 0, -10]):
         res = minimize(cost, np.array(x0, float), method='Powell',
-                       bounds=[(-60, 60), (-60, 60), (-50, 50), (-10, 60), (-15, 70)],
-                       options={'xtol': 0.1, 'ftol': 1e-7, 'maxfev': 4000})
+                       bounds=[(-60, 60), (-60, 60), (-75, 50), (-15, 60), (-15, 60)],
+                       options={'xtol': 0.1, 'ftol': 1e-8, 'maxfev': 5000})
         if best is None or res.fun < best.fun:
             best = res
     x = best.x
     params.update(build(x))
-    G = hand.pose(params)
-    Pp = _skin_subset(hand, G, idx)
+    G, Pp = parts(x)
     d, s = grip.dist(Pp)
     m = seg[2]
     k = np.argmin(d[m])
     pad = Pp[m][k]
-    log('pouce : CMC %.0f° %.0f° %.0f°, MCP %.0f°, IP %.0f° (coût %.3g)' % (x[0], x[1], x[2], x[3], x[4], best.fun))
+    nail = (G[bones[2]][:3, :3] @ hand.frame[bones[2]])[:, 2]
+    rad = pad - grip.c
+    rad = normalize(rad - grip.g * (rad @ grip.g))
+    log('pouce : CMC %.0f° %.0f° %.0f°, MCP %.0f°, IP %.0f° ; pulpe à %.0f° (voulu %.0f°), %.1f mm du corps ; '
+        'ongle · axe %.2f, · rayon %.2f (coût %.3g)' % (x[0], x[1], x[2], x[3], x[4], float(grip_angle(hand, grip, pad)[0]),
+                                                      ang, d[m][k] * 1000, float(nail @ grip.g), float(nail @ rad), best.fun))
     return pad
 
 # ----------------------------------------------------------------------------- géométrie
@@ -667,17 +708,18 @@ def lamp_profile(L, head_len=0.068):
         (L - 0.0335, 0.0184),        # rainure du culot
         (L - 0.0320, 0.0184),
         (L - 0.0310, 0.0198),
-        (L - 0.0040, 0.0198),
-        (L - 0.0012, 0.0190),        # chanfrein arrière
-        (L, 0.0172),
-        (L + 0.0002, 0.0158),        # anneau du culot
-        (L + 0.0002, 0.0140),
-        (L - 0.0003, 0.0132),        # rainure
-        (L + 0.0004, 0.0124),
-        (L + 0.0014, 0.0100),        # bouchon bombé
-        (L + 0.0021, 0.0060),
-        (L + 0.0024, 0.0),
+        (L - 0.0060, 0.0198),
     ]
+    # culot arrondi (congé de 5 mm), puis un bouchon à peine bombé : pas d'arête vive ni d'anneau, une
+    # silhouette douce que le chanfrein d'usure (alu mis à nu) dessine en clair
+    rf = 0.0050
+    zc, rc = L - rf - 0.0010, 0.0198 - rf
+    for k in range(1, 9):
+        a = (math.pi / 2) * k / 8
+        p.append((zc + rf * math.sin(a), rc + rf * math.cos(a)))
+    for k in range(1, 7):
+        rr = rc * (1 - k / 6)
+        p.append((zc + rf + 0.0012 * (1 - (rr / rc) ** 2), rr))
     return p
 
 
@@ -812,6 +854,104 @@ def build_sleeve(center, axis, e1, e2, rx, ry, length=0.42, cuff=0.055, seed=3, 
     Cc = np.c_[C, C, C, np.ones_like(C)]
     return Surf('manche', V, N, UV, T, Cc)
 
+# ----------------------------------------------------------------------------- le bracelet (Aurèlia)
+
+def build_bracelet(V, center, axis, e1, e2, along0=-0.0015, width=0.0068, thick=0.0024, slack=0.0009, nseg=192, ntube=16):
+    """Bracelet brésilien (fils noués à chevrons) autour du poignet, juste avant le bord-côte de la manche.
+    V : peau posée (repère de la vue) ; center : centre de la section du poignet ; axis : vers le coude ;
+    along0 : position du bracelet le long de l'axe (m, < 0 = vers le coude). Le bracelet suit l'enveloppe
+    convexe de la section du poignet (un fil tendu ne suit pas les creux), un peu lâche (slack)."""
+    from scipy.spatial import ConvexHull
+    rel = V - center
+    a = rel @ (-axis)                     # > 0 vers la main
+    m = np.abs(a - along0) < 0.0045
+    Q2 = np.c_[rel[m] @ e1, rel[m] @ e2]
+    hull = ConvexHull(Q2)
+    H = Q2[hull.vertices]
+    # (ordre trigonométrique) contour décalé vers l'extérieur de slack + thick / 2, rééchantillonné
+    ang = np.arctan2(H[:, 1], H[:, 0])
+    H = H[np.argsort(ang)]
+    Hc = np.r_[H, H[:1]]
+    seg = np.linalg.norm(np.diff(Hc, axis=0), axis=1)
+    sL = np.r_[0, np.cumsum(seg)]
+    t = np.linspace(0, sL[-1], nseg, endpoint=False)
+    C = np.c_[np.interp(t, sL, Hc[:, 0]), np.interp(t, sL, Hc[:, 1])]
+    # lissage circulaire (les coins de l'enveloppe), puis normale extérieure
+    for _ in range(6):
+        C = 0.5 * C + 0.25 * (np.roll(C, 1, 0) + np.roll(C, -1, 0))
+    T2 = np.roll(C, -1, 0) - np.roll(C, 1, 0)
+    N2 = np.c_[T2[:, 1], -T2[:, 0]]
+    N2 /= np.linalg.norm(N2, axis=1, keepdims=True)
+    if np.sum(N2 * C) < 0:
+        N2 = -N2
+    C = C + N2 * (slack + thick / 2)
+    seg = np.linalg.norm(np.roll(C, -1, 0) - C, axis=1)
+    L = seg.sum()
+    u = np.r_[0, np.cumsum(seg)[:-1]] / L
+    base = center - axis * along0
+    P3 = base + np.outer(C[:, 0], e1) + np.outer(C[:, 1], e2)
+    N3 = np.outer(N2[:, 0], e1) + np.outer(N2[:, 1], e2)
+    phi = np.linspace(-np.pi, np.pi, ntube + 1)          # 0 = face extérieure
+    Vb, Nb, UVb = [], [], []
+    for i in range(nseg + 1):
+        k = i % nseg
+        uu = u[k] if i < nseg else 1.0
+        for f in phi:
+            Vb.append(P3[k] + N3[k] * (thick / 2) * math.cos(f) + (-axis) * (width / 2) * math.sin(f))
+            n = N3[k] * math.cos(f) / (thick / 2) + (-axis) * math.sin(f) / (width / 2)
+            Nb.append(n / np.linalg.norm(n))
+            UVb.append([uu, f / (2 * np.pi) + 0.5])
+    Vb, Nb, UVb = np.array(Vb), np.array(Nb), np.array(UVb)
+    w = ntube + 1
+    T = []
+    for i in range(nseg):
+        for j in range(ntube):
+            q = [i * w + j, i * w + j + 1, (i + 1) * w + j + 1, (i + 1) * w + j]
+            T += [[q[0], q[1], q[2]], [q[0], q[2], q[3]]]
+    T = np.array(T)
+    fn = np.cross(Vb[T[:, 1]] - Vb[T[:, 0]], Vb[T[:, 2]] - Vb[T[:, 0]])
+    if np.sum(fn * Nb[T[:, 0]]) < 0:
+        T = T[:, ::-1]
+    return Surf('bracelet', Vb, Nb, UVb, T), L
+
+
+def bake_bracelet(name, out_dir, length, res=(1024, 64), log=print):
+    """Bracelet brésilien : chevrons de fils de coton (rouge, jaune, turquoise, blanc, violet), nœuds en
+    losange (relief), un peu passé et pelucheux."""
+    from PIL import Image
+    W, H = res
+    u = (np.arange(W) + 0.5) / W
+    v = (np.arange(H) + 0.5) / H
+    U, Vv = np.meshgrid(u, v)
+    phi = (Vv - 0.5) * 2 * np.pi
+    w = np.sin(phi)                                   # en travers de la face extérieure (-1 … 1)
+    um = U * length / 0.0016                          # en nœuds (1,6 mm)
+    cols = np.array([srgb(c) for c in [(176, 34, 44), (222, 172, 52), (40, 140, 140), (226, 220, 204), (104, 52, 112), (40, 140, 140), (222, 172, 52)]])
+    s_ = um / 2.0 + np.abs(w) * 2.2
+    idx = np.floor(s_).astype(int) % len(cols)
+    alb = cols[idx]
+    # nœuds en losange : un relief par nœud, des creux entre les rangs
+    ka = np.abs(np.sin(np.pi * (um + w * 2.2)))
+    kb = np.abs(np.sin(np.pi * (um - w * 2.2)))
+    hgt = np.sqrt(ka * kb)
+    nz = Noise3(41)
+    fz = nz.fbm(np.dstack([U * 200, Vv * 12, np.zeros_like(U)]), 3)
+    alb = alb * (0.78 + 0.22 * hgt[..., None]) * (1.0 + fz[..., None] * 0.12)
+    alb = alb * 0.92 + 0.08 * alb.mean(2, keepdims=True)         # (couleurs un peu passées)
+    gy, gx = np.gradient(hgt * 0.00035)
+    gx /= length / W
+    gy /= (0.0068 * np.pi / 2) / H
+    nrm = np.dstack([-gx, gy, np.ones_like(gx)])
+    nrm /= np.linalg.norm(nrm, axis=2, keepdims=True)
+    os.makedirs(out_dir, exist_ok=True)
+    pa = os.path.join(out_dir, 'bracelet_%s_albedo.jpg' % name)
+    pn = os.path.join(out_dir, 'bracelet_%s_normal.png' % name)
+    save_rgb(pa, np.clip(alb, 0, 1))
+    save_rgb(pn, nrm * 0.5 + 0.5)
+    write_import(pa)
+    write_import(pn, normal=True)
+    log('  bracelet %s : textures écrites' % name)
+
 # ----------------------------------------------------------------------------- export glTF (.glb)
 
 def write_glb(path, nodes, extras=None):
@@ -919,6 +1059,8 @@ def sculpt_fist(h, G, tf, V, F, params):
 
 
 LAMP_L = 0.235
+## Saillie du culot derrière le tranchant de la main (m).
+TAIL_OUT = 0.0025
 
 
 def switch_boot(ax_pos, ang, lampR, z_front, w=0.015, h=0.0095, height=0.0022, seg=20):
@@ -949,17 +1091,17 @@ def switch_boot(ax_pos, ang, lampR, z_front, w=0.015, h=0.0095, height=0.0022, s
     return Surf('lampe_bouton', P, N, UV, T)
 
 
-def assemble(mh, name, wrist=(-10.0, -32.0, 0.0), elbow=-50.0, fit=None, log=print):
+def assemble(mh, name, wrist=(-10.0, -32.0, 0.0), fit=None, log=print, **_):
     """Main posée + lampe + manche, dans le repère de la vue : origine au centre de la prise (sur l'axe
-    de la lampe), -Z = avant (faisceau), roulis choisi pour que le coude parte vers « elbow » degrés
-    (−90 = vers le bas, 0 = vers la droite) dans l'image."""
+    de la lampe), -Z = avant (faisceau), +Y = le dos de la main (perpendiculaire à l'axe). La
+    présentation à l'écran (tangage, lacet, roulis) est celle de viewmodel.gd (REST_ROT)."""
     var = VARIANTES[name]
     V = mh.morphed(morph_list(var))
     h = Hand(mh, V)
     h.to_metric(var['longueur'])
     if fit is None:
-        params, grip = fit_grip(h, log=log)
-        pad = fit_thumb(h, params, grip, log=log)
+        params, grip = fit_grip(h, tilt=GRIP_TILT, log=log)
+        pad = fit_thumb(h, params, grip, ang=THUMB_ANG, nail_back=THUMB_BACK, log=log)
     else:
         params, grip, pad = fit
     fitted = (dict(params), grip, pad)
@@ -971,18 +1113,14 @@ def assemble(mh, name, wrist=(-10.0, -32.0, 0.0), elbow=-50.0, fit=None, log=pri
     c = (Gw @ np.r_[grip.c, 1])[:3]
     g = Gw[:3, :3] @ grip.g
     padw = (Gw @ np.r_[pad, 1])[:3]
-    up = padw - c
+    up = Gw[:3, :3] @ h.dorsal
     up -= g * (up @ g)
     up = normalize(up)
     zl = -g
     x0 = np.cross(up, zl)
-    R0 = np.stack([x0, up, zl])                 # monde de la main → repère lampe (avant roulis)
-    arm = R0 @ h.arm_dir                        # coude → poignet
-    th = math.degrees(math.atan2(-arm[1], -arm[0]))
-    roll = math.radians(elbow - th)
-    Rr = rot([0, 0, 1], roll)
-    R = Rr @ R0
-    log('%s : angle lampe / avant-bras %.0f°, roulis %.0f°' % (name, math.degrees(math.acos(np.clip(-arm[2], -1, 1))), math.degrees(roll)))
+    R = np.stack([x0, up, zl])                  # monde de la main → repère de la vue
+    arm = R @ h.arm_dir                         # coude → poignet
+    log('%s : angle lampe / avant-bras %.0f°' % (name, math.degrees(math.acos(np.clip(-arm[2], -1, 1)))))
     tf = lambda X: (np.asarray(X) - c) @ R.T
     # --- la main : lissage léger des zones tassées, une subdivision, normales
     Pl = tf(P)
@@ -991,8 +1129,11 @@ def assemble(mh, name, wrist=(-10.0, -32.0, 0.0), elbow=-50.0, fit=None, log=pri
     # --- la lampe : le culot 12 mm derrière l'auriculaire, l'interrupteur devant la pulpe du pouce
     sv = -Pl[:, 2]                               # abscisse le long de l'axe (vers l'avant)
     radial = np.linalg.norm(Pl[:, :2], axis=1)
-    touching = radial < grip.r + 0.012
-    s_tail = sv[touching].min() + 0.003
+    # le culot dépasse de TAIL_OUT derrière le tranchant de la main (l'auriculaire, côté lampe)
+    bi = {b: i for i, b in enumerate(h.bones)}
+    w5 = h.W[:, [bi['finger5-%d.R' % k] for k in (1, 2, 3)] + [bi['metacarpal4.R']]].sum(1)
+    edge = (w5 > 0.5) & (radial < grip.r + 0.015)
+    s_tail = sv[edge].min() - TAIL_OUT
     s_front = s_tail + LAMP_L
     padl = tf(padw)
     s_pad = -padl[2]
@@ -1001,8 +1142,7 @@ def assemble(mh, name, wrist=(-10.0, -32.0, 0.0), elbow=-50.0, fit=None, log=pri
     lamp = []
     for k, s in parts.items():
         lamp.append(s.transformed(np.eye(3), np.array([0, 0, -s_front])))
-    z_switch = s_front - (s_pad + 0.017)         # (z de la lampe, depuis la face avant)
-    z_switch = max(z_switch, 0.080)
+    z_switch = s_front - (s_pad + 0.003)         # (z de la lampe, depuis la face avant) : sous la pulpe
     sw = switch_boot(z_switch, sw_ang, 0.019, 0.0)
     lamp.append(sw.transformed(np.eye(3), np.array([0, 0, -s_front])))
     log('lampe : culot à %.0f mm derrière la prise, face avant à %.0f mm devant, interrupteur à %.0f mm de la face'
@@ -1024,9 +1164,14 @@ def assemble(mh, name, wrist=(-10.0, -32.0, 0.0), elbow=-50.0, fit=None, log=pri
     cuff_start = wrist_l + cen + arm_axis * 0.006
     sleeve = build_sleeve(cuff_start, arm_axis, e1, e2, rx, ry)
     log('manche : avant-bras %.0f × %.0f mm au poignet' % (rx * 2000, ry * 2000))
-    info = dict(roll=math.degrees(roll), s_front=s_front, s_tail=s_tail, head=[0.0, 0.0, -s_front],
+    bracelet = None
+    if var.get('bracelet'):
+        bracelet, blen = build_bracelet(V2, wrist_l + cen, arm_axis, e1, e2)
+        log('bracelet : %.0f mm de tour' % (blen * 1000))
+    info = dict(s_front=s_front, s_tail=s_tail, head=[0.0, 0.0, -s_front],
                 wrist=wrist_l.tolist(), arm_axis=arm_axis.tolist())
-    hand = dict(V=V2, F=F2, FT=FT2, VT=VT2, V0=Pl, F0=h.F, FT0=h.FT, hand=h, params=params, R=R, c=c)
+    hand = dict(V=V2, F=F2, FT=FT2, VT=VT2, V0=Pl, F0=h.F, FT0=h.FT, hand=h, params=params, R=R, c=c,
+                bracelet=bracelet, bracelet_len=blen if bracelet is not None else 0.0)
     return hand, lamp, sleeve, info, fitted
 
 
@@ -1292,7 +1437,8 @@ SKIN = {
     'alexandre': dict(dos=(190, 152, 134), paume=(208, 172, 156), rouge=(182, 128, 112), ongle=(210, 168, 160),
                       veines=1.0, taches=14, seed=11),
     'aurelia': dict(dos=(204, 166, 150), paume=(218, 184, 170), rouge=(194, 138, 126), ongle=(218, 176, 170),
-                    veines=0.6, taches=8, seed=23),
+                    veines=0.6, taches=8, seed=23, bord=0.985,
+                    vernis=(118, 20, 38)),     # vernis cerise écaillé (une ado des années 90)
 }
 
 FINGER_BONES = ['finger%d-%d.R' % (f, k) for f in range(1, 6) for k in (1, 2, 3)]
@@ -1379,7 +1525,7 @@ def bake_skin(h, hand, mh, name, out_dir, occluders, res=2048, ao_res=512, log=p
     side = np.abs(fphi) / phimax
     nail_w = smooth01((1.0 - side) / 0.10) * smooth01((ft - tcut) / 0.035) * distal
     # bord libre (blanc) : au bout, sur le dessus
-    free = nail_w * smooth01((ft - 1.02) / 0.04)
+    free = nail_w * smooth01((ft - cfg.get('bord', 1.02)) / 0.04)
     lunula = nail_w * smooth01(1.0 - (ft - tcut) / 0.10) * smooth01((0.75 - side) / 0.25)
     # repli de l'ongle (sillon) : juste autour de la plaque
     fold = distal * np.exp(-((np.minimum(np.abs(side - 1.0) / 0.08, np.abs(ft - tcut) / 0.03)) ** 2)) * (side < 1.15) * (ft > tcut - 0.08)
@@ -1472,10 +1618,10 @@ def bake_skin(h, hand, mh, name, out_dir, occluders, res=2048, ao_res=512, log=p
     col += (np.clip(m1, 0, None) * 0.06)[:, None] * (rouge - dos)[None, :]
     # pulpe des doigts et bout des doigts : plus rouges
     tip = on_finger & (seg == 3)
-    tipw = tip * smooth01((ft - 0.2) / 0.5) * 0.45
+    tipw = tip * smooth01((ft - 0.2) / 0.5) * 0.62
     col = col * (1 - tipw[:, None]) + rouge[None, :] * tipw[:, None]
     # jointures
-    kr = np.clip(knuckle_red, 0, 1) * 0.5
+    kr = np.clip(knuckle_red, 0, 1) * 0.72
     col = col * (1 - kr[:, None]) + rouge[None, :] * kr[:, None]
     # autour de l'ongle (repli) : rosé
     peri = distal * smooth01(1 - np.abs(side - 1.0) / 0.35) * (ft > tcut - 0.15) * (1 - nail_w) * 0.45
@@ -1500,6 +1646,15 @@ def bake_skin(h, hand, mh, name, out_dir, occluders, res=2048, ao_res=512, log=p
     col = col * (1 - free[:, None] * 0.85) + srgb((236, 228, 212))[None, :] * (free[:, None] * 0.85)
     cut = distal * np.exp(-(((ft - tcut) / 0.02) ** 2)) * (side < 1.0) * 0.35
     col = col * (1 - cut[:, None]) + srgb((176, 116, 102))[None, :] * cut[:, None]
+    polish = np.zeros(n)
+    if cfg.get('vernis'):
+        # vernis écaillé : il s'arrête un peu avant la cuticule, des éclats surtout vers le bord libre
+        chip = nz2(P * 1500.0) * 0.6 + nz(P * 4200.0) * 0.4
+        chipped = chip > 0.30 - 0.55 * smooth01((ft - 0.80) / 0.20)
+        polish = nail_w * smooth01((ft - tcut - 0.010) / 0.012) * (~chipped) * smooth01((0.97 - side) / 0.08)
+        vc = srgb(cfg['vernis']) * (1.0 + nz(P * 700.0)[:, None] * 0.05)
+        col = col * (1 - polish[:, None]) + vc * polish[:, None]
+        height += polish * 0.00004
     col = np.clip(col, 0, 1)
     # ---------------------------------------------------------------- rugosité
     rough = np.full(n, 0.50)
@@ -1507,11 +1662,12 @@ def bake_skin(h, hand, mh, name, out_dir, occluders, res=2048, ao_res=512, log=p
     rough += np.clip(wr, 0, 1) * 0.05 + pores * 0.04
     rough += nz2.fbm(P * 180.0, 3) * 0.06
     rough = rough * (1 - nail_w) + (0.24 + nz(P * 300.0) * 0.06) * nail_w
+    rough = rough * (1 - polish) + 0.12 * polish
     rough = np.clip(rough, 0.18, 0.75)
     # ---------------------------------------------------------------- occlusion (pose)
     occV, occT = occluders
     sub = (idx[0] % (res // ao_res) == 0) & (idx[1] % (res // ao_res) == 0)
-    ao_s = ambient_occlusion(Q[sub], NQ[sub], occV, occT, rays=40, dist=0.045, log=log)
+    ao_s = ambient_occlusion(Q[sub], NQ[sub], occV, occT, rays=56, dist=0.06, log=log)
     ao_img = np.full((ao_res, ao_res), np.nan)
     ao_img[idx[0][sub] // (res // ao_res), idx[1][sub] // (res // ao_res)] = ao_s
     m_ao = ~np.isnan(ao_img)
@@ -1521,7 +1677,8 @@ def bake_skin(h, hand, mh, name, out_dir, occluders, res=2048, ao_res=512, log=p
     from PIL import Image
     ao_full = np.array(Image.fromarray(ao_img.astype(np.float32), 'F').resize((res, res), Image.BILINEAR))
     ao = np.clip(ao_full[idx], 0.0, 1.0)
-    ao = 0.2 + 0.8 * ao
+    # (plus marquée qu'avant : creux entre les doigts, ombre de contact sous le corps de la lampe)
+    ao = 0.12 + 0.88 * ao ** 1.35
     # ---------------------------------------------------------------- cartes
     img = np.zeros((res, res, 3), np.float32)
     img[idx] = col
@@ -1618,18 +1775,24 @@ def bake_lamp(lamp_parts, name, out_dir, occluders, prof, L=LAMP_L, res=(1024, 2
     scr = ndimage.gaussian_filter(scr, 0.6) * 2.0
     scr = np.clip(scr, 0, 1) * (rz > 0.015)
     wear = np.clip(np.maximum(wear, scr * 0.8), 0, 1)
+    # chanfrein d'usure du culot (le congé arrondi) et des arêtes de la bague : alu mis à nu, qui dessine le
+    # contour de la lampe même dans le noir
+    bevel = smooth01((z - (L - 0.0052)) / 0.0008) * smooth01(((L - 0.0004) - z) / 0.0008)
+    bevel = bevel * np.clip(0.75 + wn * 1.2, 0.35, 1.0)
+    ring = (np.exp(-((z - 0.0012) / 0.0007) ** 2) + np.exp(-((z - 0.0185) / 0.0006) ** 2)) * np.clip(0.6 + wn * 1.5, 0, 1)
+    wear = np.maximum(wear, np.clip(np.maximum(bevel, ring * 0.8), 0, 1))
     hgt -= scr * 0.00001
     # usure de la prise : la peinture s'est polie sous les doigts (zone moletée)
     # albédo : noir anodisé légèrement bleuté, alu nu, poussière dans les creux
-    black = np.array([0.042, 0.043, 0.049])
-    alu = np.array([0.62, 0.62, 0.60])
-    dust = np.array([0.20, 0.18, 0.16])
+    black = np.array([0.030, 0.030, 0.031])       # anodisé noir neutre (pas de reflet brun)
+    alu = np.array([0.66, 0.66, 0.65])
+    dust = np.array([0.11, 0.11, 0.11])
     alb = black[None, None, :] * (1.0 + wn[..., None] * 0.25)
     alb = alb * (1 - wear[..., None]) + alu[None, None, :] * wear[..., None]
-    crev = knurl * smooth01((0.2 - kh) / 0.2) * 0.25 + (1 - knurl) * 0.0
+    crev = knurl * smooth01((0.2 - kh) / 0.2) * 0.15
     alb = alb * (1 - crev[..., None]) + dust[None, None, :] * crev[..., None]
-    rough = 0.36 + wn * 0.08 + crev * 0.3 - wear * 0.04
-    rough = np.where(z > L - 0.004, 0.45, rough)
+    rough = 0.40 + wn * 0.05 + crev * 0.18
+    rough = rough * (1 - wear) + 0.30 * wear
     metal = 0.15 + wear * 0.85
     # face arrière (culot) et bague : un peu plus mates
     # normales
@@ -1678,8 +1841,8 @@ def bake_lamp(lamp_parts, name, out_dir, occluders, prof, L=LAMP_L, res=(1024, 2
 # ----------------------------------------------------------------------------- textures de la manche
 
 SLEEVE = {
-    'alexandre': dict(tint=(50, 56, 68), rib=(44, 49, 60)),     # sweat à capuche anthracite bleuté
-    'aurelia': dict(tint=(82, 46, 58), rib=(72, 40, 50)),       # pull prune
+    'alexandre': dict(tint=(92, 98, 112), rib=(82, 88, 101)),   # sweat anthracite bleuté (≈ 0,12 linéaire)
+    'aurelia': dict(tint=(122, 70, 90), rib=(108, 61, 79)),     # pull prune
 }
 SLEEVE_U = 0.30          # m couverts par u ∈ [0, 1] (tour de la manche)
 SLEEVE_V0, SLEEVE_V1 = -0.03, 0.44
@@ -1745,7 +1908,12 @@ def sleeve_uv_to_atlas(UV):
 
 ## Poignet (flexion palmaire, déviation ulnaire) et roulis : le dos de la main face à la caméra, l'avant-bras
 ## qui sort en bas de l'image (cherché avec la caméra du jeu : voir viewmodel.gd, REST_POS / REST_ROT).
-POSE = dict(wrist=(20.0, -32.0, 0.0), elbow=-50.0)
+POSE = dict(wrist=(20.0, -30.0, 0.0))
+## Prise : obliquité de la lampe dans la paume (degrés, vers le bout des doigts), place du pouce autour de
+## l'axe (grip_angle : vers le dos de la main, pour qu'on le voie depuis l'œil) et ongle penché en arrière.
+GRIP_TILT = 26.0
+THUMB_ANG = 45.0
+THUMB_BACK = 0.0
 
 
 def build_variant(mh, name, out_dir, fit=None, tex=2048, log=print, pose=POSE):
@@ -1758,6 +1926,8 @@ def build_variant(mh, name, out_dir, fit=None, tex=2048, log=print, pose=POSE):
         if s.name in ('lampe_corps', 'lampe_bouton'):
             occ.append((s.V, s.T))
     occ.append((sleeve.V, sleeve.T))
+    if hand.get('bracelet') is not None:
+        occ.append((hand['bracelet'].V, hand['bracelet'].T))
     OV, OT, o = [], [], 0
     for v, t in occ:
         OV.append(v)
@@ -1769,10 +1939,14 @@ def build_variant(mh, name, out_dir, fit=None, tex=2048, log=print, pose=POSE):
     bake_lamp(lamp, name, out_dir, (occV, occT), prof, log=log, shared=(name == 'alexandre') or not os.path.exists(os.path.join(out_dir, 'lampe_albedo.jpg')))
     fab = os.path.normpath(os.path.join(HERE, '..', 'assets', 'textures', 'Fabric045'))
     bake_sleeve(sleeve, name, out_dir, fab, log=log)
+    if hand.get('bracelet') is not None:
+        bake_bracelet(name, out_dir, hand['bracelet_len'], log=log)
     skin, _ = quad_surface('peau', hand['V'], hand['F'], FTp, UVimg)
     sl = Surf('manche', sleeve.V, sleeve.N, sleeve_uv_to_atlas(sleeve.UV), sleeve.T, sleeve.C)
     head = np.array(info['head']) + np.array([0, 0, 0.004])
     nodes = [('Main', [skin], None), ('Manche', [sl], None), ('Lampe', lamp, None), ('Tete', None, head)]
+    if hand.get('bracelet') is not None:
+        nodes.append(('Bracelet', [hand['bracelet']], None))
     path = os.path.join(out_dir, 'main_%s.glb' % name)
     write_glb(path, nodes, extras={k: (v.tolist() if isinstance(v, np.ndarray) else (float(v) if isinstance(v, np.floating) else v)) for k, v in info.items()})
     log('%s : %s (%d sommets de peau, %d triangles) en %.0f s' % (name, path, len(skin.V), len(skin.T), time.time() - t0))

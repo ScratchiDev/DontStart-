@@ -5,16 +5,21 @@ extends Node
 ##   godot --path godot --rendering-driver vulkan --resolution 960x540 res://tests/mains_banc.tscn
 ##         -- --shots=DIR [--rendu-complet] [--hero=aurelia] [--vues=mere_nuit,mur_20cm,…] [--seul=avec|sans]
 ## Vues : mere_nuit, couloir_nuit, sdb_eclairee, chambre_jour (jour simulé : soleil et ciel clair, pour
-## juger la peau en pleine lumière), mur_20cm (face au mur, l'œil à 20 cm : intersection), regard_bas.
+## juger la peau en pleine lumière), mur_20cm (face au mur, l'œil à 20 cm : intersection), regard_bas,
+## devant_pc (debout devant l'ordinateur allumé : la lueur verte de l'écran, toute proche de la main),
+## inventaire (regard au sol près de la porte, comme l'autotest 22_inventaire).
+## Peau : une passe de plus où la peau est peinte en magenta (masque) ; sur la capture AVEC, luminance et
+## saturation verte des pixels de peau (centile 99,5) : M7 « devant_pc », pas de peau brûlée ni verte.
 ## « --retro » : style rétro (pixels) pour ce lancement.
 ## Chaque capture : <vue>_avec.png, <vue>_sans.png ; journal « MAINS <vue> … ».
 
 const MAIN := preload("res://scenes/main.tscn")
-const VUES := ["mere_nuit", "couloir_nuit", "sdb_eclairee", "chambre_jour", "mur_20cm", "regard_bas"]
+const VUES := ["mere_nuit", "couloir_nuit", "sdb_eclairee", "chambre_jour", "mur_20cm", "regard_bas", "devant_pc", "inventaire"]
 
 var main: Main
 var player: CharacterBody3D
 var shots := ""
+var _mask_name := ""
 var fails := 0
 
 
@@ -181,6 +186,12 @@ func _view(v: String, seul: String) -> void:
 		"regard_bas":
 			_flash(true)
 			_place(Acte1.START_POS, Acte1.START_YAW, -1.15)
+		"devant_pc":
+			_flash(true)
+			_place(Vector3(1.2, 0.0, -1.0), 0.0, -0.3)
+		"inventaire":
+			_flash(true)
+			_place(Vector3(2.2, 0.0, 1.32), -PI / 2.0, -1.1)
 		_:
 			print("vue inconnue : ", v)
 			return
@@ -194,8 +205,70 @@ func _view(v: String, seul: String) -> void:
 			img.save_png(shots.path_join("%s_%s.png" % [v, w]))
 		var vm: Viewmodel = player.viewmodel
 		var lp: Vector3 = player.flashlight.global_position
-		print("MAINS %s %s · lampe %s · œil %s" % [v, w, lp, player.camera.global_position])
+		print("MAINS %s %s · lampe %s · œil %s · baissée %.2f obstacle %.2f sol %.2f rebond %.2f" % [v, w, lp, player.camera.global_position, vm._lower, vm._obst, vm._down, vm.bounce.light_energy])
 		if w == "avec" and v == "mur_20cm":
 			# la lumière reste de ce côté du mur (x < 3,2)
 			check("M6 face au mur : la lampe ne passe pas le mur", lp.x < 3.2, "x = %.3f" % lp.x)
+		if w == "avec":
+			_mask_name = "%s_masque.png" % v
+			var st: Dictionary = await _skin_stats(img)
+			print("MAINS %s peau : %d px, luminance p99,5 %.2f (max %.2f), saturation verte p99,5 %.2f (max %.2f)" % [
+				v, st.n, st.lum, st.lum_max, st.green, st.green_max])
+			if v == "devant_pc" or v == "inventaire":
+				check("M7 %s : peau ni brûlée ni verte" % v, st.n > 200 and st.lum <= 0.9 and st.green <= 0.35,
+					"%d px, luminance %.2f, vert %.2f" % [st.n, st.lum, st.green])
 	Game.mains_visibles = true
+
+
+static func _magenta(m: Image, x: int, y: int) -> bool:
+	var c := m.get_pixel(x, y)
+	return c.r > 0.75 and c.b > 0.75 and c.r - c.g > 0.25 and c.b - c.g > 0.25
+
+
+## Masque de la peau (une passe où la peau est peinte en magenta, sans éclairage) ; statistiques des
+## pixels de peau de la capture « img » : luminance (Rec. 709, valeurs affichées) et saturation des
+## teintes vertes (75° à 165°), centile 99,5 et maximum.
+func _skin_stats(img: Image) -> Dictionary:
+	var vm: Viewmodel = player.viewmodel
+	var mi := vm.model.get_node_or_null("Main") as MeshInstance3D
+	var out := {"n": 0, "lum": 0.0, "lum_max": 0.0, "green": 0.0, "green_max": 0.0}
+	if mi == null:
+		return out
+	var mk := StandardMaterial3D.new()
+	mk.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mk.albedo_color = Color(1, 0, 1)
+	mk.use_z_clip_scale = true
+	mk.z_clip_scale = Viewmodel.Z_CLIP
+	mk.use_fov_override = true
+	mk.fov_override = Viewmodel.FOV
+	var old := mi.get_surface_override_material(0)
+	mi.set_surface_override_material(0, mk)
+	await wait(0.4)
+	var m := get_viewport().get_texture().get_image()
+	mi.set_surface_override_material(0, old)
+	if shots != "" and _mask_name != "":
+		m.save_png(shots.path_join(_mask_name))
+	await wait(0.2)
+	var lums := PackedFloat32Array()
+	var greens := PackedFloat32Array()
+	# (masque érodé de 2 px : les bords, mêlés au fond par l'anticrénelage, ne comptent pas)
+	for y in range(2, m.get_height() - 2, 2):
+		for x in range(2, m.get_width() - 2, 2):
+			if not (_magenta(m, x, y) and _magenta(m, x - 2, y) and _magenta(m, x + 2, y) and _magenta(m, x, y - 2) and _magenta(m, x, y + 2)):
+				continue
+			var p := img.get_pixel(x, y)
+			lums.append(0.2126 * p.r + 0.7152 * p.g + 0.0722 * p.b)
+			var mx := maxf(p.r, maxf(p.g, p.b))
+			var mn := minf(p.r, minf(p.g, p.b))
+			var sat := (mx - mn) / mx if mx > 0.0 else 0.0
+			greens.append(sat if p.h * 360.0 >= 75.0 and p.h * 360.0 <= 165.0 else 0.0)
+	out.n = lums.size()
+	if lums.size() > 0:
+		lums.sort()
+		greens.sort()
+		var i := clampi(int(lums.size() * 0.995), 0, lums.size() - 1)
+		out.lum = lums[i]
+		out.lum_max = lums[lums.size() - 1]
+		out.green = greens[i]
+		out.green_max = greens[greens.size() - 1]
+	return out
