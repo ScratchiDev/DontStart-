@@ -3,3 +3,6 @@
 # sorties d'export
 /build/
 *.tmp
+# fichiers Python compilés (outils de godot/tools)
+__pycache__/
+*.pyc

@@ -779,7 +779,7 @@ func _update_light(on: bool, wall: float) -> void:
 		_beam_dist = INF
 	else:
 		_beam_dist = hp.distance_to(bh.position)
-		_beam_tint = _beam_tint.lerp(_soft_color(_tint_of(bh.collider), 0.7), 0.25 if not (figee or Game.autotest) else 1.0)
+		_beam_tint = _beam_tint.lerp(_soft_color(_tint_of(bh.collider), 0.85), 0.25 if not (figee or Game.autotest) else 1.0)
 	var k := 0.0 if _beam_dist == INF else clampf(0.45 / (_beam_dist * _beam_dist + 0.2), 0.0, 1.0)
 	var near := clampf(1.0 - (wall - 0.3) / 1.6, 0.0, 1.0) if wall < INF else 0.0
 	# (la lumière revient de là où le faisceau éclaire : devant la main, un peu au-dessus ; elle rase le
@@ -856,6 +856,15 @@ func _balance_points(size: Vector2) -> Array:
 		pts.append([Vector2i(Vector2(x, top - m) - half), "s"])
 		pts.append([Vector2i(Vector2(x, top - 3.0 * m) - half), "s"])
 	return pts.slice(0, BAL_COLS * BAL_ROWS)
+
+
+## Remet l'équilibre à son départ (appoint ×1, remplaçantes entières) : après un saut de la caméra
+## (bancs, chargement), pour ne pas garder le réglage d'un autre endroit.
+func reset_balance() -> void:
+	_bal_gain = 1.0
+	_bal_cap = 1.0
+	_bal_result = []
+	bal_stats = {}
 
 
 func _balance(delta: float, frozen: bool) -> void:
@@ -993,13 +1002,17 @@ func _balance_apply(data: PackedByteArray, pts: Array, fmt: int, frozen: bool, d
 	if contrast > BAL_CONTRAST:
 		# (trop d'écart : on baisse d'abord les remplaçantes et le rebond ; l'appoint ne monte que si le dos
 		# de la main est aussi plus sombre que la scène)
-		_bal_cap = maxf(_bal_cap * 0.85, 0.3)
-		if back < low or _bal_cap <= 0.31:
+		_bal_cap = maxf(_bal_cap * (0.7 if frozen else 0.85), 0.3)
+		# (jamais quand la main est déjà trop claire : l'appoint y nourrirait le halo, face au mur le dos
+		# de la main montait à 0,66 malgré le plafond de 0,55)
+		if want >= 1.0 and (back < low or _bal_cap <= 0.31):
 			want = maxf(want, minf(contrast / BAL_CONTRAST, 1.6))
 	elif want >= 1.0:
 		_bal_cap = minf(_bal_cap * 1.05, 1.0)
 	# (dans la bande : l'appoint redescend doucement, il reste au plus bas qui suffit)
 	var step := clampf(pow(want, 0.75), 0.7, 1.45) if want != 1.0 else 0.97
+	if frozen and want != 1.0:
+		step = clampf(want, 0.5, 2.0)      # (pose figée : réglage rapide, rien ne « pompe » à l'écran)
 	# (trop clair alors que l'appoint est déjà au plus bas : les remplaçantes et le rebond baissent)
 	if want < 1.0 and _bal_gain * step < 1.0:
 		_bal_cap = clampf(_bal_cap * step, 0.3, 1.0)
