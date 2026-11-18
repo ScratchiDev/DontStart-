@@ -21,7 +21,8 @@ Tous sous licence **CC0 1.0** (domaine public), téléchargés depuis [Poly Have
 - Matières ambientCG (`godot/assets/textures/`) : `PaintedPlaster017`, `PaintedWood009C`, `Wood027`, `Tiles133B`, `Carpet016`, `Fabric045`, `Wood008`, `Plastic004`, `Plastic013B`, `Porcelain001`, `Metal049B`, `Metal046B`, `PaintedMetal010`, `PaintedPlaster012`, `CardboardSet001`, `Wallpaper002B`, `Leather014`, `Cork003`, `Tape004`, `Paper001`, `Paper002`.
 - Décalques ambientCG (`godot/assets/decals/acg/`) : `Leaking001`, `Leaking002`, `Leaking003`, `Leaking005`, `Leaking007`, `Leaking009`, `SurfaceImperfections005`, `SurfaceImperfections006`, `SurfaceImperfections009`, `SurfaceImperfections010`, `SurfaceImperfections014`, `SurfaceImperfections017`, `Fingerprints001`, `Fingerprints004`, `Smear002`, `Smear005`, `Scratches001`, `Scratches004`, `Rust001` (couleur et opacité réunies en PNG, rugosité rangée dans une carte ORM).
 - Livres (`godot/assets/textures/books/`) : couvertures, toile, normale et ARM de `decorative_book_set_01` (Poly Haven, CC0). Les reliures anciennes de l'atlas sont générées pour le jeu par `godot/tools/assets_cc0.py` sur la toile et le cuir de ce même lot ; leurs titres dorés sont écrits en Liberation Serif (Red Hat, licence **SIL Open Font License 1.1** ; la police elle-même n'est pas distribuée).
-- Les papiers peints, le damier et les cartes ORM (occlusion, rugosité) sont retravaillés à partir de ces textures ; le tapis du couloir (`runner_couloir.png`) et le masque de la lampe de poche (`flashlight_cookie.png`) sont générés pour le jeu.
+- Les papiers peints, le damier et les cartes ORM (occlusion, rugosité) sont retravaillés à partir de ces textures ; le tapis du couloir (`runner_couloir.png`, puis `textures/runner/` sur la laine de `Carpet016`), les motifs des tapis (`textures/rugs/`, `godot/tools/make_rugs.py`, tissage de `Fabric045`) et le masque de la lampe de poche (`flashlight_cookie.png`) sont générés pour le jeu.
+- Photos d'accompagnement (« backplates ») de HDRI [Poly Haven](https://polyhaven.com), licence **CC0 1.0** : `autumn_park` (DSC_0158), `blouberg_sunrise_1` (IMG_0623), `christmas_photo_studio_07` (15), `small_cathedral_02` (DSC_0681, DSC_0701), `vignaioli` (DSC07532), `residential_garden` (IMG_0603). Recadrées, vieillies et peuplées de silhouettes dessinées par `godot/tools/make_photos.py` : photo du calendrier et `godot/assets/images/photos/`. Détail dans `godot/assets/images/SOURCES.md` et `ASSETS_CC0.md`.
 
 ## Textures
 
@@ -39,7 +40,10 @@ Tous sous licence **CC0 1.0** (domaine public), téléchargés depuis [Poly Have
 ## Images
 
 - Affiches, mot punaisé, étiquette de disquette, photo de famille, calendrier, tableau en liège, horloge, papiers, manuel, fenêtre d'en face, papier peint, lambris, crasse, décalques (taches, moisissure, griffures, empreintes) : générés pour le jeu par `godot/tools/make_assets.py`.
+- Images haute définition de la 0.3.4 (papiers, affiches, étiquettes, calendrier, horloge, liège, tableau des clés, photos, étiquettes des classeurs) : générées par `godot/tools/make_assets.py images` et `godot/tools/make_photos.py`, sur le grain des matières ambientCG `Paper001`, `Paper002`, `Cork003` (CC0) ; photos de fond Poly Haven ci-dessus.
+- Décalques d'usure (`godot/assets/decals/gen/` : taches de plafond, moisissure, fissures, suie, usure de passage, empreintes, crasse de pied de mur, masques de crasse HD) : générés pour le jeu par `godot/tools/make_wear.py` ; `decals/gen/acg/` : bords adoucis des décalques ambientCG ci-dessus (CC0).
 
 ## Polices
 
 - VT323 (The VT323 Project Authors, Peter Hull), IBM Plex Mono (IBM Corp.), UnifrakturMaguntia (j. 'mach' wust, Peter Wiegel), Reenie Beanie (James Grieshaber) — via [Google Fonts](https://fonts.google.com), licence **SIL Open Font License 1.1**. Les textes de licence sont à côté des fichiers, dans `godot/assets/fonts/OFL-*.txt` (dans le zip du jeu : dossier `licences/`).
+- Inter (Rasmus Andersson, licence **SIL Open Font License 1.1**) : typographie imprimée de certaines images générées (calendrier, horloge) ; seules les lettres déjà dessinées dans les PNG sont livrées, pas la police.

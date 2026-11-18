@@ -22,8 +22,8 @@ extends RefCounted
 ##
 ## Godot mélange la couleur d'un décalque selon alpha × albedo_mix, mais sa normale et son ORM selon
 ## l'alpha seul : opts.mix bas = la tache change surtout la rugosité (reflet mat ou mouillé). Sur une
-## vitre, un miroir ou un écran (opts.vitre = true), albedo_mix est multiplié par VITRE_MIX et l'alpha
-## par VITRE_ALPHA : une trace de doigts ou une traînée s'y voit dans le reflet (gras = plus mat), pas
+## vitre, un miroir ou un écran (opts.vitre = true), albedo_mix est multiplié par VITRE_MIX, l'alpha
+## par VITRE_ALPHA, et la carte de relief est omise : une trace de doigts ou une traînée s'y voit dans le reflet (gras = plus mat), pas
 ## comme une peinture blanche.
 ##
 ## Le décalque ne fait que remplacer (en partie) la couleur, il ne la multiplie pas : sa teinte doit être
@@ -120,9 +120,10 @@ const PATH_TINT := {
 }
 const PATH_MIX := {"parquet": 0.6, "moquette": 0.55, "carrelage": 0.3}
 ## Vitres, miroirs, écrans (opts.vitre = true) : facteurs sur albedo_mix et sur l'alpha (donc sur la
-## rugosité apportée : un gras à 0,8 sur un verre à 0,05 brillait comme de la craie sous la lampe).
+## rugosité apportée : un gras à 0,8 sur un verre à 0,05 brillait comme de la craie sous la lampe), et
+## pas de carte de relief.
 const VITRE_MIX := 0.3
-const VITRE_ALPHA := 0.6
+const VITRE_ALPHA := 0.5
 ## Fondus le long de la normale des aides wall_base et ceiling_corners (leur boîte n'est pas centrée sur
 ## la surface : avec les 0,3 par défaut, la bande perdait un quart de sa force).
 const HELPER_FADE := 0.08
@@ -244,7 +245,8 @@ static func basis_for(normal: Vector3, up: Vector3, rot := 0.0) -> Basis:
 ## size_u × size_v : taille sur la surface (m).
 ## opts : variant (int ; sinon hachage de la position), story (bool : existe aussi en rendu logiciel),
 ##   depth (m, épaisseur de projection), color (Color : teinte et alpha), alpha (multiplie l'alpha),
-##   mix (albedo_mix), vitre (bool : vitre, miroir, écran ; mix × VITRE_MIX, alpha × VITRE_ALPHA), rot (degrés autour de la
+##   mix (albedo_mix), vitre (bool : vitre, miroir, écran ; mix × VITRE_MIX, alpha × VITRE_ALPHA, sans
+##   relief), rot (degrés autour de la
 ##   normale), normal_fade, upper_fade, lower_fade,
 ##   fade_begin, fade_length (distance_fade), cull_mask, name, world (bool).
 ## Rend le Decal (déjà dans l'arbre), ou null (rendu logiciel hors récit, Basse, genre ou fichiers absents).
@@ -265,16 +267,18 @@ static func decal(parent: Node, kind: String, center: Vector3, normal: Vector3, 
 	var d := Decal.new()
 	d.name = String(opts.get("name", "Usure_" + kind))
 	d.texture_albedo = _load(f.albedo)
-	d.texture_normal = _load(f.normal)
+	var vitre := bool(opts.get("vitre", false))
+	# (sur une vitre, pas de relief : les crêtes d'une trace grasse y faisaient des éclats de lumière)
+	d.texture_normal = null if vitre else _load(f.normal)
 	d.texture_orm = _load(f.orm)
 	d.size = Vector3(maxf(size_u, 0.001), maxf(float(opts.get("depth", st.get("depth", 0.2))), 0.001), maxf(size_v, 0.001))
 	var col: Color = opts.get("color", st.get("color", Color.WHITE))
 	col.a *= float(opts.get("alpha", 1.0))
-	if bool(opts.get("vitre", false)):
+	if vitre:
 		col.a *= VITRE_ALPHA
 	d.modulate = col
 	var mix := float(opts.get("mix", st.get("mix", 1.0)))
-	if bool(opts.get("vitre", false)):
+	if vitre:
 		mix *= VITRE_MIX
 	d.albedo_mix = clampf(mix, 0.0, 1.0)
 	d.normal_fade = float(opts.get("normal_fade", NORMAL_FADE))

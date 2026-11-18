@@ -12,7 +12,7 @@ func _ready() -> void:
 	var cases := [
 		[Vector3(0.1, 0, 0.5), "tapis"], [Vector3(-2.0, 0, -2.0), "parquet"],
 		[Vector3(4.0, 0, 0.0), "tapis"], [Vector3(3.4, 0, 0.0), "parquet"],
-		[Vector3(6.0, 0, -5.0), "carrelage"], [Vector3(7.0, 0, 3.0), "moquette"], [Vector3(0.0, 0, 4.0), "moquette"],
+		[Vector3(6.0, 0, -5.0), "carrelage"], [Vector3(7.0, 0, 3.0), "moquette"], [Vector3(1.8, 0, 4.0), "moquette"],
 	]
 	var bad := 0
 	for c in cases:

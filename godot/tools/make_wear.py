@@ -660,12 +660,13 @@ def crasse_pied_mur(v, W=1024, H=128):
     front1 = spectral(1, W, 3.2, seed + 3)[0][None, :]
     PL = 0.5                                                  # dessus de la plinthe (11 cm sur 22)
     top = [0.16, 0.08, 0.24][(v - 1) % 3]
-    front = top + 0.09 * front1 + 0.03 * n2
-    # au-dessus de la plinthe : de 0 au front à ~0,6 juste au-dessus du dessus de plinthe
-    g = np.clip((y - front) / (PL - front), 0.0, 1.0)
+    front = np.clip(top + 0.09 * front1 + 0.03 * n2, 0.0, 0.26)
+    # au-dessus de la plinthe : de 0 au front à ~0,62 sur les 4 à 5 derniers centimètres avant la plinthe
+    # (le balai et l'aspirateur s'arrêtent là), d'intensité variable le long du mur
+    g = sstep(0.0, 1.0, np.clip((y - front) / (0.32 - front), 0.0, 1.0))
     # plus ou moins sale le long du mur (meubles déplacés, passages), sans couture (périodique)
     along = 0.55 + 0.45 * sstep(-1.2, 1.0, spectral(1, W, 2.4, seed + 7, kmin=2.0 / W)[0][None, :])
-    wall = 0.82 * g ** 1.4 * along * (0.72 + 0.28 * np.tanh(n2)) * (0.9 + 0.1 * np.tanh(n3)) * (y < PL + 0.01)
+    wall = 0.62 * g ** 1.3 * along * (0.72 + 0.28 * np.tanh(n2)) * (0.9 + 0.1 * np.tanh(n3)) * (y < PL + 0.01)
     # traînées verticales légères (eau de lavage qui a coulé, bas de serpillière)
     drips = sstep(0.6, 1.6, spectral(H, W, 1.6, seed + 6, kmin=6.0 / W, ax=1.0, ay=0.12)) * g * 0.25
     wall = np.clip(wall + drips * (y < PL + 0.01), 0.0, 0.85)

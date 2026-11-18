@@ -94,7 +94,8 @@ func _normal_from_height(file: String, strength: float) -> Texture2D:
 ## (pas de répétition visible d'un meuble à l'autre).
 func _grimy(m: StandardMaterial3D, scale := 0.9) -> StandardMaterial3D:
 	m.detail_enabled = true
-	m.detail_albedo = _grime_tex_s
+	# (masque HD de V1-USURE si le remplacement a déjà eu lieu ; grime.png avant, et en rendu logiciel)
+	m.detail_albedo = Surfaces.grime_texture(m) if _grime_tex_s != null else _grime_tex_s
 	m.detail_blend_mode = BaseMaterial3D.BLEND_MODE_MUL
 	m.detail_uv_layer = BaseMaterial3D.DETAIL_UV_2
 	m.uv2_triplanar = true
@@ -528,7 +529,7 @@ static func _ph_scene(ph_id: String) -> PackedScene:
 ## Charge le modèle, corrige ses matières (une fois par modèle) et referme portes et tiroirs.
 func _ph_instance(ph_id: String, opts: Dictionary) -> Node3D:
 	var inst := _ph_scene(ph_id).instantiate() as Node3D
-	_fix_ph_materials(inst, opts.get("tint", Color.WHITE))
+	_fix_ph_materials(inst, opts.get("tint", Color.WHITE), ph_id)
 	if opts.get("close", false):
 		for n in inst.find_children("*", "Node3D", true, false):
 			var nm := String(n.name).to_lower()
@@ -541,7 +542,9 @@ func _ph_instance(ph_id: String, opts: Dictionary) -> Node3D:
 ## faces arrière (deux fois plus de pixels, et une variante de shader qui peut bloquer llvmpipe). On
 ## remet l'élagage ; le découpage alpha (feuillages) devient opaque, le verre (fondu alpha) reste.
 ## Les matières sont partagées par toutes les copies du modèle : corrigées une seule fois (méta « ph_ok »).
-func _fix_ph_materials(inst: Node, tint: Color) -> void:
+## Le verre se reconnaît à « glass » ou « lens » dans le nom de la matière, l'id du modèle retiré (sinon
+## la matière principale « magnifying_glass_01 » de la loupe sortait toute en verre).
+func _fix_ph_materials(inst: Node, tint: Color, ph_id := "") -> void:
 	for n in inst.find_children("*", "MeshInstance3D", true, false):
 		var mi := n as MeshInstance3D
 		if mi.mesh == null:
@@ -556,7 +559,10 @@ func _fix_ph_materials(inst: Node, tint: Color) -> void:
 				m.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
 			elif m.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA_DEPTH_PRE_PASS:
 				m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA    # « BLEND » du glTF : fondu simple
-			if m.resource_name.to_lower().contains("glass"):
+			var mat_name := m.resource_name.to_lower()
+			if not ph_id.is_empty():
+				mat_name = mat_name.trim_prefix(ph_id.to_lower())
+			if mat_name.contains("glass") or mat_name.contains("lens"):
 				# vitres des horloges, cadres, lanternes : Blender les rend transparentes par transmission,
 				# que Godot ignore (le verre sortait opaque, de la couleur de la texture) : un verre teinté
 				m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA

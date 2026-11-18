@@ -33,16 +33,25 @@ static var hd_stats := Vector2i(-1, 0)
 ## Matière PBR (StandardMaterial3D) d'une texture « <base>_albedo.jpg / _normal_gl.jpg / _orm.jpg »,
 ## posée en triplanaire dans le monde, une répétition tous les « meters » mètres, teintée par « tint ».
 ## ao = false : pas d'occlusion ; rough < 0 : rugosité lue dans _orm, sinon rugosité constante (une carte
-## de moins à lire, trois fois en triplanaire).
-static func pbr(base: String, meters: float, tint := Color(1, 1, 1), normal_scale := 1.0, ao := true, aniso := false, rough := -1.0) -> StandardMaterial3D:
+## de moins à lire, trois fois en triplanaire). Albédo RGBA : « <base>_albedo.png » est pris quand le .jpg
+## manque (CardboardSet001, Tape004 : atlas de morceaux découpés). metal = true : métal lu dans le canal
+## bleu de _orm (Metal049B, Metal046B, PaintedMetal010).
+static func pbr(base: String, meters: float, tint := Color(1, 1, 1), normal_scale := 1.0, ao := true, aniso := false, rough := -1.0, metal := false) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
 	m.resource_name = base.get_file()
-	m.albedo_texture = load(DIR + base + "_albedo.jpg")
+	var albedo := DIR + base + "_albedo.jpg"
+	if not ResourceLoader.exists(albedo) and ResourceLoader.exists(DIR + base + "_albedo.png"):
+		albedo = DIR + base + "_albedo.png"
+	m.albedo_texture = load(albedo)
 	m.albedo_color = tint
 	m.normal_enabled = true
 	m.normal_texture = load(DIR + base + "_normal_gl.jpg")
 	m.normal_scale = normal_scale
-	var orm: Texture2D = load(DIR + base + "_orm.jpg") if ao or rough < 0.0 else null
+	var orm: Texture2D = load(DIR + base + "_orm.jpg") if ao or rough < 0.0 or metal else null
+	if metal:
+		m.metallic = 1.0
+		m.metallic_texture = orm
+		m.metallic_texture_channel = BaseMaterial3D.TEXTURE_CHANNEL_BLUE
 	if rough < 0.0:
 		m.roughness = 1.0
 		m.roughness_texture = orm
@@ -119,6 +128,7 @@ static func grime_texture(m: BaseMaterial3D = null) -> Texture2D:
 		return _hd_for(m)
 	if _grime_tex == null:
 		_grime_tex = load(DIR + "grime.png")
+		_hook_release()
 	return _grime_tex
 
 

@@ -127,7 +127,7 @@ func _decal_rules() -> void:
 	var d7 := Wear.decal(self, "traces_doigts", Vector3.ZERO, Vector3.BACK, Vector3.UP, 0.3, 0.3, {"vitre": true})
 	check("vitre : albedo_mix × VITRE_MIX, alpha × VITRE_ALPHA (la trace se voit dans le reflet)", d7 != null
 		and is_equal_approx(d7.albedo_mix, float(Wear.STYLE.traces_doigts.mix) * Wear.VITRE_MIX)
-		and is_equal_approx(d7.modulate.a, Wear.VITRE_ALPHA) and d7.texture_orm != null)
+		and is_equal_approx(d7.modulate.a, Wear.VITRE_ALPHA) and d7.texture_orm != null and d7.texture_normal == null)
 
 
 func _fallback() -> void:
