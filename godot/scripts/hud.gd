@@ -131,6 +131,7 @@ var _save_spin := 0.0
 var chapter: Control
 var _chapter_tw: Tween
 var _ui_player: AudioStreamPlayer
+var _style_key := ""
 
 
 func _ready() -> void:
@@ -297,6 +298,11 @@ func _label(c: Color) -> Label:
 ## Applique le style courant (Game.style_retro) et les options d'interface (fond et taille des sous-titres,
 ## point de visée…) aux mêmes nœuds : leurs textes ne changent pas.
 func _apply_style() -> void:
+	# (appelé à chaque changement de réglage, curseurs compris : rien à refaire si le style n'a pas changé)
+	var key := "%s|%d|%s|%d" % [UiStyle.net(), Game.subtitle_size, Game.subtitle_bg, Game.crosshair_mode]
+	if key == _style_key:
+		return
+	_style_key = key
 	net = UiStyle.net()
 	var th := Theme.new()
 	th.default_font = UiStyle.sans() if net else UiStyle.pixel()
