@@ -2241,11 +2241,17 @@ func run_preview(id: String) -> void:
 ## temporelle de 0,9) et la VoxelGI l'oublient ; sinon, sur un rendu lent (une image par seconde), la vue de
 ## nuit qui suit gardait sa lueur (nuit_a plus claire que nuit_b de 5 à 10/255 dans toutes les pièces).
 func lamp_gone() -> void:
+	# (l'historique du brouillard est remis à zéro : la reprojection coupée le temps de deux images)
+	var env: Environment = main.env
+	var rep := env.volumetric_fog_temporal_reprojection_enabled
+	env.volumetric_fog_temporal_reprojection_enabled = false
 	for i in LAMP_GONE_FRAMES:
+		if i == 2:
+			env.volumetric_fog_temporal_reprojection_enabled = rep
 		await RenderingServer.frame_post_draw
 
 
-const LAMP_GONE_FRAMES := 12
+const LAMP_GONE_FRAMES := 6
 
 
 ## Aperçus (lot V3-ETALONNAGE, revue DA) : coins à PREVIEW_INSET du mur, et jamais dans un objet : de la

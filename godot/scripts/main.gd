@@ -609,7 +609,7 @@ static func _cookie_profile(r: float, cor := COOKIE_CORONA) -> float:
 	var hot := 1.0 - 0.55 * smoothstep(0.24, 0.34, r)
 	var corona := lerpf(cor, cor * 0.8, smoothstep(0.45, 0.8, r))
 	var v := hot if r < 0.34 else lerpf(hot, corona, smoothstep(0.34, 0.45, r))
-	v *= 1.0 - 0.3 * exp(-pow((r - 0.40) / 0.035, 2.0))
+	v *= 1.0 - 0.2 * exp(-pow((r - 0.40) / 0.035, 2.0))
 	return v * (1.0 - smoothstep(0.80, 0.85, r))
 
 
