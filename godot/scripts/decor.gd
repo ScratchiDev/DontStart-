@@ -590,10 +590,14 @@ func _traces() -> void:
 		var p := start + Vector3(-i * step, 0, 0.09 if left else -0.09)
 		p.z += sin(i * 0.7) * 0.05
 		pts.append(p)
-		alphas.append(clampf(1.0 - float(i) / n * 0.5, 0.0, 1.0))
-	# (mélange fort : on doit les voir de loin, comme celles d'avant ; le relief et le mouillé en plus)
+		# (lot V2-MERE-FIN : elles pâlissent moins vers le lit, de 1 à 0,7 au lieu de 0,5 : la piste doit
+		# mener sous le lit, jusqu'au journal ; positions et nombre de pas inchangés, aucun tirage)
+		alphas.append(clampf(1.0 - float(i) / n * 0.3, 0.0, 1.0))
+	# (pieds sales et mouillés : décalques de Wear régénérés avec un cœur d'alpha de 0,85-0,9, couleur
+	# entière (mix 1) et assombrie : contraste pied / parquet d'au moins 35 % à 2-3 m dans le faisceau,
+	# comme la piste noire de la 0.3.3 ; le relief du bord et le mouillé en plus)
 	var feet := Wear.footprints(self, pts, {"each": true, "dir": Vector3.LEFT, "alphas": alphas, "story": true,
-		"mix": 0.85, "color": Color(0.85, 0.8, 0.75)})
+		"mix": 1.0, "color": Color(0.74, 0.7, 0.66)})
 	if feet.size() < n:
 		# (décalques de Wear absents : les empreintes d'avant)
 		for d in feet:

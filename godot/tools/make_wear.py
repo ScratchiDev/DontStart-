@@ -24,8 +24,9 @@ déterministe (graines fixes). Écrit dans godot/assets/decals/gen/ (avec les .i
     suie_1..2            512²       1 : halo au plafond au-dessus d'une ampoule ; 2 : panache sur un mur
     chemin_usure_1..2    512×1024   usure de passage (v = le long du chemin) : couleur presque blanche,
                                     teintée par Wear selon le sol ; mate
-    empreinte_1..6       256×512    pieds nus, orteils en haut ; impairs = pied gauche, pairs = droit ;
-                                    rugosité 0,2 (mouillé)
+    empreinte_1..6       256×512    pieds nus sales et mouillés, orteils en haut ; impairs = pied gauche,
+                                    pairs = droit ; cœur d'alpha 0,85-0,9 (lot V2-MERE-FIN), relief doux
+                                    du ménisque, rugosité 0,3 (mouillé) à 0,45
     crasse_pied_mur_1..3 1024×128   bande de pied de mur (0,22 m, Wear.wall_base) : crasse juste au-dessus
                                     de la plinthe de 11 cm (moitié basse de l'image), poussière sur la
                                     plinthe et dans l'angle du sol ; PÉRIODIQUE en u (les tronçons d'un même
@@ -593,7 +594,8 @@ def _foot_field(X, Y, v):
     """Champ d'un pied DROIT vu de dessus, orteils en haut (X : -0,5 à 0,5 de la longueur ; Y : 0 au
     bout des orteils, 1 au talon), et l'appui (0 à 1) en chaque point."""
     heel = ellipse_field(X, Y, 0.02, 0.85, 0.11, 0.122)
-    band = capsule_field(X, Y, 0.118, 0.43, 0.09, 0.78, 0.052)
+    # bord externe de la voûte (lot V2-MERE-FIN : plus large, et soudé à l'avant-pied comme sur une vraie trace)
+    band = capsule_field(X, Y, 0.1, 0.36, 0.08, 0.79, 0.064)
     ball = ellipse_field(X, Y, -0.012, 0.335, 0.172, 0.085, -0.17)
     toes = [(-0.11, 0.135, 0.055, 0.066), (-0.033, 0.112, 0.032, 0.038), (0.024, 0.126, 0.029, 0.034),
             (0.075, 0.155, 0.026, 0.031), (0.117, 0.197, 0.024, 0.028)]
@@ -602,7 +604,7 @@ def _foot_field(X, Y, v):
         # pied qui a glissé : talon traîné vers l'arrière, orteils étirés
         heel = smax(heel, ellipse_field(X, Y, 0.03, 0.9, 0.1, 0.11), 0.06)
         tf = [smax(t, ellipse_field(X, Y, cx, cy - 0.03, rx * 0.9, ry * 1.2, 0.1), 0.04) for t, (cx, cy, rx, ry) in zip(tf, toes)]
-    sole = smax(smax(heel, band, 0.12), ball, 0.1)
+    sole = smax(smax(heel, band, 0.14), ball, 0.14)
     # appui : talon et avant-pied francs, voûte externe plus légère, orteils au bout
     arch = sstep(0.42, 0.52, Y) * (1.0 - sstep(0.66, 0.76, Y))
     press = 1.0 - (0.42 if v != 2 else 0.6) * arch
@@ -617,7 +619,12 @@ def _foot_field(X, Y, v):
 
 
 def empreinte(n, W=256, H=512):
-    """n = 1..6 : (n + 1) // 2 = forme 1..3 ; n impair = pied gauche, pair = pied droit."""
+    """n = 1..6 : (n + 1) // 2 = forme 1..3 ; n impair = pied gauche, pair = pied droit.
+
+    Lot V2-MERE-FIN : des pieds sales et mouillés (poussière du grenier délayée), assez couvrants pour se
+    lire dans le faisceau à 2-3 m comme la piste noire de la 0.3.3 : cœur d'alpha 0,85-0,9 (talon,
+    avant-pied, orteils), voûte plus légère, bord où l'eau s'est ramassée un peu plus foncé ; relief doux
+    (le ménisque du bord accroche la lampe) et rugosité de mouillé (0,3 au cœur, 0,45 au bord séché)."""
     v = (n + 1) // 2
     left = n % 2 == 1
     seed = 6000 + n * 19
@@ -631,18 +638,28 @@ def empreinte(n, W=256, H=512):
     Y = Y + 0.005 * spectral(H, W, 2.6, seed + 2, kmin=3.0 / H)
     f, press = _foot_field(X, Y, v)
     shape = sstep(-0.012, 0.03, f)
-    fine = 0.8 + 0.2 * np.tanh(spectral(H, W, 1.3, seed + 3, kmin=24.0 / H))     # grain de la peau
-    broad = 0.82 + 0.18 * np.tanh(spectral(H, W, 2.6, seed + 4, kmin=2.0 / H))   # appui inégal
+    fine = 0.86 + 0.14 * np.tanh(spectral(H, W, 1.3, seed + 3, kmin=24.0 / H))    # grain de la peau
+    broad = 0.9 + 0.1 * np.tanh(spectral(H, W, 2.6, seed + 4, kmin=2.0 / H))      # appui inégal
     rim = np.clip(shape - sstep(0.02, 0.09, f), 0.0, 1.0)     # l'eau se ramasse au bord de l'appui
-    a = shape * press * fine * broad * 0.82 + rim * 0.22 * press
+    core = 0.5 + 0.5 * press                                  # voûte : la moitié de l'appui franc
+    a = shape * core * fine * broad * 0.97 + rim * 0.18 * press
     if v == 2:
-        # plus sèche : l'empreinte se défait par endroits
-        a *= 0.35 + 0.65 * sstep(-1.1, 0.3, spectral(H, W, 2.0, seed + 5, kmin=5.0 / H))
-    a = np.clip(a, 0.0, 0.95)
+        # plus sèche : l'empreinte se défait par endroits (sans disparaître)
+        a *= 0.6 + 0.4 * sstep(-1.1, 0.3, spectral(H, W, 2.0, seed + 5, kmin=5.0 / H))
+    a = np.clip(a, 0.0, 0.92)
     a *= edge_fade(H, W, 0.03, seed + 6)
+    # couleur : crasse grise un peu brune, plus foncée au bord (dépôt) qu'au cœur
+    dep = np.clip(rim * 1.4, 0.0, 1.0)
     rgb = np.zeros((H, W, 3))
-    rgb[...] = (0.095, 0.085, 0.075)
-    save_decal("empreinte_%d" % n, rgb, a, None, 1.0, 1.0, 0.2 - 0.05 * (fine - 0.8) * 5.0)
+    base = np.array((0.075, 0.066, 0.058))
+    edge = np.array((0.045, 0.04, 0.036))
+    rgb[...] = base
+    rgb = rgb * (1.0 - dep[..., None]) + edge * dep[..., None]
+    # relief : une pellicule à peine bombée et le ménisque du bord (léger : c'est de l'eau, pas de la boue)
+    height = blur(shape * 0.35 + rim * 0.65, 1.2)
+    rough = 0.3 + 0.15 * (1.0 - press) * shape + 0.05 * (fine - 0.86) / 0.14
+    rough = np.where(shape > 0.05, rough, 0.6)
+    save_decal("empreinte_%d" % n, rgb, a, height, 1.6, 1.0, np.clip(rough, 0.25, 0.6))
 
 
 # ------------------------------------------------------------------ crasse de pied de mur

@@ -16,8 +16,12 @@ extends Node
 ##                 baisse avec l'Ambiance (sinon la queue de la pluie survivrait au silence).
 ##   Master~<classe>, Ambiance~<classe>   (classe : ouverte, entrouverte, fermee, loin)
 ##                 occlusion : passe-bas et volume, renvoyés vers leur bus d'origine (voir acoustique.gd).
-##   Tonnerre      le tonnerre (play("thunder")) : passe-bas selon les fenêtres de la pièce, vers Master.
+##   Tonnerre      le tonnerre (play("thunder"), thunder()) : passe-bas selon les fenêtres de la pièce, vers
+##                 « Ambiance » (lot V2-CREATURE) : le silence de l'entité et le canard le coupent aussi (GDD § 4.4 :
+##                 une seconde de silence TOTAL) ; un tonnerre demandé pendant un silence attend sa fin.
 ##   Joueur        les pas du joueur (nœud Steps) : réverbération de la pièce où il est, vers Master.
+##   Entite        l'entité dans la maison (lot V2-CREATURE, creature_sfx.gd) : son souffle électrique, ses
+##                 imitations, son corps ; occulté (Entite~<classe>), jamais coupé par le silence.
 ## Les lecteurs 3D de Sfx voient les zones acoustiques (area_mask = Acoustique.AREA_MASK) et sont inscrits
 ## auprès de l'Acoustique de la maison (occlusion), créée par on_house_built (groupe « apres_maison »).
 ## Aucun tirage du hasard global n'est ajouté (la respiration et la pluie ont leur propre hasard).
@@ -35,6 +39,11 @@ const VARIANTS := {
 ## Sons fabriqués en code tant que le fichier n'existe pas (voir _synth).
 const SYNTH := ["heartbeat_loop", "hum_move", "chirp_1", "chirp_2", "chirp_3", "chirp_4"]
 
+## Sons écrits que le banc a calibrés à travers une porte (lot V2-SON) : ils gardent ce calibrage (méta
+## « recit » : Acoustique compense la baisse de volume des classes « fermee » et « loin »), les autres sons
+## s'éloignent vraiment derrière une porte fermée.
+const STORY_SOUNDS := ["snore", "breath_slow", "modem_chant", "pipe_knock", "babyphone_breath",
+	"footstep_wood_000", "footstep_wood_001", "footstep_wood_002", "footstep_wood_003", "footstep_wood_004"]
 ## Fin de chaîne de Master.
 const LIMIT_CEILING_DB := -1.0
 const LIMIT_RELEASE := 0.12
@@ -64,10 +73,19 @@ var acoustique: Acoustique
 var acoustique_on := true
 var _player: Node3D
 var _rng := RandomNumberGenerator.new()
+## Les sons de l'entité (lot V2-CREATURE) : signature, souffle électrique, imitations, corps, sursaut.
+var creature: CreatureSfx
+var _silence_until_ms := 0
+var _silence_end_ms := -100000   # fin du dernier silence (le son revient)
+var _silence_holds := 0
+var _silence_active := false     # un silence est en cours (pas encore relâché)
+var _pending_thunder: Array = []  # tonnerres demandés pendant un silence : [lecteur]
 
 ## Le silence de l'entité (avant qu'elle agisse) et les sursauts : Haunt les écoute pour le stress.
 signal silenced(seconds: float)
 signal stung(db: float)
+## Le silence de l'entité est fini (le son de la maison revient).
+signal silence_ended
 
 
 func _ready() -> void:
@@ -78,6 +96,9 @@ func _ready() -> void:
 	# bus « Voix » : l'entité qui parle (bips, bourdonnement), les voix ; le silence ne le coupe pas
 	_voice_bus = _ensure_bus("Voix")
 	_setup_mix()
+	creature = CreatureSfx.new()
+	creature.name = "Creature"
+	add_child(creature)
 
 
 ## Index d'un bus, créé s'il manque (à la fin : il peut envoyer vers tous ceux d'avant).
@@ -115,13 +136,15 @@ func _setup_mix() -> void:
 	_rev_buses.append(s)
 	for origin in Acoustique.OCCLUDED_DEFAULT:
 		_class_buses(origin)
-	var t := _ensure_bus("Tonnerre")
+	var t := _ensure_bus("Tonnerre", "Ambiance")
 	if AudioServer.get_bus_effect_count(t) == 0:
 		AudioServer.add_bus_effect(t, _lowpass(20000.0, 0))
 		AudioServer.set_bus_effect_enabled(t, 0, false)
 	var j := _ensure_bus("Joueur")
 	if AudioServer.get_bus_effect_count(j) == 0:
 		AudioServer.add_bus_effect(j, _reverb(Acoustique.REVERBS["Rev_chambre"], 1.0, 0.0))
+	# l'entité (lot V2-CREATURE) : occultée, jamais coupée par le silence
+	ensure_bus(CreatureSfx.BUS, "Master", true)
 	# fin de Master : le limiteur
 	var has_lim := false
 	for k in AudioServer.get_bus_effect_count(0):
@@ -198,16 +221,78 @@ func _acoustique() -> Acoustique:
 	return null
 
 
-## Juste avant qu'elle agisse : tous les sons d'ambiance se coupent net (et les réverbérations), puis
-## reviennent.
+## Juste avant qu'elle agisse : tous les sons d'ambiance se coupent d'un coup (pluie, maison, frigo, vent,
+## musique, tonnerre, et les réverbérations), puis reviennent en SILENCE_RETURN s. Le souffle du héros, son
+## cœur, les voix et l'entité (bus Voix, Entite) restent : dans le silence, il ne reste qu'eux.
+## Un silence plus long que celui en cours le prolonge ; un plus court ne l'abrège pas.
+const SILENCE_RETURN := 0.6
 func silence(seconds := 1.0) -> void:
 	silenced.emit(seconds)
+	var until := Time.get_ticks_msec() + int(seconds * 1000.0)
+	if _silence_tw and _silence_tw.is_valid() and _silence_until_ms > until and _amb_silence_db <= -79.0:
+		return
+	_silence_until_ms = until
+	_silence_active = true
 	if _silence_tw:
 		_silence_tw.kill()
 	_set_silence_db(-80.0)
+	if _silence_holds > 0:
+		return
 	_silence_tw = create_tween()
 	_silence_tw.tween_interval(seconds)
-	_silence_tw.tween_method(_set_silence_db, -40.0, 0.0, 0.6)
+	_silence_tw.tween_callback(_silence_release)
+	_silence_tw.tween_method(_set_silence_db, -40.0, 0.0, SILENCE_RETURN)
+
+
+## Silence tenu (lots suivants : son corps est tout près) : on = la maison se tait d'un coup et reste muette
+## jusqu'à silence_hold(false) (les appels s'emboîtent). Ne passe pas par le signal « silenced » (pas
+## d'impulsion de stress : c'est la présence, pas une action).
+func silence_hold(on: bool) -> void:
+	if on:
+		_silence_holds += 1
+		_silence_active = true
+		if _silence_tw:
+			_silence_tw.kill()
+		_set_silence_db(-80.0)
+		_silence_until_ms = 1 << 62
+		return
+	_silence_holds = maxi(0, _silence_holds - 1)
+	if _silence_holds == 0 and _amb_silence_db <= -79.0:
+		_silence_until_ms = Time.get_ticks_msec()
+		if _silence_tw:
+			_silence_tw.kill()
+		_silence_tw = create_tween()
+		_silence_tw.tween_callback(_silence_release)
+		_silence_tw.tween_method(_set_silence_db, -40.0, 0.0, SILENCE_RETURN)
+
+
+func _silence_release() -> void:
+	_silence_active = false
+	_silence_end_ms = Time.get_ticks_msec()
+	silence_ended.emit()
+	# les tonnerres retenus éclatent maintenant (un peu après : le silence ne doit pas finir sur un coup)
+	var held := _pending_thunder.duplicate()
+	_pending_thunder.clear()
+	for p in held:
+		if is_instance_valid(p):
+			get_tree().create_timer(0.35, false).timeout.connect(func() -> void:
+				if is_instance_valid(p):
+					(p as AudioStreamPlayer).play())
+
+
+## Temps restant du silence en cours (s), 0 s'il n'y en a pas ; INF pour un silence tenu.
+func silence_remaining() -> float:
+	if _silence_holds > 0:
+		return INF
+	if not is_silent():
+		return 0.0
+	return maxf(0.0, (_silence_until_ms - Time.get_ticks_msec()) / 1000.0)
+
+
+## Un éclair peut-il éclater maintenant (pas pendant un silence de l'entité, ni dans la demi-seconde qui
+## suit) ? Pour outside.gd (lot V2-MAISON) : reporter l'éclair tant que c'est faux, sans tirage en plus.
+func can_flash() -> bool:
+	return not is_silent() and _silence_holds == 0 and Time.get_ticks_msec() - _silence_end_ms > 500
 
 
 func _set_silence_db(v: float) -> void:
@@ -300,9 +385,27 @@ func play(sound: String, db := 0.0, pitch := 1.0, bus := "Master") -> AudioStrea
 	if p.stream == null:
 		p.queue_free.call_deferred()
 		return p
-	p.play()
 	p.finished.connect(p.queue_free)
+	if sound == "thunder" and (_silence_active or _silence_holds > 0):
+		# (le tirage est fait : l'ordre du hasard ne change pas ; seul le départ attend la fin du silence)
+		_pending_thunder.append(p)
+		return p
+	p.play()
 	return p
+
+
+## Le tonnerre d'un éclair, selon sa distance (pour outside.gd, lot V2-MAISON). delay : le délai éclair ->
+## tonnerre tiré par outside.gd (0,7 à 2,6 s, soit 240 à 900 m) : proche, il claque plus fort et plus aigu ;
+## loin, il roule plus bas et plus grave. Même tirage que play("thunder") (un seul randf_range) : remplacer
+## Sfx.play("thunder", -3.0, …) par Sfx.thunder(delay) ne change pas l'ordre du hasard. Retenu pendant un
+## silence de l'entité.
+const THUNDER_DB_NEAR := -3.0
+const THUNDER_DB_PER_S := -3.2
+const THUNDER_DELAY := [0.7, 2.6]
+func thunder(delay: float, db_offset := 0.0) -> AudioStreamPlayer:
+	var k := clampf((delay - float(THUNDER_DELAY[0])) / (float(THUNDER_DELAY[1]) - float(THUNDER_DELAY[0])), 0.0, 1.0)
+	var db := THUNDER_DB_NEAR + THUNDER_DB_PER_S * (delay - float(THUNDER_DELAY[0])) + db_offset
+	return play("thunder", minf(db, THUNDER_DB_NEAR + db_offset), 1.05 - 0.1 * k)
 
 
 ## Son placé dans la pièce (réverbération de la pièce où il est, occlusion selon le bus).
@@ -319,6 +422,8 @@ func play_at(sound: String, pos: Vector3, db := 0.0, pitch := 1.0, unit_size := 
 	if p.stream == null:
 		p.queue_free.call_deferred()
 		return p
+	if STORY_SOUNDS.has(sound):
+		p.set_meta("recit", true)
 	attach(p)
 	p.play()
 	_twin(p)
@@ -481,6 +586,8 @@ func loop(sound: String, db := 0.0, at := Vector3.INF, parent: Node = null, bus 
 	spatial.bus = bus
 	holder.add_child(spatial)
 	spatial.global_position = at
+	if STORY_SOUNDS.has(sound):
+		spatial.set_meta("recit", true)
 	if s:
 		attach(spatial)
 		spatial.play()
@@ -556,10 +663,15 @@ func music(track: String, db := -12.0, fade := 3.0) -> void:
 	create_tween().tween_property(cur, "volume_db", db, fade)
 
 
-## Coup de sursaut (à utiliser avec parcimonie).
+## Coup de sursaut (à utiliser avec parcimonie) : le grave de sting.ogg, et devant le visage un souffle
+## électrique large bande avec la signature de l'entité (creature_sfx.gd) ; « Sursauts réduits » : la
+## signature seule, plafonnée à -14 dB, sans choc.
 func sting(db := -2.0) -> void:
 	stung.emit(db)
-	play("sting", db, 1.0)
+	if creature:
+		creature.sting(db)
+	else:
+		play("sting", db, 1.0)
 
 
 # ------------------------------------------------------------------ battement de cœur (stress)

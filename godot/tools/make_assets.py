@@ -4288,6 +4288,10 @@ FLOOR = [plan_etage, croquis_fractionneur, photo_couloir, silhouette_feed, clovi
 # Niveaux : la pluie à -20 dBFS efficaces (crête limitée à 0,9), chaque souffle à BREATH_LEVELS (dBFS efficaces
 # sur sa partie active) : les rapports calme / tendu / panique et inspiration / expiration sont dans les fichiers,
 # le volume d'ensemble dans Sfx.BREATH_POINTS.
+# Lot V2-CREATURE (revue 3) : 48 kHz (SON_RATE) ; pluie en boucles de 36 s, gouttes plafonnées (plus de « pop-corn »),
+# ruissellement plus présent, une seule source à l'appui de fenêtre et à un rythme qui flotte (facteur de crête
+# ≤ 20 dB, vérifié) ; souffles avec les petits bruits de la bouche (langue, salive), le sifflement des narines au
+# calme et une turbulence qui bouge.
 
 def _peaks(f, specs):
     """Résonances (formants) : somme de pics de Lorentz [(centre, largeur, gain)]."""
@@ -4336,7 +4340,10 @@ def _wrap_add(out, i, ev):
         out[:m - k] += ev[k:]
 
 
-def rain_glass(k, sec=16.0):
+SON_RATE = 48000
+
+
+def rain_glass(k, sec=36.0):
     """Pluie contre la vitre, entendue de la pièce (boucle de sec s) : le ruissellement dehors à travers le
     verre, les gouttes qui claquent sur la vitre (petites résonances du carreau), l'appui de fenêtre qui
     goutte à son rythme, un filet d'eau qui coule de temps en temps. k : variante (1 à 3)."""
@@ -4349,15 +4356,16 @@ def rain_glass(k, sec=16.0):
     # 1) la pluie dehors, à travers le verre : bruit rose, bosse dans le grave-médium, aigus amortis
     wash = _spec_filter(rs.randn(n), lambda f: (np.maximum(f, 30) / 1000.0) ** -0.5 * _butter(f, 3800, 2) * _butter(f, 140, 2, high=True)
                         * (1 + 0.8 * np.exp(-0.5 * ((f - 450) / 260) ** 2)))
-    wash = wash / np.std(wash) * 0.0045 * gust
+    wash = wash / np.std(wash) * 0.0065 * gust
     # 2) les gouttes sur la vitre : impulsions courtes, résonances du carreau entre 1,8 et 6 kHz
     drops = np.zeros(n)
-    rate = 22.0 + 5.0 * k
+    rate = (22.0 + 5.0 * k) * 1.4            # plus de gouttes, plus petites : un crépitement, pas des claques
     count = int(rate * sec)
     pos = rs.uniform(0, n, count).astype(int)
     for i in pos:
         g = gust[i]
-        a = min(rs.pareto(2.2) * 0.026, 0.1) * g
+        a = rs.pareto(2.2) * 0.026
+        a = 0.022 * np.tanh(a / 0.022) * g     # plafond doux : plus de goutte qui claque seule
         if a < 0.002:
             continue
         m = int(RATE * 0.03)
@@ -4365,7 +4373,7 @@ def rain_glass(k, sec=16.0):
         f0 = rs.uniform(1800, 6000)
         ev = (np.sin(2 * np.pi * f0 * tt) * np.exp(-tt / rs.uniform(0.002, 0.006))
               + 0.6 * np.sin(2 * np.pi * f0 * rs.uniform(1.4, 2.2) * tt) * np.exp(-tt / 0.0025)
-              + 0.8 * rs.randn(m) * np.exp(-tt / 0.0006)
+              + 0.45 * rs.randn(m) * np.exp(-tt / 0.0006)
               + 0.5 * np.sin(2 * np.pi * rs.uniform(350, 800) * tt) * np.exp(-tt / 0.004))
         _wrap_add(drops, i, ev * a)
     drops = _spec_filter(drops, lambda f: _butter(f, 7000, 2) * _butter(f, 200, 1, high=True))
@@ -4376,17 +4384,20 @@ def rain_glass(k, sec=16.0):
         beats = max(1, int(round(sec / period)))
         period = sec / beats
         f_b = rs.uniform(900, 1500)
+        mute = src == (k % 2)                 # une source sur deux se tait (selon la variante)
+        drift = np.cumsum(rs.normal(0, 0.06 * period, beats))
+        drift -= np.linspace(0, drift[-1], beats)   # le rythme flotte, mais la boucle raccorde
         for b in range(beats):
-            if rs.rand() < 0.12:
+            if rs.rand() < 0.3 or mute:
                 continue
-            i = int((b * period + rs.normal(0, 0.035) + src * 0.37) * RATE) % n
+            i = int((b * period + drift[b] + rs.normal(0, 0.05 * period) + src * 0.37) * RATE) % n
             m = int(RATE * 0.09)
             tt = np.arange(m) / RATE
             fb = f_b * rs.uniform(0.93, 1.07)
             ph = 2 * np.pi * np.cumsum(fb * (1 + 0.9 * (1 - np.exp(-tt / 0.012)))) / RATE
             plip = np.sin(ph) * np.exp(-tt / 0.022) * np.clip(tt / 0.0008, 0, 1)
             tick = rs.randn(m) * np.exp(-tt / 0.0012) * 0.35
-            _wrap_add(sill, i, (plip + tick) * rs.uniform(0.6, 1.0) * (0.075 if src == 0 else 0.045))
+            _wrap_add(sill, i, (plip + tick) * rs.uniform(0.6, 1.0) * (0.05 if src == 0 else 0.035))
     sill = _spec_filter(sill, lambda f: _butter(f, 4200, 2) * _butter(f, 300, 2, high=True))
     # 4) un filet d'eau qui coule sur la vitre, par moments (deux passages par boucle)
     trickle = _spec_filter(rs.randn(n), lambda f: np.exp(-0.5 * (np.log(np.maximum(f, 1) / 2200) / 0.45) ** 2))
@@ -4520,6 +4531,25 @@ def breath(kind, way, k):
         v = _voiced(m, rs.uniform(95, 120), [(700, 180, 1.0), (1200, 250, 0.6), (2550, 400, 0.25)], rs, jitter=0.04)
         v = v / (np.std(v) + 1e-12) * np.hanning(m) * 0.22
         y[:m] += v * np.linspace(1, 0.3, m)
+    # les petits bruits de la bouche (lot V2-CREATURE) : la langue qui se décolle au début d'une inspiration
+    # par la bouche, quelques bulles de salive ; au calme, le sifflement des narines
+    if way == 'in' and kind != 'calme' and rs.rand() < 0.55:
+        m = int(RATE * 0.006)
+        tm = np.arange(m) / RATE
+        click = rs.randn(m) * np.exp(-tm / 0.0012)
+        click = _spec_filter(np.concatenate([click, np.zeros(m)]), lambda f: _peaks(f, [(2300, 1400, 1.0), (4200, 1600, 0.5)]))[:m]
+        at = int(RATE * rs.uniform(0.0, 0.03))
+        y[at:at + m] += click / (np.max(np.abs(click)) + 1e-9) * np.max(np.abs(y)) * 0.18
+    for _ in range(rs.poisson(1.2 if kind != 'calme' else 0.5)):
+        m = int(RATE * 0.004)
+        tm = np.arange(m) / RATE
+        bub = np.sin(2 * np.pi * rs.uniform(2500, 4500) * tm) * np.exp(-tm / 0.0009)
+        at = int(rs.uniform(0.1, 0.9) * (n - m))
+        y[at:at + m] += bub * np.max(np.abs(y)) * rs.uniform(0.04, 0.1)
+    if kind == 'calme' and way == 'in':
+        whistle = _shaped_noise(n, lambda f, u: np.exp(-0.5 * ((f - 2900 * sh) / 120) ** 2), rs)
+        whistle /= np.std(whistle) + 1e-12
+        y += whistle * env * np.std(y) * 0.12 * (0.5 + 0.5 * np.clip(_smooth_noise(n, 6, rs), -1, 1))
     fade = int(RATE * 0.012)
     y[:fade] *= np.linspace(0, 1, fade) ** 2
     y[-fade:] *= np.linspace(1, 0, fade) ** 2
@@ -4538,6 +4568,21 @@ BREATH_LEVELS = {('calme', 'in'): -24.0, ('calme', 'out'): -25.5, ('tendu', 'in'
                  ('panique', 'in'): -19.5, ('panique', 'out'): -20.5}
 
 
+def _son_rate(fn):
+    """Les sons de cette section sont calculés à SON_RATE (48 kHz) : RATE est changé le temps de l'appel."""
+    def run():
+        global RATE
+        old = RATE
+        RATE = SON_RATE
+        try:
+            fn()
+        finally:
+            RATE = old
+    run.__name__ = fn.__name__
+    return run
+
+
+@_son_rate
 def breaths():
     for kind in BREATH_SPECS:
         for way in ('in', 'out'):
@@ -4545,19 +4590,22 @@ def breaths():
                 y = breath(kind, way, k)
                 y *= 10 ** (BREATH_LEVELS[(kind, way)] / 20) / _active_rms(y)
                 assert np.max(np.abs(y)) < 0.98, (kind, way, k, np.max(np.abs(y)))
-                write_wav('breath_%s_%s_%d.wav' % (kind, way, k), y)
+                write_wav('breath_%s_%s_%d.wav' % (kind, way, k), y, SON_RATE)
 
 
+@_son_rate
 def rains():
     for k in (1, 2, 3):
         y = rain_glass(k)
         y *= 10 ** (-20.0 / 20) / np.sqrt(np.mean(y ** 2))
         y *= min(1.0, 0.9 / np.max(np.abs(y)))
-        write_wav('rain_glass_%d.wav' % k, y)
+        crest = 20 * np.log10(np.max(np.abs(y)) / np.sqrt(np.mean(y ** 2)))
+        assert crest <= 20.0, ('rain_glass_%d : facteur de crête %.1f dB' % (k, crest))
+        write_wav('rain_glass_%d.wav' % k, y, SON_RATE)
     y = rain_roof()
     y *= 10 ** (-20.0 / 20) / np.sqrt(np.mean(y ** 2))
     y *= min(1.0, 0.9 / np.max(np.abs(y)))
-    write_wav('rain_roof.wav', y)
+    write_wav('rain_roof.wav', y, SON_RATE)
 
 
 SON = [rains, breaths]

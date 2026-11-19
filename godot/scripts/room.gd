@@ -168,27 +168,208 @@ func _build_window() -> void:
 			Game.hint("La pluie, le lampadaire. Et en face, à la fenêtre allumée, quelqu'un qui regarde par ici.", 4.5)
 		else:
 			Game.hint("La pluie, le lampadaire. La fenêtre d'en face est vide, maintenant.", 4.5))
-	# rideaux (plis animés par un shader)
-	var curtain := ShaderMaterial.new()
-	curtain.shader = load("res://shaders/curtain.gdshader")
-	for side in [-1.0, 1.0]:
-		var pm := PlaneMesh.new()
-		pm.orientation = PlaneMesh.FACE_Z
-		pm.size = Vector2(0.5, fh + 0.5)
-		pm.subdivide_width = 28
-		pm.subdivide_depth = 6
-		var mi := MeshInstance3D.new()
-		mi.mesh = pm
-		mi.material_override = curtain
-		mi.position = Vector3(x + 0.17, fy + 0.12, fz + side * (fw / 2.0 + 0.12))
-		mi.rotation.y = PI / 2.0
-		add_child(mi)
+	# rideaux (plis animés par un shader). Vraie carte (lot V2-MERE-FIN) : des pans de velours modelés (plis
+	# en relief avec leurs normales, froncés sous la tringle, ourlet droit), anneaux sur la tringle ; rendu
+	# logiciel : les plans d'avant et curtain.gdshader.
+	if Builder.soft_render():
+		var curtain := ShaderMaterial.new()
+		curtain.shader = load("res://shaders/curtain.gdshader")
+		for side in [-1.0, 1.0]:
+			var pm := PlaneMesh.new()
+			pm.orientation = PlaneMesh.FACE_Z
+			pm.size = Vector2(0.5, fh + 0.5)
+			pm.subdivide_width = 28
+			pm.subdivide_depth = 6
+			var mi := MeshInstance3D.new()
+			mi.mesh = pm
+			mi.material_override = curtain
+			mi.position = Vector3(x + 0.17, fy + 0.12, fz + side * (fw / 2.0 + 0.12))
+			mi.rotation.y = PI / 2.0
+			add_child(mi)
+	else:
+		_velvet_curtains(x, fy, fz, fw, fh)
 	_box(Vector3(0.03, 0.03, fw + 0.8), Vector3(x + 0.17, WIN_Y1 + 0.36, fz), mats.metal)
-	# radiateur sous la fenêtre
-	for i in 9:
-		_box(Vector3(0.07, 0.52, 0.06), Vector3(x + 0.13, 0.48, fz - 0.4 + i * 0.1), mats.paint)
-	_box(Vector3(0.04, 0.04, 1.0), Vector3(x + 0.13, 0.76, fz), mats.paint)
+	# radiateur sous la fenêtre (vraie carte : en fonte, à colonnes ; rendu logiciel : les neuf barres d'avant)
+	if Builder.soft_render():
+		for i in 9:
+			_box(Vector3(0.07, 0.52, 0.06), Vector3(x + 0.13, 0.48, fz - 0.4 + i * 0.1), mats.paint)
+		_box(Vector3(0.04, 0.04, 1.0), Vector3(x + 0.13, 0.76, fz), mats.paint)
+	else:
+		_build_radiator(x + 0.13, fz)
 	_collider(Vector3(0.2, 0.6, 1.0), Vector3(x + 0.13, 0.4, fz))
+
+
+## Radiateur en fonte à colonnes sous la fenêtre (lot V2-MERE-FIN, vraie carte) : 14 éléments à deux
+## colonnes arrondies reliées par un voile, moyeux haut et bas qui se touchent presque d'un élément à
+## l'autre, deux paires de pieds, peinture crème écaillée (PaintedMetal010 : la fonte sombre dans les éclats,
+## rugosité 0,6), tuyau de cuivre qui sort du parquet, robinet à volant noir. Le collider reste celui d'avant.
+func _build_radiator(cx: float, fz: float) -> void:
+	var n := 14
+	var step := 0.061
+	var z0 := fz - (n - 1) * step / 2.0
+	var z1 := fz + (n - 1) * step / 2.0
+	var y0 := 0.2
+	var y1 := 0.72
+	var col := CapsuleMesh.new()
+	col.radius = 0.0165
+	col.height = y1 - y0 + 0.04
+	col.radial_segments = 10
+	col.rings = 2
+	var hub := Builder.cylinder_mesh(0.024, 0.024, step - 0.006, 12, 0.004)
+	var nipple := Builder.cylinder_mesh(0.017, 0.017, step, 10, 0.0)
+	var web := Builder.bevel_box_mesh(Vector3(0.036, y1 - y0 - 0.06, 0.007), 0.0025)
+	var crown := Builder.bevel_box_mesh(Vector3(0.07, 0.022, step - 0.012), 0.008)
+	var parts := []
+	for i in n:
+		var zz := z0 + i * step
+		for sx in [-0.025, 0.025]:
+			parts.append([col, _at(Vector3(cx + sx, (y0 + y1) / 2.0, zz))])
+		parts.append([web, _at(Vector3(cx, (y0 + y1) / 2.0, zz))])
+		parts.append([crown, _at(Vector3(cx, y1 + 0.004, zz))])
+		for yy in [y0, y1]:
+			parts.append([hub, _at(Vector3(cx, yy, zz), Vector3(PI / 2.0, 0, 0))])
+			if i < n - 1:
+				parts.append([nipple, _at(Vector3(cx, yy, zz + step / 2.0), Vector3(PI / 2.0, 0, 0))])
+	for zz in [z0 + step, z1 - step]:
+		for sx in [-0.025, 0.025]:
+			parts.append([Builder.cylinder_mesh(0.012, 0.016, y0 - 0.02, 10), _at(Vector3(cx + sx, (y0 - 0.02) / 2.0, zz))])
+	var paint := Surfaces.pbr("PaintedMetal010/PaintedMetal010", 0.3, Color(0.93, 0.87, 0.74), 1.0, true, false, 0.6, true)
+	var rad := _merged(parts, Surfaces.grime(paint, 0.5, 3), self, true)
+	rad.name = "Radiateur"
+	# tuyaux de cuivre (retour en bas côté fenêtre, arrivée et robinet en haut de l'autre côté)
+	var copper := _grimy(_plain(Color(0.5, 0.31, 0.2), 0.42, 0.85), 1.4)
+	var pipe := [
+		[Builder.cylinder_mesh(0.011, 0.011, 0.07, 10, 0.0), _at(Vector3(cx, y0, z0 - 0.055), Vector3(PI / 2.0, 0, 0))],
+		[_sm(0.0135, 10), _at(Vector3(cx, y0, z0 - 0.09))],
+		[Builder.cylinder_mesh(0.011, 0.011, y0, 10, 0.0), _at(Vector3(cx, y0 / 2.0, z0 - 0.09))],
+		[Builder.cylinder_mesh(0.011, 0.011, 0.07, 10, 0.0), _at(Vector3(cx, y1, z1 + 0.055), Vector3(PI / 2.0, 0, 0))],
+		[Builder.cylinder_mesh(0.011, 0.011, y1 - 0.05, 10, 0.0), _at(Vector3(cx, (y1 - 0.05) / 2.0, z1 + 0.1))],
+		[Builder.cylinder_mesh(0.02, 0.02, 0.012, 14, 0.0), _at(Vector3(cx, 0.006, z0 - 0.09))],
+		[Builder.cylinder_mesh(0.02, 0.02, 0.012, 14, 0.0), _at(Vector3(cx, 0.006, z1 + 0.1))],
+	]
+	_merged(pipe, copper, self)
+	_merged([[Builder.cylinder_mesh(0.019, 0.021, 0.075, 14), _at(Vector3(cx, y1 - 0.012, z1 + 0.1))],
+		[Builder.cylinder_mesh(0.006, 0.006, 0.04, 8, 0.0), _at(Vector3(cx, y1 + 0.04, z1 + 0.1))]], _brass(), self)
+	var wheel := TorusMesh.new()
+	wheel.inner_radius = 0.02
+	wheel.outer_radius = 0.03
+	wheel.rings = 18
+	wheel.ring_segments = 6
+	_merged([[wheel, _at(Vector3(cx, y1 + 0.062, z1 + 0.1))]], _plain(Color(0.07, 0.06, 0.05), 0.45), self)
+
+
+## Rideaux de velours (lot V2-MERE-FIN, vraie carte) : deux pans modelés, plis en relief (trois ondes de
+## 9 à 16 cm, phases fixes, plus amples en bas, serrées et froncées sous la tringle), ourlet droit avec un
+## repli, normales et tangentes calculées ; velours (velour_velvet, Poly Haven, CC0) bordeaux, rugosité
+## 0,85, reflet rasant (rim) 0,5 ; le même petit courant d'air qu'avant (CURTAIN_SHADER, en haut immobile).
+## Anneaux de laiton sur la tringle.
+func _velvet_curtains(x: float, fy: float, fz: float, fw: float, fh: float) -> void:
+	var m := ShaderMaterial.new()
+	var sh := Shader.new()
+	sh.code = CURTAIN_SHADER
+	m.shader = sh
+	m.set_shader_parameter("albedo_tex", load("res://assets/textures/velour_velvet/velour_velvet_albedo.jpg"))
+	m.set_shader_parameter("normal_tex", load("res://assets/textures/velour_velvet/velour_velvet_normal_gl.jpg"))
+	var top := WIN_Y1 + 0.34
+	var h := fh + 0.5
+	var bottom := top - h
+	var rings := []
+	for side in [-1.0, 1.0]:
+		var zc: float = fz + side * (fw / 2.0 + 0.12)
+		var mesh := _curtain_mesh(0.5, h, 1.7 if side < 0.0 else 4.3)
+		var mi := _mesh_node(mesh, m, self, "Rideau", true)
+		mi.position = Vector3(x + 0.17, bottom, zc)
+		mi.rotation.y = PI / 2.0
+		for k in 7:
+			var t := TorusMesh.new()
+			t.inner_radius = 0.019
+			t.outer_radius = 0.025
+			t.rings = 12
+			t.ring_segments = 5
+			rings.append([t, _at(Vector3(x + 0.17, WIN_Y1 + 0.36, zc - 0.22 + k * 0.073), Vector3(0, 0, PI / 2.0))])
+	_merged(rings, _brass(), self)
+
+
+## Un pan de rideau : largeur w (le long de x du maillage), hauteur h (y de 0 à h, le haut à la tringle),
+## plis vers +z et -z. ph : phase propre au pan.
+static func _curtain_mesh(w: float, h: float, ph: float) -> ArrayMesh:
+	var nx := 56
+	var ny := 30
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var pts := []
+	var uvs := []
+	for j in ny + 1:
+		var v := float(j) / ny            # 0 en bas, 1 en haut
+		var y := v * h
+		var row := []
+		var urow := []
+		var u_len := 0.0
+		var prev := Vector3.ZERO
+		for i in nx + 1:
+			var u := float(i) / nx
+			var xx := (u - 0.5) * w
+			var low := 1.0 - v
+			# trois ondes (9 à 16 cm), plus amples vers le bas ; froncées en haut (onde courte, 6 cm)
+			var amp := 0.018 + 0.03 * low * low
+			var d := amp * (sin(xx / 0.016 + ph) * 0.5 + sin(xx / 0.024 + ph * 1.7 + v * 0.8) * 0.33 + sin(xx / 0.013 + ph * 0.6) * 0.17)
+			d += smoothstep(0.88, 1.0, v) * 0.012 * sin(xx / 0.0095 + ph)
+			# l'ourlet : une bande retournée de 5 cm, légèrement plus épaisse
+			d += smoothstep(0.05, 0.0, y) * 0.004
+			# le pan tombe un peu vers l'intérieur en bas (poids du tissu)
+			var p := Vector3(xx * (1.0 - 0.04 * low), y, d)
+			if i > 0:
+				u_len += p.distance_to(prev)
+			prev = p
+			row.append(p)
+			urow.append(Vector2(u_len, h - y))
+		pts.append(row)
+		uvs.append(urow)
+	for j in ny:
+		for i in nx:
+			var a: Vector3 = pts[j][i]
+			var b: Vector3 = pts[j][i + 1]
+			var c: Vector3 = pts[j + 1][i]
+			var d2: Vector3 = pts[j + 1][i + 1]
+			var ua: Vector2 = uvs[j][i]
+			var ub: Vector2 = uvs[j][i + 1]
+			var uc: Vector2 = uvs[j + 1][i]
+			var ud: Vector2 = uvs[j + 1][i + 1]
+			for q in [[a, ua], [b, ub], [c, uc], [b, ub], [d2, ud], [c, uc]]:
+				st.set_uv(q[1])
+				st.add_vertex(q[0])
+	st.index()
+	st.generate_normals()
+	st.generate_tangents()
+	return st.commit()
+
+
+const CURTAIN_SHADER := """
+shader_type spatial;
+render_mode cull_disabled, diffuse_burley;
+uniform sampler2D albedo_tex : source_color, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform sampler2D normal_tex : hint_normal, filter_linear_mipmap_anisotropic, repeat_enable;
+uniform vec3 tint = vec3(0.25, 0.5, 0.33);
+uniform float meters = 0.35;
+uniform float sway = 0.015;
+uniform float height = 1.75;
+void vertex() {
+	float low = clamp(1.0 - VERTEX.y / height, 0.0, 1.0);
+	VERTEX.z += sin(TIME * 0.7 + VERTEX.y * 2.0) * sway * low;
+}
+void fragment() {
+	vec2 uv = UV / meters;
+	vec3 a = texture(albedo_tex, uv).rgb * tint;
+	// envers (côté vitre) : la doublure, un peu plus terne
+	ALBEDO = FRONT_FACING ? a : a * 0.7;
+	NORMAL_MAP = texture(normal_tex, uv).rgb;
+	NORMAL_MAP_DEPTH = 0.8;
+	ROUGHNESS = 0.85;
+	RIM = 0.5;
+	RIM_TINT = 0.6;
+	SPECULAR = 0.3;
+}
+"""
 
 
 # ------------------------------------------------------------------ meubles
@@ -209,7 +390,9 @@ func _build_furniture() -> void:
 		mm.rotation.y = mouse.rotation.y
 	_hide_meshes(prop("books", Vector3(0.68, desk_top, -2.08), -14.0, Vector3(0.26, 0, 0), false))
 	_book_stack(Vector3(0.68, desk_top, -2.08), deg_to_rad(-14.0))
-	prop("lampRoundTable", Vector3(0.6, desk_top, -2.42), 20.0, Vector3(0, 0.4, 0), false)
+	# (vraie carte, lot V2-MERE-FIN : la lampe d'architecte à sa vraie taille, 0,52 m comme au bureau, au lieu
+	# d'un jouet de 0,4 m ; rendu logiciel : la taille d'avant)
+	prop("lampRoundTable", Vector3(0.6, desk_top, -2.42), 20.0, Vector3(0, 0.4 if Builder.soft_render() else 0.52, 0), false)
 	chair = prop("chairDesk", seat_pos, 180.0, Vector3(0.56, 0.95, 0.56), true, {"carpet": Color(0.08, 0.09, 0.12)})
 	_build_bin(Vector3(0.32, 0, -2.32))
 	# enceinte colonne (le pied de la radio : même hauteur que l'enceinte Kenney d'avant, 0,78 m)
@@ -245,7 +428,10 @@ func _build_furniture() -> void:
 		wardrobe_doors.append(n as Node3D)
 	# l'étagère de la disquette, garnie d'un vieux papier d'étagère clair (la disquette noire s'y détache
 	# dans le rond de la lampe de poche)
-	_box(Vector3(0.86, 0.02, 0.45), Vector3(-2.55, 1.02, -2.3), _grimy(_plain(Color(0.6, 0.56, 0.47), 0.9), 1.5))
+	if Builder.soft_render():
+		_box(Vector3(0.86, 0.02, 0.45), Vector3(-2.55, 1.02, -2.3), _grimy(_plain(Color(0.6, 0.56, 0.47), 0.9), 1.5))
+	else:
+		_wardrobe_shelf(Vector3(-2.55, 1.02, -2.3))
 	_build_floppy(Vector3(-2.42, 1.035, -2.22))
 	_dress_wardrobe(wardrobe)
 
@@ -482,13 +668,46 @@ func _rod(a: Vector3, b: Vector3, r: float, seg := 8) -> Array:
 	return [Builder.cylinder_mesh(r, r, v.length(), seg), Transform3D(Basis(Quaternion(Vector3.UP, v.normalized())), (a + b) / 2.0)]
 
 
+## L'étagère de la disquette, vraie carte (lot V2-MERE-FIN) : une planche de chêne clair (chant visible,
+## arrondi à l'avant) garnie d'un vieux papier d'étagère à petits carreaux délavés, un peu jauni, dont le
+## bord avant retombe de 1 cm ; la disquette noire s'y détache toujours dans le rond de la lampe de poche.
+## Même encombrement que la planche d'avant (0,86 × 0,02 × 0,45, centre en « c »).
+func _wardrobe_shelf(c: Vector3) -> void:
+	var oak := (mats.wood as StandardMaterial3D).duplicate() as StandardMaterial3D
+	oak.albedo_color = Color(0.95, 0.85, 0.72)
+	var plank := _mesh_node(Builder.rounded_box_mesh(Vector3(0.86, 0.02, 0.45), 0.004, 3), oak, self, "Etagere")
+	plank.position = c
+	var img := Image.create_empty(128, 128, true, Image.FORMAT_RGB8)
+	var base := Color(0.86, 0.82, 0.7)
+	var ink := Color(0.52, 0.6, 0.66)
+	for yy in 128:
+		for xx in 128:
+			var bx := 1.0 if (xx % 32) < 12 else 0.0
+			var by := 1.0 if (yy % 32) < 12 else 0.0
+			var k := 0.28 * (bx + by) + 0.12 * bx * by
+			var grain := 0.03 * sin(xx * 1.7 + yy * 0.9) * sin(yy * 2.3)
+			img.set_pixel(xx, yy, base.lerp(ink, k) * (1.0 + grain))
+	img.generate_mipmaps()
+	var paper := StandardMaterial3D.new()
+	paper.albedo_texture = ImageTexture.create_from_image(img)
+	paper.roughness = 0.9
+	Surfaces.world_uv(paper, 0.12)
+	paper = _grimy(paper, 1.5)
+	var liner := _mesh_node(Builder.box_mesh(Vector3(0.84, 0.0015, 0.43), 0.0), paper, self, "PapierEtagere")
+	liner.position = c + Vector3(0, 0.011, 0)
+	var lip := _mesh_node(Builder.box_mesh(Vector3(0.84, 0.012, 0.0015), 0.0), paper, self, "PapierBord")
+	lip.position = c + Vector3(0, 0.005, 0.2265)
+
+
 ## L'armoire de la disquette (Kenney, gardée : ses portes s'ouvrent, sa boîte d'interaction et l'étagère de
 ## la disquette sont réglées sur elle) habillée en armoire de campagne : bois sombre ciré, portes à
 ## panneaux moulurés (enfants des portes : ils tournent avec elles), corniche, ceinture, côté mouluré,
 ## ferrures en laiton, et une vieille valise posée dessus. Rien ne change pour le jeu.
 func _dress_wardrobe(wardrobe: Node3D) -> void:
 	var wood := (mats.wood_dark as StandardMaterial3D).duplicate() as StandardMaterial3D
-	wood.albedo_color = Color(0.6, 0.47, 0.38)
+	var fancy := not Builder.soft_render()
+	# (vraie carte, lot V2-MERE-FIN : un chêne foncé ciré plutôt que le bordeaux d'avant)
+	wood.albedo_color = Color(0.62, 0.53, 0.48) if fancy else Color(0.6, 0.47, 0.38)
 	var brass := _brass()
 	var inst: Node3D = null
 	for c in wardrobe.get_children():
@@ -527,6 +746,15 @@ func _dress_wardrobe(wardrobe: Node3D) -> void:
 			var ph := y1 - y0
 			var cy := (y0 + y1) / 2.0
 			var fw := 0.024      # largeur de la moulure
+			if fancy:
+				# (vraie carte) moulures arrondies et panneau à plate-bande : un relief chanfreiné qui accroche
+				# la lumière sur ses quatre pentes
+				parts.append([Builder.bevel_box_mesh(Vector3(pw, fw, 0.016), 0.006), _at(Vector3(cx, y1 - fw / 2.0, 0.008))])
+				parts.append([Builder.bevel_box_mesh(Vector3(pw, fw, 0.016), 0.006), _at(Vector3(cx, y0 + fw / 2.0, 0.008))])
+				parts.append([Builder.bevel_box_mesh(Vector3(fw, ph - 2.0 * fw + 0.004, 0.016), 0.006), _at(Vector3(cx - pw / 2.0 + fw / 2.0, cy, 0.008))])
+				parts.append([Builder.bevel_box_mesh(Vector3(fw, ph - 2.0 * fw + 0.004, 0.016), 0.006), _at(Vector3(cx + pw / 2.0 - fw / 2.0, cy, 0.008))])
+				parts.append([Builder.bevel_box_mesh(Vector3(pw - 2.0 * fw - 0.03, ph - 2.0 * fw - 0.03, 0.016), 0.011), _at(Vector3(cx, cy, 0.004))])
+				continue
 			parts.append([_bm(Vector3(pw, fw, 0.016)), _at(Vector3(cx, y1 - fw / 2.0, 0.008))])
 			parts.append([_bm(Vector3(pw, fw, 0.016)), _at(Vector3(cx, y0 + fw / 2.0, 0.008))])
 			parts.append([_bm(Vector3(fw, ph - 2.0 * fw, 0.016)), _at(Vector3(cx - pw / 2.0 + fw / 2.0, cy, 0.008))])
@@ -540,9 +768,22 @@ func _dress_wardrobe(wardrobe: Node3D) -> void:
 	var bz := -size.z / 2.0          # dos (contre le mur)
 	var top := size.y
 	var cp := []
-	cp.append([_bm(Vector3(size.x + 0.02, 0.02, size.z + 0.01)), _at(Vector3(0, top - 0.01, 0.005))])
-	cp.append([_bm(Vector3(size.x + 0.05, 0.06, size.z + 0.025)), _at(Vector3(0, top + 0.03, (fz + 0.025 + bz) / 2.0))])
-	cp.append([_bm(Vector3(size.x + 0.1, 0.035, size.z + 0.05)), _at(Vector3(0, top + 0.0775, (fz + 0.05 + bz) / 2.0))])
+	if fancy:
+		# (vraie carte) corniche profilée en doucine (un loft de rectangles aux coins vifs, le dos au ras du
+		# meuble), socle mouluré sur trois côtés avec quatre pieds d'angle et un tablier en retrait
+		_merged([[_cornice_mesh(size.x, size.z, top), Transform3D.IDENTITY]], wood, wardrobe, true)
+		for sx in [-1.0, 1.0]:
+			for zz in [fz - 0.045, bz + 0.05]:
+				cp.append([Builder.bevel_box_mesh(Vector3(0.085, 0.13, 0.09), 0.008), _at(Vector3(sx * (size.x / 2.0 - 0.035), 0.065, zz + (0.02 if zz > 0.0 else 0.0)))])
+		cp.append([Builder.bevel_box_mesh(Vector3(size.x - 0.12, 0.075, 0.024), 0.006), _at(Vector3(0, 0.1, fz))])
+		cp.append([Builder.bevel_box_mesh(Vector3(size.x + 0.024, 0.03, 0.03), 0.01), _at(Vector3(0, 0.15, fz + 0.01))])
+		for sx in [-1.0, 1.0]:
+			cp.append([Builder.bevel_box_mesh(Vector3(0.024, 0.075, size.z - 0.17), 0.006), _at(Vector3(sx * (size.x / 2.0 + 0.006), 0.1, 0.0))])
+			cp.append([Builder.bevel_box_mesh(Vector3(0.03, 0.03, size.z + 0.01), 0.01), _at(Vector3(sx * (size.x / 2.0 + 0.012), 0.15, 0.005))])
+	else:
+		cp.append([_bm(Vector3(size.x + 0.02, 0.02, size.z + 0.01)), _at(Vector3(0, top - 0.01, 0.005))])
+		cp.append([_bm(Vector3(size.x + 0.05, 0.06, size.z + 0.025)), _at(Vector3(0, top + 0.03, (fz + 0.025 + bz) / 2.0))])
+		cp.append([_bm(Vector3(size.x + 0.1, 0.035, size.z + 0.05)), _at(Vector3(0, top + 0.0775, (fz + 0.05 + bz) / 2.0))])
 	cp.append([_bm(Vector3(size.x + 0.02, 0.06, 0.022)), _at(Vector3(0, 0.24, fz + 0.011))])
 	for sx in [-1.0, 1.0]:
 		var xf: float = sx * (size.x / 2.0 + 0.008)
@@ -569,6 +810,31 @@ func _dress_wardrobe(wardrobe: Node3D) -> void:
 	case_.position -= Vector3(box.get_center().x, box.position.y, box.get_center().z)
 	lay.position = Vector3(0.03, top + 0.095, -0.02)
 	lay.rotation.y = deg_to_rad(-7.0)
+
+
+## Corniche de l'armoire (vraie carte) : un loft de rectangles à coins vifs qui suit un profil en doucine
+## (talon, gorge, quart-de-rond, listel) sur 9,5 cm ; le dos reste au ras du meuble (contre le mur).
+static func _cornice_mesh(w: float, d: float, top: float) -> ArrayMesh:
+	# [hauteur au-dessus du dessus du meuble, saillie]
+	var prof := [[-0.012, 0.0], [-0.004, 0.006], [0.006, 0.008], [0.012, 0.006], [0.02, 0.01], [0.032, 0.02],
+		[0.045, 0.034], [0.056, 0.042], [0.066, 0.046], [0.074, 0.05], [0.09, 0.052], [0.095, 0.05]]
+	var secs := []
+	var ys := PackedFloat32Array()
+	for e in prof:
+		var o := float(e[1])
+		var hx := w / 2.0 + o
+		var hz := d / 2.0 + o / 2.0
+		var ring := PackedVector2Array()
+		# rectangle à coins vifs, sens trigonométrique, 4 points par côté (les normales restent nettes)
+		var pts := [Vector2(hx, -hz), Vector2(hx, hz), Vector2(-hx, hz), Vector2(-hx, -hz)]
+		for k in 4:
+			var a: Vector2 = pts[k]
+			var b: Vector2 = pts[(k + 1) % 4]
+			for q in 4:
+				ring.append(a.lerp(b, q / 4.0) + Vector2(0.0, o / 2.0))
+		secs.append(ring)
+		ys.append(top + float(e[0]))
+	return Builder.loft_mesh(secs, ys, true)
 
 
 ## Bois des meubles Kenney gardés (bureau, étagère) : noyer foncé ciré plutôt que le bois clair des
@@ -1177,12 +1443,71 @@ func _build_floor_lamp(at: Vector3) -> void:
 		parts.append(_rod(Vector3(0, ys + hs - 0.004, 0), Vector3(cos(a), 0, sin(a)) * (rt - 0.004) + Vector3(0, ys + hs - 0.004, 0), 0.0025, 4))
 	parts.append(_rod(Vector3(0, ys + 0.2, 0), Vector3(0, ys + hs, 0), 0.004, 6))
 	_merged(parts, brass, root)
-	var cloth := _grimy(_plain(Color(0.6, 0.52, 0.38), 1.0), 1.3)
-	var liner := _grimy(_plain(Color(0.66, 0.6, 0.48), 1.0), 1.3)
-	_merged([[_cm(rt, rb, hs, 40, false, false), _at(Vector3(0, ys + hs / 2.0, 0))]], cloth, root)
-	_merged([[_cm(rt - 0.003, rb - 0.003, hs - 0.002, 40, false, false, true), _at(Vector3(0, ys + hs / 2.0, 0))]], liner, root)
+	if Builder.soft_render():
+		var cloth := _grimy(_plain(Color(0.6, 0.52, 0.38), 1.0), 1.3)
+		var liner := _grimy(_plain(Color(0.66, 0.6, 0.48), 1.0), 1.3)
+		_merged([[_cm(rt, rb, hs, 40, false, false), _at(Vector3(0, ys + hs / 2.0, 0))]], cloth, root)
+		_merged([[_cm(rt - 0.003, rb - 0.003, hs - 0.002, 40, false, false, true), _at(Vector3(0, ys + hs / 2.0, 0))]], liner, root)
+	else:
+		_lamp_shade(root, ys, hs, rt, rb)
 	_merged([[_sm(0.032, 12), _at(Vector3(0, ys + 0.175, 0))]], _plain(Color(0.86, 0.84, 0.78), 0.3), root)
 	_collider(Vector3(0.3, ys + hs, 0.3), at + Vector3(0, (ys + hs) / 2.0, 0))
+
+
+## Abat-jour plissé (lot V2-MERE-FIN, vraie carte) : tissu tissé (Fabric045, CC0) couleur parchemin, 44 plis
+## creux, translucide (backlight 0,4 : la lumière passe à travers la toile), doublure intérieure plus claire,
+## galons tressés en haut et en bas, cercle bas de l'armature. ys : bas de l'abat-jour, hs : hauteur,
+## rt / rb : rayons du haut et du bas.
+func _lamp_shade(root: Node3D, ys: float, hs: float, rt: float, rb: float) -> void:
+	var cloth := Surfaces.pbr_acg("Fabric045/Fabric045", 0.12, Color(0.98, 0.86, 0.64), 0.5)
+	cloth.backlight_enabled = true
+	cloth.backlight = Color(0.4, 0.33, 0.22)
+	cloth.resource_name = "AbatJour"
+	var liner := Surfaces.pbr_acg("Fabric045/Fabric045", 0.12, Color(1.0, 0.95, 0.82), 0.3)
+	liner.backlight_enabled = true
+	liner.backlight = Color(0.32, 0.27, 0.18)
+	var outer := []
+	var inner := []
+	var ysl := PackedFloat32Array()
+	var nring := 6
+	var ns := 176
+	for i in nring + 1:
+		var t := float(i) / nring
+		var r := lerpf(rb, rt, t)
+		var ro := PackedVector2Array()
+		var ri := PackedVector2Array()
+		for j in ns:
+			var th := TAU * j / ns
+			# pli en V arrondi : 44 plis
+			var w := absf(fposmod(th * 44.0 / TAU, 1.0) - 0.5) * 2.0
+			var d := (w * w * (3.0 - 2.0 * w) - 0.5) * 0.009 * (0.85 + 0.15 * t)
+			ro.append(Vector2(cos(th), sin(th)) * (r + d))
+			ri.append(Vector2(cos(th), sin(th)) * (r + d - 0.0025))
+		outer.append(ro)
+		inner.append(ri)
+		ysl.append(ys + t * hs)
+	var o := _mesh_node(Builder.loft_mesh(outer, ysl, false), cloth, root, "AbatJour", true)
+	o.position = Vector3.ZERO
+	_mesh_node(Builder.loft_mesh(inner, ysl, false, true), liner, root, "Doublure")
+	# galons (haut et bas) et cercle bas de l'armature
+	var braid := _grimy(_plain(Color(0.42, 0.33, 0.22), 0.9), 1.3)
+	var gal := []
+	for e in [[ys + 0.006, rb + 0.004], [ys + hs - 0.006, rt + 0.004]]:
+		var tor := TorusMesh.new()
+		tor.inner_radius = float(e[1]) - 0.005
+		tor.outer_radius = float(e[1]) + 0.004
+		tor.rings = 64
+		tor.ring_segments = 6
+		var tr := _at(Vector3(0, float(e[0]), 0))
+		tr.basis = tr.basis.scaled(Vector3(1.0, 1.4, 1.0))
+		gal.append([tor, tr])
+	_merged(gal, braid, root)
+	var wire := TorusMesh.new()
+	wire.inner_radius = rb - 0.006
+	wire.outer_radius = rb - 0.002
+	wire.rings = 48
+	wire.ring_segments = 4
+	_merged([[wire, _at(Vector3(0, ys + 0.004, 0))]], _grimy(_plain(Color(0.36, 0.28, 0.17), 0.4, 0.85), 1.5), root)
 
 
 ## Portemanteau sur pied en bois sombre : fût tourné, quatre pieds, six patères à boule ; un long manteau
@@ -1215,6 +1540,12 @@ func _build_coat_rack(at: Vector3) -> void:
 		parts.append([_sm(0.015, 8), _at(p1)])
 		tips.append(p1)
 	_merged(parts, mats.wood_dark, root)
+	if not Builder.soft_render():
+		# (vraie carte, lot V2-MERE-FIN) un vrai manteau de laine, pendu par sa bride à la patère qui
+		# regarde la pièce : quelqu'un debout dans le coin, de face
+		_hang_coat(root, tips[4], Vector3(cos(TAU * 4.0 / 6.0), 0, sin(TAU * 4.0 / 6.0)))
+		_collider(Vector3(0.5, 1.75, 0.5), at + Vector3(0, 0.875, 0))
+		return
 	# le manteau, pendu à la première patère (cône aplati, épaules arrondies)
 	var wool := _grimy(_plain(Color(0.085, 0.08, 0.075), 1.0), 1.2)
 	var dir0 := Vector3(1, 0, 0)
@@ -1235,6 +1566,126 @@ func _build_coat_rack(at: Vector3) -> void:
 	shoulders.scale = Vector3(1.25, 0.55, 0.5)
 	root.add_child(shoulders)
 	_collider(Vector3(0.5, 1.75, 0.5), at + Vector3(0, 0.875, 0))
+
+
+## Le manteau (lot V2-MERE-FIN, vraie carte) : un long pardessus de laine anthracite, pendu par la bride
+## de son col au bout de la patère « tip » (repère du portemanteau), le dos contre le fût, le devant vers
+## « dir » : épaules de 0,42 m qui tombent depuis le crochet, col, revers croisé, sept plis verticaux qui se
+## creusent vers le bas, bas évasé à 1,14 m sous le crochet (on voit le vide dessous), deux manches
+## pendantes un peu en avant, trois boutons. Laine : le tissage de Fabric045 (ambientCG, CC0) en normale,
+## albédo ≈ 0,06 linéaire, rugosité 1, reflet rasant 0,3 ; dans la cuisson VoxelGI (la lampe accroche les plis).
+func _hang_coat(root: Node3D, tip: Vector3, dir: Vector3) -> void:
+	var wool := Surfaces.pbr_acg("Fabric045/Fabric045", 0.08, Color(0.29, 0.28, 0.285), 0.7)
+	wool.rim_enabled = true
+	wool.rim = 0.25
+	wool.rim_tint = 0.5
+	wool.resource_name = "LaineManteau"
+	var holder := Node3D.new()
+	holder.name = "Manteau"
+	root.add_child(holder)
+	holder.position = tip + dir * 0.085 + Vector3(0, 0.012, 0)
+	# devant (+z du manteau) vers « dir »
+	holder.rotation.y = atan2(dir.x, dir.z)
+	var mi := _mesh_node(_coat_mesh(), wool, holder, "Laine", true)
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+	var btn := []
+	for y in [-0.5, -0.66, -0.82]:
+		var r := _coat_ring_at(y, 256)
+		var q: Vector2 = r[int(round((PI / 2.0 - 0.2) / TAU * 256.0))]
+		btn.append([Builder.cylinder_mesh(0.011, 0.011, 0.007, 12, 0.0015), _at(Vector3(q.x, y, q.y + 0.002), Vector3(PI / 2.0, 0, 0))])
+	_merged(btn, _plain(Color(0.06, 0.05, 0.045), 0.35), holder)
+
+
+## L'anneau du corps du manteau à la hauteur y (profil interpolé), « ns » points.
+static func _coat_ring_at(y: float, ns: int) -> PackedVector2Array:
+	var prof := COAT_PROFILE
+	var v := [0.2, 0.1, 0.0]
+	for i in prof.size() - 1:
+		var a: Array = prof[i]
+		var b: Array = prof[i + 1]
+		if y >= float(a[0]) and y <= float(b[0]):
+			var k := (y - float(a[0])) / (float(b[0]) - float(a[0]))
+			v = [lerpf(a[1], b[1], k), lerpf(a[2], b[2], k), lerpf(a[3], b[3], k)]
+			break
+	return _coat_ring(v[0], v[1], v[2], y, ns, 0.0045 * smoothstep(-0.02, -0.12, y), 0.0, _coat_top_z(y))
+
+
+## Le haut du manteau revient vers le crochet (la bride du col est dessus) : décalage du centre des anneaux.
+static func _coat_top_z(y: float) -> float:
+	return -0.085 * smoothstep(-0.17, 0.0, y)
+
+
+## [y, demi-largeur, demi-épaisseur, profondeur des plis] du bas (y = -1,14) jusqu'au crochet (y = 0).
+const COAT_PROFILE := [
+	[-1.14, 0.25, 0.118, 0.032], [-1.0, 0.24, 0.114, 0.028], [-0.85, 0.226, 0.109, 0.022],
+	[-0.7, 0.213, 0.105, 0.016], [-0.55, 0.204, 0.102, 0.012], [-0.42, 0.201, 0.101, 0.008],
+	[-0.3, 0.207, 0.103, 0.005], [-0.2, 0.212, 0.105, 0.003], [-0.14, 0.206, 0.102, 0.001],
+	[-0.1, 0.18, 0.093, 0.0], [-0.07, 0.145, 0.083, 0.0], [-0.045, 0.108, 0.07, 0.0],
+	[-0.025, 0.07, 0.052, 0.0], [-0.01, 0.04, 0.034, 0.0], [0.0, 0.018, 0.02, 0.0]]
+
+
+static func _coat_ring(a: float, b: float, fold: float, y: float, ns: int, lapel: float, cx := 0.0, cz := 0.0) -> PackedVector2Array:
+	var ring := PackedVector2Array()
+	ring.resize(ns)
+	var e := 2.0 / 2.6
+	for j in ns:
+		var th := TAU * j / ns
+		var c := cos(th)
+		var sn := sin(th)
+		var px := a * signf(c) * pow(absf(c), e)
+		var pz := b * signf(sn) * pow(absf(sn), e)
+		var nrm := Vector2(px / (a * a), pz / (b * b)).normalized()
+		# plis : deux ondes autour du corps, phases fixes, plus marqués sur les grandes faces
+		var f := fold * (sin(th * 7.0 + 0.6 + y * 1.3) * 0.55 + sin(th * 12.0 + 2.1 - y * 2.0) * 0.25 + sin(th * 3.0 + 1.3) * 0.35) * (0.45 + 0.55 * absf(sn))
+		# le bord du devant (revers croisé) : un ressaut le long de la ligne de boutonnage
+		var dl := wrapf(th - (PI / 2.0 - 0.32), -PI, PI)
+		f += lapel * exp(-dl * dl / 0.003)
+		ring[j] = Vector2(cx, cz) + Vector2(px, pz) + nrm * f
+	return ring
+
+
+static func _coat_mesh() -> ArrayMesh:
+	var ns := 64
+	var secs := []
+	var ys := PackedFloat32Array()
+	for r in COAT_PROFILE:
+		var y := float(r[0])
+		var lap := 0.0045 * smoothstep(-0.02, -0.12, y)
+		secs.append(_coat_ring(float(r[1]), float(r[2]), float(r[3]), y, ns, lap, 0.0, _coat_top_z(y)))
+		ys.append(y)
+	# ourlet inégal : le bas du manteau n'est pas une ligne droite (le tissu pend plus bas par endroits)
+	var body := Builder.loft_mesh(secs, ys, false)
+	var arr := body.surface_get_arrays(0)
+	var vv: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+	for i in vv.size():
+		var q := vv[i]
+		var k := smoothstep(-0.9, -1.14, q.y)
+		if k > 0.0:
+			var th := atan2(q.z, q.x)
+			q.y += k * (0.017 * sin(th * 3.0 + 1.0) + 0.008 * sin(th * 7.0 + 0.4) - 0.01)
+			vv[i] = q
+	arr[Mesh.ARRAY_VERTEX] = vv
+	var body2 := ArrayMesh.new()
+	body2.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	var st := SurfaceTool.new()
+	st.append_from(body2, 0, Transform3D.IDENTITY)
+	# manches : tubes aplatis pendus le long du corps, un peu en avant ; coude froissé, poignet évasé
+	for sx in [-1.0, 1.0]:
+		var ssecs := []
+		var sys := PackedFloat32Array()
+		var k := 12
+		for i in k + 1:
+			var t := float(i) / k              # 0 au poignet, 1 à l'épaule
+			var y := lerpf(-0.8, -0.135, t)
+			var cx: float = sx * lerpf(0.235, 0.17, t * t)
+			var cz := lerpf(0.035, 0.0, t)
+			var elbow := exp(-pow((t - 0.45) / 0.12, 2.0))
+			var rx := lerpf(0.052, 0.058, t) + 0.006 * (1.0 - t)
+			var rz := lerpf(0.06, 0.07, t)
+			ssecs.append(_coat_ring(rx, rz, 0.006 + 0.008 * elbow, y * 3.0 + sx, 24, 0.0, cx, cz))
+			sys.append(y)
+		st.append_from(Builder.loft_mesh(ssecs, sys, false), 0, Transform3D.IDENTITY)
+	return st.commit()
 
 
 ## Les ampoules du lustre brillent avec le plafonnier (au-dessus de 1, le halo de la lueur les entoure).
@@ -1960,6 +2411,7 @@ func _build_dust() -> void:
 ## départ → bureau → armoire → porte : tout est posé sur des meubles ou contre les murs.
 func dress_details() -> void:
 	_detail_objects()
+	_fill_room()
 	_wear_room()
 	if decor and decor.has_method("dress"):
 		decor.dress()
@@ -1999,6 +2451,141 @@ func _detail_objects() -> void:
 			Vector3(1.5, t + 0.0035, -2.4), Vector3(1.44, t + 0.03, -2.56)], 0.0032, cable)
 		decor._tube([Vector3(1.616, t + 0.01, -2.07), Vector3(1.6, t + 0.0032, -2.13), Vector3(1.54, t + 0.0032, -2.2),
 			Vector3(1.535, t + 0.0032, -2.42), Vector3(1.45, t + 0.04, -2.57)], 0.0026, cable)
+
+
+## Habiter la chambre (lot V2-MERE-FIN ; vraie carte, après la mesure de B16) : la pièce de 6,4 × 5,2 m
+## paraissait vide entre le tapis et les murs. Un fauteuil bergère (ArmChair_01, Poly Haven, CC0) contre le
+## mur de la porte, tourné vers la fenêtre, un plaid plié dessus ; un guéridon et ses livres à côté ; un
+## carton ouvert (des pulls, des papiers) au pied du mur sud ; des pantoufles au bord du lit. Tout est hors
+## du trajet départ → bureau → armoire → porte, loin des boîtes d'interaction et des empreintes ; le
+## fauteuil et le guéridon ont leur collision (nommées « Fauteuil » et « Gueridon »).
+func _fill_room() -> void:
+	var chair_at := Vector3(2.72, 0.0, -0.82)
+	# (tissu gris clair du modèle passé en vieux rose fané, bois plus sombre : il ne doit pas briller dans la
+	# vue de départ, à côté de l'écran)
+	var arm := detail("ArmChair_01", chair_at, -80.0, Vector3.ZERO, {"sync": true, "shadow": true, "tint": Color(0.6, 0.47, 0.44)})
+	if arm == null:
+		return
+	var col := _collider(Vector3(0.76, 0.95, 0.84), chair_at + Vector3(0, 0.475, 0))
+	col.name = "Fauteuil"
+	# plaid de laine plié en quatre sur l'assise
+	var plaid := MeshInstance3D.new()
+	plaid.name = "Plaid"
+	plaid.mesh = pillow_mesh(0.42, 0.34, 0.05)
+	plaid.material_override = _rug_mat(Color(0.33, 0.2, 0.16))
+	plaid.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+	arm.add_child(plaid)
+	plaid.position = Vector3(0.04, PLAID_Y, 0.1)
+	plaid.rotation = Vector3(0.04, 0.32, 0.02)
+	# guéridon, entre le fauteuil et la bibliothèque, trois livres dessus
+	var table_at := Vector3(2.95, 0.0, -1.62)
+	var gt := detail("side_table_tall_01", table_at, 15.0, Vector3(0, 0.66, 0), {"sync": true, "shadow": true})
+	if gt:
+		_collider(Vector3(0.36, 0.66, 0.36), table_at + Vector3(0, 0.33, 0)).name = "Gueridon"
+		var top := 0.66
+		if gt.has_meta("size"):
+			top = (gt.get_meta("size") as Vector3).y
+		var dk := DECOR_GD
+		if not dk._book_data().is_empty():
+			var bufs := {}
+			var y := top
+			var books := [[0.15, 0.035, 0.22, 0.3, 12], [0.14, 0.028, 0.2, -0.15, 33], [0.12, 0.02, 0.18, 0.5, 5]]
+			for b in books:
+				dk.book_add(bufs, dk.flat_book_xf(Vector3(b[0], b[1], b[2]), table_at + Vector3(0.02, y, 0.0), b[3]), b[1], b[2], b[0], b[4])
+				y += float(b[1])
+			dk.books_commit(bufs, self, "LivresGueridon")
+	_open_box(Vector3(-0.55, 0.0, 2.3), PI - 0.1)
+	_slippers(Vector3(-1.9, 0.0, 1.0))
+
+
+const PLAID_Y := 0.43
+const DECOR_GD := preload("res://scripts/decor.gd")
+
+
+## Un carton de déménagement ouvert (kraft du modèle cardboard_box_01 en triplanaire), rabats ouverts, des
+## pulls pliés et des papiers dedans. « at » : le pied du carton ; rot : lacet.
+func _open_box(at: Vector3, rot: float) -> void:
+	var holder := Node3D.new()
+	holder.name = "CartonOuvert"
+	add_child(holder)
+	holder.position = at
+	holder.rotation.y = rot
+	var kraft := StandardMaterial3D.new()
+	kraft.albedo_texture = load("res://assets/models/polyhaven/cardboard_box_01/textures/cardboard_box_01_diff_1k.jpg")
+	kraft.normal_enabled = true
+	kraft.normal_texture = load("res://assets/models/polyhaven/cardboard_box_01/textures/cardboard_box_01_nor_gl_1k.jpg")
+	kraft.normal_scale = 0.6
+	kraft.roughness = 0.88
+	Surfaces.world_uv(kraft, 0.6)
+	var L := 0.5
+	var H := 0.34
+	var D := 0.36
+	var t := 0.005
+	var parts := [
+		[Builder.box_mesh(Vector3(L, t, D), 0.0), _at(Vector3(0, t / 2.0, 0))],
+		[Builder.box_mesh(Vector3(L, H, t), 0.0), _at(Vector3(0, H / 2.0, D / 2.0 - t / 2.0))],
+		[Builder.box_mesh(Vector3(L, H, t), 0.0), _at(Vector3(0, H / 2.0, -D / 2.0 + t / 2.0))],
+		[Builder.box_mesh(Vector3(t, H, D - 2.0 * t), 0.0), _at(Vector3(L / 2.0 - t / 2.0, H / 2.0, 0))],
+		[Builder.box_mesh(Vector3(t, H, D - 2.0 * t), 0.0), _at(Vector3(-L / 2.0 + t / 2.0, H / 2.0, 0))],
+	]
+	# rabats : le long de devant (+z) retombe vers la pièce, celui de derrière reste dressé contre le mur,
+	# les courts s'ouvrent sur les côtés
+	var flaps := [[Vector3(0, H, D / 2.0), Vector3(L - 0.004, D / 2.0, t), Vector3(2.1, 0, 0), 1.0],
+		[Vector3(0, H, -D / 2.0), Vector3(L - 0.004, D / 2.0, t), Vector3(-0.35, 0, 0), -1.0],
+		[Vector3(L / 2.0, H, 0), Vector3(t, L / 2.0 * 0.62, D - 0.01), Vector3(0, 0, -2.0), 1.0],
+		[Vector3(-L / 2.0, H, 0), Vector3(t, L / 2.0 * 0.62, D - 0.01), Vector3(0, 0, 1.55), -1.0]]
+	for f in flaps:
+		var hinge: Vector3 = f[0]
+		var size: Vector3 = f[1]
+		var b := Basis.from_euler(f[2])
+		parts.append([Builder.box_mesh(size, 0.0), Transform3D(b, hinge + b * Vector3(0, size.y / 2.0, 0))])
+	var box := _merged(parts, _grimy(kraft, 1.6), holder, false)
+	box.name = "Carton"
+	# dedans : deux pulls pliés, une liasse de papiers debout
+	var p1 := MeshInstance3D.new()
+	p1.mesh = pillow_mesh(0.4, 0.28, 0.1)
+	p1.material_override = _rug_mat(Color(0.3, 0.32, 0.38))
+	p1.position = Vector3(0.02, H - 0.06, -0.02)
+	p1.rotation = Vector3(0.06, 0.1, -0.04)
+	holder.add_child(p1)
+	var p2 := MeshInstance3D.new()
+	p2.mesh = pillow_mesh(0.34, 0.24, 0.08)
+	p2.material_override = _rug_mat(Color(0.5, 0.42, 0.33))
+	p2.position = Vector3(-0.04, H + 0.02, 0.03)
+	p2.rotation = Vector3(-0.1, -0.35, 0.12)
+	holder.add_child(p2)
+	var paper := _plain(Color(0.84, 0.81, 0.72), 0.95)
+	_merged([[Builder.box_mesh(Vector3(0.21, 0.29, 0.012), 0.0), _at(Vector3(0.12, H - 0.02, -0.14), Vector3(-0.25, 0.1, 0.05))],
+		[Builder.box_mesh(Vector3(0.21, 0.29, 0.004), 0.0), _at(Vector3(0.1, H - 0.0, -0.12), Vector3(-0.4, -0.05, -0.08))]], paper, holder)
+	_collider(Vector3(0.5, 0.36, 0.38), at + Vector3(0, 0.18, 0)).name = "CartonOuvertCol"
+
+
+## Pantoufles en feutre au bord du lit, l'une un peu de travers.
+func _slippers(at: Vector3) -> void:
+	var felt := _rug_mat(Color(0.42, 0.27, 0.28))
+	var sole := _plain(Color(0.12, 0.1, 0.09), 0.85)
+	for k in 2:
+		var h := Node3D.new()
+		h.name = "Pantoufle%d" % (k + 1)
+		add_child(h)
+		h.position = at + Vector3(0.0, 0.0, -0.06 if k == 0 else 0.07)
+		h.rotation.y = deg_to_rad(-84.0 if k == 0 else -62.0)
+		var up := MeshInstance3D.new()
+		up.mesh = pillow_mesh(0.1, 0.25, 0.065)
+		up.material_override = felt
+		up.position = Vector3(0, 0.04, 0)
+		h.add_child(up)
+		var so := MeshInstance3D.new()
+		so.mesh = Builder.rounded_box_mesh(Vector3(0.098, 0.016, 0.26), 0.007, 3)
+		so.material_override = sole
+		so.position = Vector3(0, 0.008, 0)
+		h.add_child(so)
+		# l'ouverture : un creux sombre sur l'arrière du dessus
+		var hole := MeshInstance3D.new()
+		hole.mesh = pillow_mesh(0.07, 0.1, 0.02)
+		hole.material_override = _plain(Color(0.08, 0.06, 0.06), 1.0)
+		hole.position = Vector3(0, 0.066, 0.055)
+		h.add_child(hole)
 
 
 ## Règle les aiguilles d'un réveil Poly Haven (alarm_clock_01 : nœuds « houd_hand », « minute_hand »,
@@ -2089,6 +2676,11 @@ func _wear_room() -> void:
 	Wear.decal(self, "poussiere", Vector3(-W / 2.0 + 0.1, WIN_Y0 - 0.002, fz), Vector3.UP, Vector3.RIGHT, 1.6, 0.24,
 		{"world": true, "alpha": 0.8})
 	Wear.decal(self, "poussiere", Vector3(-2.55, 2.14, -2.3), Vector3.UP, Vector3.BACK, 1.05, 0.6, {"world": true})
+	# (lot V2-MERE-FIN) poussière dans les angles du fond de l'étagère de la disquette, loin de la disquette
+	Wear.decal(self, "poussiere", Vector3(-2.88, 1.032, -2.46), Vector3.UP, Vector3.BACK, 0.22, 0.14,
+		{"world": true, "alpha": 0.75, "depth": 0.03})
+	Wear.decal(self, "poussiere", Vector3(-2.2, 1.032, -2.47), Vector3.UP, Vector3.BACK, 0.24, 0.12,
+		{"world": true, "alpha": 0.75, "depth": 0.03})
 
 
 # ------------------------------------------------------------------ actions
@@ -2264,15 +2856,32 @@ func face_scare(p: Node) -> void:
 	add_child(face)
 	face.scale = Vector3.ONE * 0.034
 	face.visible = false
-	# le joueur se retourne d'un coup
+	# le joueur se retourne d'un coup. Réglage « Mouvements de la caméra » (Game.mouvements_camera, 1 par
+	# défaut : le virage d'avant, 0,3 s) : en dessous de 50 %, une coupe franche (deux images noires, et l'on
+	# est déjà retourné) ; au-dessus, le virage s'allonge jusqu'à 0,42 s à 50 %. Aucun tirage en plus.
 	var from_yaw: float = p.yaw
-	var tw := create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	tw.tween_method(func(k: float) -> void: p.set_look(from_yaw + PI * 0.92 * k, 0.02), 0.0, 1.0, 0.3)
-	await tw.finished
+	var moves := clampf(float(Game.mouvements_camera), 0.0, 1.0)
+	var hud: Node = null
+	var hud_a := -1.0
+	if moves < 0.5:
+		hud = get_tree().get_first_node_in_group("hud")
+		var fade_rect: ColorRect = hud.get("fade") if hud else null
+		if fade_rect:
+			hud_a = fade_rect.color.a
+			fade_rect.color.a = 1.0
+		for i in 2:
+			await get_tree().process_frame
+		p.set_look(from_yaw + PI * 0.92, 0.02)
+	else:
+		var tw := create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		tw.tween_method(func(k: float) -> void: p.set_look(from_yaw + PI * 0.92 * k, 0.02), 0.0, 1.0, 0.3 * (1.6 - 0.6 * moves))
+		await tw.finished
 	var fwd := -cam.global_transform.basis.z
 	face.global_position = cam.global_position + fwd * 0.5 + Vector3(0, -0.07, 0)
 	face.look_at(cam.global_position + Vector3(0, -0.07, 0), Vector3.UP, true)
 	face.visible = true
+	if hud_a >= 0.0 and is_instance_valid(hud):
+		(hud.get("fade") as ColorRect).color.a = hud_a
 	var screen_e := screen_light.light_energy
 	screen_light.light_energy = 0.03
 	Sfx.sting(0.0)
@@ -2282,12 +2891,23 @@ func face_scare(p: Node) -> void:
 	# la secousse de la tête : la couche « présence » de la caméra (lot V2-PRESENCE ; sans effet tant
 	# qu'elle n'existe pas). Jamais en « Sursauts réduits » (ce chemin-là s'arrête plus haut).
 	get_tree().call_group("presence", "add_trauma", 1.0, true)
+	# (rendu net hors rétro, lot V2-MERE-FIN : le plafonnier bat plus bas, 0,9 / 0,05 au lieu de 2,5 / 0,2 :
+	# la pièce reste dans la pénombre et le visage, éclairé par en dessous, en sort ; mêmes tirages)
+	var hi_e := 2.5
+	var lo_e := 0.2
+	var under_hi := 0.9
+	var under_lo := 0.15
+	if Qualite.extras_on():
+		hi_e = 0.9
+		lo_e = 0.05
+		under_hi = 1.3
+		under_lo = 0.25
 	var t := 0.0
 	while t < 1.0:
 		face.global_position -= fwd * 0.006   # il avance
-		under.light_energy = 0.9 if rng.randf() < 0.65 else 0.15
+		under.light_energy = under_hi if rng.randf() < 0.65 else under_lo
 		if not ceiling_dead:
-			ceiling_light.light_energy = 2.5 if rng.randf() < 0.5 else 0.2
+			ceiling_light.light_energy = hi_e if rng.randf() < 0.5 else lo_e
 		# (les deux tirages de l'ancienne secousse, gardés : la suite des tirages ne change pas)
 		rng.randf_range(-1, 1)
 		rng.randf_range(-1, 1)
@@ -2306,16 +2926,20 @@ func face_scare(p: Node) -> void:
 	back.tween_method(func(k: float) -> void: p.set_look(lerpf(y2, p.seat_yaw, k), lerpf(0.02, -0.05, k)), 0.0, 1.0, 1.4)
 	await back.finished
 
-## La peau du visage, vraie carte (lot V2-MERE) : la carte de normales du scan (déjà livrée), rugosité
-## de 0,32 (front, nez : la peau grasse luit) à 0,5, orbites creusées (le pourtour des yeux s'assombrit), le
-## cou fondu dans le noir (plus de disque coupé sous les épaules) ; transluminescence de la peau (passe
-## plein écran) seulement à partir d'Élevée, ni en rendu logiciel, ni en rétro. Repère du modèle scanné
-## (non mis à l'échelle) : yeux en (-0,70 ; 1,68) et (0,52 ; 1,68), haut du crâne à y = 4, épaules à -4.
+## La peau du visage, vraie carte (lots V2-MERE et V2-MERE-FIN) : la carte de normales du scan (déjà
+## livrée) ; rugosité de peau mate (crâne 0,55, front 0,42, joues et lèvres 0,45 ; SPECULAR 0,35 : plus de
+## crâne chromé sous le plafonnier) ; orbites creusées (le pourtour des yeux s'assombrit). Sous le cou, le
+## buste ne noircit plus : il se DISSOUT (alpha haché, ALPHA_HASH_SCALE : la matière reste opaque, avec sa
+## profondeur et ses ombres ; FSR 2 et le TAA lissent la trame), le long d'une limite déchiquetée par deux
+## octaves de bruit dans le repère du modèle : la pièce se voit à travers, plus de masse noire découpée.
+## Transluminescence de la peau (passe plein écran) seulement à partir d'Élevée, ni en rendu logiciel, ni en
+## rétro. Repère du modèle scanné (non mis à l'échelle) : yeux en (-0,70 ; 1,68) et (0,52 ; 1,68), haut du
+## crâne à y = 4, menton vers -1, épaules à -4.
 func _face_material() -> ShaderMaterial:
 	var sss := Qualite.extras_on() and Qualite.at_least(Qualite.ELEVEE)
 	var sh := Shader.new()
 	sh.code = FACE_SHADER.replace("{MODE}", ", sss_mode_skin" if sss else "") \
-		.replace("{SSS}", "SSS_STRENGTH = 0.55 * fade;" if sss else "")
+		.replace("{SSS}", "SSS_STRENGTH = 0.5;" if sss else "")
 	var m := ShaderMaterial.new()
 	m.shader = sh
 	m.set_shader_parameter("albedo_tex", load("res://assets/models/face/Map-COL.jpg"))
@@ -2331,8 +2955,21 @@ uniform sampler2D normal_tex : hint_normal, filter_linear_mipmap;
 uniform vec3 tint = vec3(0.55, 0.53, 0.5);
 uniform vec3 eye_l = vec3(-0.7, 1.68, 1.95);
 uniform vec3 eye_r = vec3(0.52, 1.68, 1.95);
-uniform vec2 neck = vec2(-1.75, -0.7);
+uniform vec2 neck = vec2(-2.9, -1.3);
+uniform float ragged = 1.3;
 varying vec3 obj;
+float h3(vec3 p) {
+	p = fract(p * 0.3183099 + vec3(0.11, 0.17, 0.13));
+	p *= 17.0;
+	return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+float vn(vec3 x) {
+	vec3 i = floor(x);
+	vec3 f = fract(x);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(mix(h3(i), h3(i + vec3(1, 0, 0)), f.x), mix(h3(i + vec3(0, 1, 0)), h3(i + vec3(1, 1, 0)), f.x), f.y),
+		mix(mix(h3(i + vec3(0, 0, 1)), h3(i + vec3(1, 0, 1)), f.x), mix(h3(i + vec3(0, 1, 1)), h3(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
 void vertex() {
 	obj = VERTEX;
 }
@@ -2340,13 +2977,18 @@ void fragment() {
 	vec3 a = texture(albedo_tex, UV).rgb * tint;
 	float d = min(distance(obj, eye_l), distance(obj, eye_r));
 	float sock = smoothstep(0.3, 1.05, d);
-	float fade = smoothstep(neck.x, neck.y, obj.y);
-	ALBEDO = a * mix(0.1, 1.0, sock) * fade;
+	float n = vn(obj * 0.9) * 0.65 + vn(obj * 2.7 + vec3(7.1)) * 0.35;
+	float fade = smoothstep(neck.x, neck.y, obj.y + (n - 0.5) * ragged);
+	ALBEDO = a * mix(0.1, 1.0, sock);
 	NORMAL_MAP = texture(normal_tex, UV).rgb;
-	ROUGHNESS = clamp(mix(0.32, 0.5, smoothstep(1.2, 3.5, abs(obj.y - 1.2))) + (1.0 - fade) * 0.4, 0.0, 1.0);
-	SPECULAR = 0.5 * fade * mix(0.3, 1.0, sock);
+	float skull = smoothstep(2.7, 3.3, obj.y);
+	float brow = smoothstep(1.95, 2.35, obj.y) * (1.0 - skull);
+	ROUGHNESS = mix(mix(0.45, 0.42, brow), 0.55, skull);
+	SPECULAR = 0.35 * mix(0.3, 1.0, sock);
 	AO = mix(0.3, 1.0, sock);
 	AO_LIGHT_AFFECT = 0.7;
+	ALPHA = fade;
+	ALPHA_HASH_SCALE = 1.0;
 	{SSS}
 }
 """

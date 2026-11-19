@@ -7,8 +7,32 @@ extends Node3D
 ## rendu 12 (« caché des caméras ») : le joueur le voit par la fenêtre, CAM 2 (sur la façade) montre
 ## le socle vide.
 ## Propriétés publiques : clovis (Node3D, couche 12), socle (Node3D), cam2 (FeedCam « CAM 2 JARDIN »).
+##
+## Passe « triple A » (lot V2-MAISON). Vraie carte (rendu logiciel : la 0.3.3) :
+##  - arbres en écorce bark_brown_02 (triplanaire, relief, rugosité mouillée, contre-jour du lampadaire) et
+##    trois rangées d'arbres lointains en cartes dans la brume, qui balancent ;
+##  - hors rétro : vitre de la chambre en rain_glass_net.gdshader (sans double brouillard, jardin noir) et
+##    ciel × SKY_NET_K ; éclair resserré sur la fenêtre (BOLT_NET_ANGLE, ombre plus nette, PCSS en Ultra),
+##    crêtes × BOLT_NET_K, brève poussée de l'éclairage ambiant, et les lunes des fenêtres de l'étage
+##    (groupe « lune_fenetre ») qui flashent avec lui.
+## Toutes versions : chaque palier de l'éclair reste affiché au moins deux images (à 2 images/s, un flash
+## de 0,05 s ne se voyait pas) ; signal flash_peak au palier le plus fort ; pas d'éclair pendant un silence
+## de l'entité (Sfx.can_flash) ; tonnerre selon la distance (le délai tiré : plus loin = plus bas, plus
+## grave). Mêmes tirages, dans le même ordre ; « Éclairs adoucis » inchangé.
 
 signal lightning_struck
+signal flash_peak                      # le palier le plus fort de l'éclair est posé (affiché à l'image suivante)
+
+const BOLT_NET_ANGLE := 13.0
+const BOLT_NET_K := 0.8                # crêtes 42 / 60 -> 34 / 48
+const BOLT_AMBIENT := 2.2              # éclairage ambiant + 2,2 × e / 60 pendant le flash
+const MOON_FLASH_K := 12.0             # lunes des fenêtres × (1 + 12 × e / 60)
+const SKY_NET_K := 0.6
+const THUNDER_DB_PER_S := -3.2         # tonnerre : -3,2 dB par seconde de délai au-delà de 0,7 s
+const GLASS_NET := "res://shaders/rain_glass_net.gdshader"
+const GLASS_OLD := "res://shaders/rain_glass.gdshader"
+const BARK := "res://assets/textures/bark_brown_02/bark_brown_02_%s.jpg"
+const LAMP_HEAD := Vector3(-8.9, -2.8 + 5.0, 2.6)
 
 const GROUND := -2.8          # le sol du jardin, 2,8 m sous le plancher de la chambre
 const WINDOW := Vector3(-3.2, 1.575, -0.45)
@@ -40,6 +64,8 @@ var cam2: FeedCam
 var cam2_ir: SpotLight3D
 var _cam2_was := false
 var _concrete: StandardMaterial3D
+var _sky_base := -1.0
+var _striking := false
 
 
 func build(r: Node3D, glass: ShaderMaterial) -> void:
@@ -60,6 +86,11 @@ func build(r: Node3D, glass: ShaderMaterial) -> void:
 	_clear_air()
 	Sfx.loop("rain_loop", -10.0, WINDOW + Vector3(-0.2, 0, 0), self)
 	_next_bolt = rng.randf_range(14.0, 24.0)
+	if not Qualite.soft():
+		_far_trees()
+		Game.settings_changed.connect(_apply_style)
+		bolt.set_meta("taille", 0.15)
+		_apply_style.call_deferred()
 
 
 func _mat(c: Color, rough := 0.9) -> StandardMaterial3D:
@@ -148,6 +179,19 @@ func _trees() -> void:
 		mi.mesh = st.commit()
 		mi.material_override = mat
 		add_child(mi)
+	if not Qualite.soft():
+		_barkify(mat, Color(0.42, 0.4, 0.38))
+
+
+## Écorce (vraie carte) : bark_brown_02, teinte, contre-jour du lampadaire.
+func _barkify(m: ShaderMaterial, tint: Color) -> void:
+	m.set_shader_parameter("use_bark", true)
+	m.set_shader_parameter("bark_albedo", load(BARK % "albedo"))
+	m.set_shader_parameter("bark_normal", load(BARK % "normal_gl"))
+	m.set_shader_parameter("bark_orm", load(BARK % "orm"))
+	m.set_shader_parameter("bark_tint", tint)
+	m.set_shader_parameter("rim_pos", LAMP_HEAD)
+	m.set_shader_parameter("rim_k", 1.6)
 
 
 func _branch(st: SurfaceTool, trng: RandomNumberGenerator, xf: Transform3D, length: float, radius: float, depth: int) -> void:
@@ -171,6 +215,103 @@ func _branch(st: SurfaceTool, trng: RandomNumberGenerator, xf: Transform3D, leng
 			length * trng.randf_range(0.58, 0.78), radius * 0.62, depth + 1)
 
 
+# ------------------------------------------------------------------ arbres lointains (vraie carte)
+
+const FAR_SHADER := """
+shader_type spatial;
+render_mode unshaded, blend_mix, depth_draw_opaque, cull_back;
+uniform sampler2D sil : source_color, filter_linear_mipmap;
+uniform vec3 color : source_color = vec3(0.02, 0.022, 0.03);
+uniform float wind = 0.6;
+void vertex() {
+	vec3 w = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	float k = 1.0 - UV.y;
+	k *= k;
+	VERTEX.x += sin(TIME * 0.7 + w.z * 0.35) * 0.22 * k * wind;
+}
+void fragment() {
+	float a = texture(sil, UV).a;
+	if (a < 0.04) { discard; }
+	ALBEDO = color;
+	ALPHA = a;
+}
+"""
+
+
+## Trois rangées d'arbres lointains derrière la maison d'en face et au bout de la rue : cartes (deux
+## silhouettes dessinées ici, avec leur propre hasard) de plus en plus pâles dans la brume, qui balancent.
+func _far_trees() -> void:
+	var frng := RandomNumberGenerator.new()
+	frng.seed = 6116
+	var sils: Array[ImageTexture] = [_tree_silhouette(frng, 0), _tree_silhouette(frng, 1)]
+	var sh := Shader.new()
+	sh.code = FAR_SHADER
+	var rows := [[-27.0, 0.004, 9.5, 3.4], [-34.0, 0.007, 12.0, 4.2], [-43.0, 0.011, 15.0, 5.0]]
+	for ri in rows.size():
+		var row: Array = rows[ri]
+		for v in sils.size():
+			var mm := MultiMesh.new()
+			mm.transform_format = MultiMesh.TRANSFORM_3D
+			var q := QuadMesh.new()
+			q.size = Vector2(1.0, 2.0)
+			q.center_offset = Vector3(0.0, 1.0, 0.0)
+			mm.mesh = q
+			var xfs: Array[Transform3D] = []
+			var z := -32.0 + frng.randf_range(0.0, 3.0)
+			while z < 32.0:
+				var hgt: float = row[2] * frng.randf_range(0.75, 1.2)
+				if frng.randi() % 2 == v:
+					var basis := Basis(Vector3.UP, PI / 2.0) * Basis.from_scale(Vector3(hgt * 0.55 * frng.randf_range(0.85, 1.2), hgt / 2.0, 1.0))
+					xfs.append(Transform3D(basis, Vector3(float(row[0]) + frng.randf_range(-1.5, 1.5), GROUND - 0.1, z)))
+				z += float(row[3]) * frng.randf_range(0.7, 1.3)
+			mm.instance_count = xfs.size()
+			for i in xfs.size():
+				mm.set_instance_transform(i, xfs[i])
+			var mmi := MultiMeshInstance3D.new()
+			mmi.name = "ArbresLointains"
+			mmi.multimesh = mm
+			var m := ShaderMaterial.new()
+			m.shader = sh
+			m.set_shader_parameter("sil", sils[v])
+			m.set_shader_parameter("color", Color(row[1], row[1] * 1.1, row[1] * 1.45))
+			m.set_shader_parameter("wind", 0.5 + 0.2 * ri)
+			mmi.material_override = m
+			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			add_child(mmi)
+
+
+## Silhouette d'un arbre nu (alpha), dessinée en 256 × 512 puis réduite de moitié (bords adoucis).
+func _tree_silhouette(frng: RandomNumberGenerator, variant: int) -> ImageTexture:
+	var img := Image.create_empty(256, 512, false, Image.FORMAT_RGBA8)
+	img.fill(Color(1, 1, 1, 0))
+	var trunk_h := 170.0 if variant == 0 else 140.0
+	_sil_branch(img, frng, Vector2(128, 511), Vector2(0, -1).rotated(frng.randf_range(-0.05, 0.05)), trunk_h, 9.0 if variant == 0 else 7.0, 0)
+	img.resize(128, 256, Image.INTERPOLATE_BILINEAR)
+	img.generate_mipmaps()
+	return ImageTexture.create_from_image(img)
+
+
+func _sil_branch(img: Image, frng: RandomNumberGenerator, p: Vector2, dir: Vector2, length: float, th: float, depth: int) -> void:
+	var steps := int(length / 1.5)
+	var q := p
+	var d := dir
+	for i in steps:
+		d = d.rotated(frng.randf_range(-0.05, 0.05)).normalized()
+		q += d * 1.5
+		var t := lerpf(th, th * 0.68, float(i) / maxf(1.0, steps))
+		var r := int(maxf(1.0, t))
+		img.fill_rect(Rect2i(int(q.x) - r / 2, int(q.y) - r / 2, r, r), Color(1, 1, 1, 1))
+	if depth >= 6 or q.y < 4.0:
+		return
+	var count := 2 + frng.randi() % 2
+	for k in count:
+		var spread := frng.randf_range(0.3, 0.8) * (1.0 if k % 2 == 0 else -1.0)
+		var nd := d.rotated(spread)
+		if nd.y > -0.15:
+			nd = Vector2(nd.x, -0.15).normalized()
+		_sil_branch(img, frng, q, nd, length * frng.randf_range(0.55, 0.78), maxf(1.0, th * 0.62), depth + 1)
+
+
 # ------------------------------------------------------------------ le cerisier
 
 ## Le cerisier du jardin de devant (au pied, la boîte à biscuits enterrée par Albert et Alexandre en
@@ -184,6 +325,8 @@ func _cherry() -> void:
 	bark.set_shader_parameter("height", h)
 	bark.set_shader_parameter("wind", 0.7)
 	bark.set_shader_parameter("color", Color(0.085, 0.05, 0.042))
+	if not Qualite.soft():
+		_barkify(bark, Color(0.62, 0.42, 0.36))
 	var leaf_mat := ShaderMaterial.new()
 	leaf_mat.shader = bark.shader
 	leaf_mat.set_shader_parameter("base_y", GROUND)
@@ -688,35 +831,100 @@ func _sky() -> PanoramaSkyMaterial:
 	return null
 
 
+func _env() -> Environment:
+	var we := get_tree().current_scene.get_node_or_null("WorldEnvironment") as WorldEnvironment
+	return we.environment if we else null
+
+
+## Style de rendu (vraie carte) : rendu net, vitre sans double brouillard et ciel baissé ; rétro, ceux d'avant.
+func _apply_style() -> void:
+	if Qualite.soft() or not is_inside_tree():
+		return
+	var net := Qualite.extras_on()
+	if glass_mat:
+		var sh: Shader = load(GLASS_NET if net else GLASS_OLD)
+		if glass_mat.shader != sh:
+			var gs: Variant = glass_mat.get_shader_parameter("glass_size")
+			glass_mat.shader = sh
+			glass_mat.set_shader_parameter("glass_size", gs)
+	var sky := _sky()
+	if sky and not _striking:
+		if _sky_base < 0.0:
+			_sky_base = sky.energy_multiplier
+		sky.energy_multiplier = _sky_base * (SKY_NET_K if net else 1.0)
+
+
 ## Un éclair : deux ou trois flashs, la pièce s'illumine à travers la fenêtre, puis le tonnerre.
 func strike() -> void:
 	lightning_struck.emit()
+	_striking = true
 	var sky := _sky()
 	var sky_base := sky.energy_multiplier if sky else 0.0
+	var net := Qualite.extras_on()
+	bolt.spot_angle = BOLT_NET_ANGLE if net else 24.0
+	bolt.shadow_blur = 1.2 if net else 2.5
+	var env := _env() if net else null
+	var amb_base := env.ambient_light_energy if env else 0.0
+	var moons: Array = get_tree().get_nodes_in_group("lune_fenetre") if net else []
 	# éclairs adoucis (photosensibilité) : une seule lueur douce, sans stroboscope
 	var pattern := [[42.0, 0.05], [0.0, 0.07], [60.0, 0.09], [10.0, 0.18], [0.0, 0.0]]
 	if Game.soft_flashes:
 		pattern = [[6.0, 0.12], [12.0, 0.25], [6.0, 0.25], [0.0, 0.0]]
+	var k := BOLT_NET_K if net and not Game.soft_flashes else 1.0
+	var peak := 0.0
 	for e in pattern:
-		bolt.light_energy = e[0]
+		peak = maxf(peak, float(e[0]))
+	for e in pattern:
+		var x: float = e[0]
+		bolt.light_energy = x * k
 		if sky:
-			sky.energy_multiplier = sky_base + e[0] * 0.06
+			sky.energy_multiplier = sky_base + x * 0.06 * k
 		if glass_mat:
-			glass_mat.set_shader_parameter("flash", e[0] / 60.0)
+			glass_mat.set_shader_parameter("flash", x / 60.0)
+		if env:
+			env.ambient_light_energy = amb_base + BOLT_AMBIENT * x / 60.0
+		for m in moons:
+			var l := m as Light3D
+			if l and Qualite.extras_on():
+				l.light_energy = float(l.get_meta("lune_energie", 1.0)) * (1.0 + MOON_FLASH_K * x / 60.0)
+		if x > 0.0 and x >= peak:
+			flash_peak.emit()
 		if e[1] > 0.0:
+			var f0 := Engine.get_frames_drawn()
 			await get_tree().create_timer(e[1]).timeout
+			# (au moins deux images par palier : sur une machine lente, le flash se voit quand même)
+			while is_inside_tree() and Engine.get_frames_drawn() - f0 < 2:
+				await RenderingServer.frame_post_draw
 	if sky:
 		sky.energy_multiplier = sky_base
+	if env and is_equal_approx(env.ambient_light_energy, amb_base + BOLT_AMBIENT * float(pattern[pattern.size() - 1][0]) / 60.0):
+		env.ambient_light_energy = amb_base
+	for m in moons:
+		var l := m as Light3D
+		if l:
+			l.light_energy = float(l.get_meta("lune_energie", 1.0)) if Qualite.extras_on() else 0.0
+	_striking = false
 	if rng.randf() < 0.5:
 		set_someone(not someone_there)
-	await get_tree().create_timer(rng.randf_range(0.7, 2.6)).timeout
-	Sfx.play("thunder", -3.0, rng.randf_range(0.8, 1.1))
+	# tonnerre : délai tiré comme avant (0,7 à 2,6 s, environ 240 à 900 m) ; proche, il claque plus fort et
+	# plus aigu ; loin, il roule plus bas (Sfx le retient pendant un silence de l'entité)
+	var delay := rng.randf_range(0.7, 2.6)
+	await get_tree().create_timer(delay).timeout
+	var kd := clampf((delay - 0.7) / 1.9, 0.0, 1.0)
+	Sfx.play("thunder", -3.0 + THUNDER_DB_PER_S * (delay - 0.7), rng.randf_range(0.8, 1.1) * lerpf(1.05, 0.92, kd))
+
+
+## Un éclair peut-il éclater maintenant ? Pas pendant un silence de l'entité (ni juste après).
+func _can_flash() -> bool:
+	if Sfx.has_method("can_flash"):
+		return bool(Sfx.call("can_flash"))
+	return not Sfx.is_silent()
 
 
 func _process(delta: float) -> void:
 	_update_cam2_lights()
 	_clock += delta
-	if Game.phase != "title" and _clock > _next_bolt:
+	if Game.phase != "title" and _clock > _next_bolt and _can_flash():
 		_clock = 0.0
 		_next_bolt = rng.randf_range(28.0, 70.0)
 		strike()

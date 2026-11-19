@@ -66,3 +66,13 @@ const ATTIC_HATCH := {
 	"ladder_foot": Vector3(5.25, 0.0, -3.3),
 	"switch": Vector3(4.82, 1.3, -1.95),
 }
+
+## Lattes qui grincent (lot V2-PRESENCE, lues par player._footstep) : un pas posé à moins de « r » m du
+## point (x, z) fait grincer la lame, puis elle se tait 6 s. Seulement le son (aucun effet sur le jeu) :
+## on apprend à les enjamber la nuit. Sur parquet (ou un tapis posé dessus).
+const LATTES := [
+	{"id": "L_P1", "room": "couloir", "x": 3.95, "z": 1.4, "r": 0.3},     # le premier pas hors de la chambre
+	{"id": "L_P2", "room": "couloir", "x": 3.65, "z": -3.55, "r": 0.3},   # devant la porte d'Henriette et Albert
+	{"id": "L_P4", "room": "couloir", "x": 4.35, "z": -4.65, "r": 0.3},   # devant la salle de bain
+	{"id": "L_lit", "room": "mere", "x": -1.85, "z": 2.0, "r": 0.3},      # au pied du lit
+]

@@ -48,6 +48,12 @@ const SHADE_GLOW_NET := 1.15
 ## franc (à 1,4 et dans l'orange d'avant, AgX blanchissait la cloche entière).
 const SHADE_COLOR := Color(1.0, 0.6, 0.3)
 const SHADE_COLOR_NET := Color(1.0, 0.5, 0.2)
+## Couloir de nuit, rendu net (lot V2-MAISON) : facteur « au repos » de L1 à L3 (SmartBulb.rest_k). L2, devant
+## ta chambre, éclaire ; L1, au nord (Henriette, la salle de bain, le portrait), est une ampoule fatiguée ;
+## L3, au sud, est grillée : des îlots de lumière séparés par du noir que la lampe traverse. Quand elle
+## passe (flicker, Haunt) ou pendant chain_lights, les trois ampoules répondent. Rétro et rendu logiciel :
+## les trois à 1, comme dans la 0.3.3.
+const NIGHT_REST := [0.3, 0.45, 0.0]
 ## Câbles neufs : PVC blanc cassé (sous une ampoule à incandescence, un câble blanc est gris clair, pas un
 ## trait de lumière), tubes ronds de 4 mm (le câble réseau : 6 mm, § 5.2), coudes arrondis ; au mur et au
 ## plafond, un cavalier tous les CLIP_STEP et le câble pend de CABLE_SAG entre deux.
@@ -73,6 +79,7 @@ var smart_bulbs: Array[SmartBulb] = []     # L1, L2, L3 : « ampoule_couloir_1 �
 var bulb_mats: Array[StandardMaterial3D] = []
 var shade_mats: Array[StandardMaterial3D] = []
 var dim := 1.0
+var _all_bulbs_until_ms := 0                 # flicker() ou chain_lights() en cours : les trois ampoules répondent
 var _flicker_id := 0
 var _chain_id := 0
 var _dim_tw: Tween
@@ -1192,6 +1199,7 @@ func _ceiling_lights() -> void:
 		sb.add_glow_material(sm, _shade_glow())
 		smart_bulbs.append(sb)
 		bulbs.append(sb.light)
+		sb.set_rest(_rest(li))
 
 
 ## Plafonniers : facteur d'énergie et émission des tulipes selon le rendu (net : LIGHT_NET_K et
@@ -1202,6 +1210,13 @@ func _light_k() -> float:
 
 func _shade_glow() -> float:
 	return SHADE_GLOW_NET if Qualite.extras_on() else SHADE_GLOW
+
+
+## Facteur au repos de l'ampoule i (voir NIGHT_REST).
+func _rest(i: int) -> float:
+	if not Qualite.extras_on() or Time.get_ticks_msec() < _all_bulbs_until_ms:
+		return 1.0
+	return float(NIGHT_REST[i])
 
 
 func _shade_color() -> Color:
@@ -1220,6 +1235,7 @@ func _on_settings_changed() -> void:
 			for e in ex:
 				if e is Array and (e as Array).size() >= 2 and e[0] == shade_mats[i]:
 					e[1] = _shade_glow()
+		sb.rest_k = _rest(i)
 		sb.set_powered(sb.powered)
 
 
@@ -1227,6 +1243,7 @@ func _apply_bulb(i: int, k: float) -> void:
 	if not switch_on:
 		k = 0.0                  # interrupteur coupé : plus de courant, rien ne s'allume
 	# (l'ampoule connectée applique le niveau à sa lumière, à l'ampoule et à la tulipe)
+	smart_bulbs[i].rest_k = _rest(i)
 	smart_bulbs[i].set_level(k)
 
 
@@ -1250,6 +1267,7 @@ func flicker(seconds := 1.5) -> void:
 	_chain_id += 1
 	var my := _flicker_id
 	var t := 0.0
+	_all_bulbs_until_ms = Time.get_ticks_msec() + int(seconds * 1000.0) + 400
 	if not bulbs.is_empty():
 		Sfx.play_at("metalClick", bulbs[1].global_position, -16.0, 0.45)
 	while t < seconds and my == _flicker_id:
@@ -1262,6 +1280,7 @@ func flicker(seconds := 1.5) -> void:
 			return
 		t += step
 	if my == _flicker_id:
+		_all_bulbs_until_ms = 0
 		_apply_all()
 
 
@@ -1274,6 +1293,7 @@ func chain_lights(step := 0.7, hold := 1.0) -> void:
 	var my := _chain_id
 	if _dim_tw:
 		_dim_tw.kill()
+	_all_bulbs_until_ms = Time.get_ticks_msec() + int((step * bulbs.size() + hold) * 1000.0) + 1500
 	for i in bulbs.size():
 		_apply_bulb(i, 0.0)
 	for i in range(bulbs.size() - 1, -1, -1):   # LIGHT_Z va du nord au sud : on part du sud
@@ -1286,12 +1306,14 @@ func chain_lights(step := 0.7, hold := 1.0) -> void:
 	if not is_inside_tree() or my != _chain_id:
 		return
 	dim = 0.0
+	_all_bulbs_until_ms = 0
 	_apply_all()
 
 
 ## Règle les ampoules : 1 = normal, 0 = éteintes. « seconds » : fondu.
 func set_dim(k: float, seconds := 0.0) -> void:
 	_chain_id += 1
+	_all_bulbs_until_ms = 0
 	if _dim_tw:
 		_dim_tw.kill()
 	k = clampf(k, 0.0, 1.0)
@@ -1674,6 +1696,7 @@ func _switch() -> void:
 ## keep_level : ne pas remettre les ampoules à pleine puissance (rechargement d'une sauvegarde).
 func set_switch(on: bool, quiet := false, keep_level := false) -> void:
 	switch_on = on
+	_all_bulbs_until_ms = 0
 	Game.set_flag("interrupteur_couloir", on)
 	if switch_rocker:
 		switch_rocker.rotation.x = -0.16 if on else 0.16

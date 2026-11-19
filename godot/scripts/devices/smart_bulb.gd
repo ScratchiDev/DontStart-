@@ -5,6 +5,10 @@ extends Connected
 ## (add_glow_material) pour qu'elles suivent le niveau.
 ## État : powered (l'interrupteur, le courant), level (0..1, l'entité la pilote), broken (éclatée).
 ## Repère : le nœud est au centre de l'ampoule.
+## Passe « triple A » (lot V2-MAISON) : rest_k, facteur « au repos » (ampoule fatiguée ou grillée du couloir
+## de nuit, rendu net) : il multiplie le niveau hors vacillement ; pendant flicker() (l'entité qui passe),
+## l'ampoule l'oublie et se rallume par à-coups. 1 (par défaut) : comme avant. Globe : bulb_glow (2,6 par
+## défaut) reste au-dessus du seuil du halo quand l'ampoule est allumée.
 
 signal burst_done
 
@@ -25,6 +29,8 @@ var bulb_mesh: MeshInstance3D
 var _extra: Array = []           # [matière, émission de base]
 var _flicker_k := 1.0
 var _flicker_id := 0
+var rest_k := 1.0                # facteur au repos (voir plus haut)
+var _flickering := false
 var _level_tw: Tween
 
 
@@ -63,7 +69,7 @@ func add_glow_material(m: StandardMaterial3D, base_energy := -1.0) -> void:
 func current_k() -> float:
 	if broken or not powered:
 		return 0.0
-	return level * _flicker_k
+	return level * _flicker_k * (1.0 if _flickering else rest_k)
 
 
 func is_lit() -> bool:
@@ -103,12 +109,22 @@ func set_level(v: float, seconds := 0.0) -> void:
 		_apply(), level, v, seconds)
 
 
+## Facteur au repos (0..1) : appliqué tout de suite.
+func set_rest(k: float) -> void:
+	k = clampf(k, 0.0, 1.0)
+	if is_equal_approx(k, rest_k):
+		return
+	rest_k = k
+	_apply()
+
+
 ## Vacille pendant « seconds » secondes (bourdonnement qui passe, elle qui arrive), puis revient.
 func flicker(seconds := 1.0, strength := 1.0) -> void:
 	if broken:
 		return
 	_flicker_id += 1
 	var my := _flicker_id
+	_flickering = true
 	var end_ms := Time.get_ticks_msec() + int(seconds * 1000.0)
 	if is_lit():
 		Sfx.play_at("metalClick", global_position, -22.0, 0.45, 1.5)
@@ -121,6 +137,7 @@ func flicker(seconds := 1.0, strength := 1.0) -> void:
 			return
 	if my == _flicker_id:
 		_flicker_k = 1.0
+		_flickering = false
 		_apply()
 
 
@@ -130,6 +147,7 @@ func burst() -> void:
 		return
 	_flicker_id += 1
 	_flicker_k = 1.0
+	_flickering = false
 	var pos := global_position
 	# un dernier éclair, très bref
 	light.visible = true

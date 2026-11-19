@@ -1,20 +1,40 @@
 class_name SmartMirror
 extends Connected
 ## Le miroir connecté de la salle de bain (téléassistance, « détection des chutes ») : un cadre
-## 0,6 × 0,8, une dalle-écran 0,5 × 0,7 (Device réutilisé par composition, 144 × 200 px) derrière un
-## verre sombre, et une caméra (FeedCam) au-dessus, qui filme la pièce. En « mode miroir », l'écran
-## montre ce flux retourné horizontalement : la salle de bain derrière le joueur… sans le joueur.
+## 0,6 × 0,8, une dalle-écran 0,5 × 0,7 (Device réutilisé par composition) derrière un verre sans tain,
+## et une caméra (FeedCam) au-dessus, qui filme la pièce. En « mode miroir », l'écran montre ce flux
+## retourné horizontalement : la salle de bain derrière le joueur… sans le joueur.
+## Définitions (lot V2-SDB) : le flux 3D reste en RES (144 × 200, couches 11 et 12, § 5.2) ; l'interface
+## (en-tête, texte, barre, flux agrandi) est composée dans la dalle en UI_RES (432 × 600) : le titre
+## « TÉLÉASSISTANCE » tient entier et net. Vraie carte : cadre en ABS vieilli mat (FRAME_*, arêtes
+## arrondies), verre sans tain qui reflète (métal, rugosité 0,04 : la sonde de reflets de la pièce et le
+## SSR, dès Élevée), flux un peu plus exposé (FEED_EXPOSURE_NET). Rendu logiciel : le cadre blanc et le
+## verre sombre d'avant. La silhouette du flux est filtrée en douceur (plus de blocs de pixels).
 ## Primitives : power_on, power_off, show_text, clear_text, show_feed, set_progress, progress.
 ## Le P4 réel entier : await run_p4() -> "fixe" | "retourne" | "fui" (acteurs p4_* posés par la pièce).
 ## Repère : le nœud est au centre du miroir, la face regarde vers +Z (vers la pièce).
 
 signal typed
 
-const RES := Vector2i(144, 200)
+const RES := Vector2i(144, 200)        # le flux 3D de la caméra du miroir (§ 5.2)
+const UI_RES := Vector2i(432, 600)     # la dalle : interface composée en 3 × RES
 const TEXT_COLOR := Color(0.82, 0.92, 1.0)
-const HEADER_FONT := 20     # taille de l'en-tête (VT323 n'est nette qu'en 10 et 20 px ; 10 px abîme M et O)
-const TEXT_FONT := 20       # taille du texte tapé (M0 à M10)
-const TEXT_LINE_SPACING := 0   # interligne du texte tapé (M7, six lignes, tient : 27 + 6 × 20 = 147 px)
+const HEADER_FONT := 40     # taille de l'en-tête (VT323 n'est nette qu'en multiples de 10 px)
+const TEXT_FONT := 50       # taille du texte tapé (M0 à M10 : 20 signes par ligne, M7 tient en 4 lignes)
+const TEXT_LINE_SPACING := 0   # interligne du texte tapé
+const UI_MARGIN := 18       # marges de l'interface (px de la dalle)
+const BAR_H := 21           # barre de progression (px de la dalle)
+## Vraie carte : cadre en ABS blanc vieilli (le blanc à 0,86 brûlait sous l'applique, à 12 cm), verre
+## sans tain (un miroir assombri, qui reflète la pièce : sonde de reflets et SSR).
+const FRAME_ABS := Color(0.55, 0.54, 0.5)
+const FRAME_ROUGH := 0.7
+const FRAME_SPEC := 0.2
+const FRAME_ROUND := 0.003
+const GLASS_NET := Color(0.6, 0.62, 0.64)
+const GLASS_ROUGH_NET := 0.04
+## Vraie carte : exposition du flux (l'applique y est deux fois plus douce qu'avant ; à 2,6, la salle de
+## bain du flux tombait dans le noir et la silhouette ne s'en détachait plus).
+const FEED_EXPOSURE_NET := 4.0
 
 var screen_size := Vector2(0.5, 0.7)
 var frame_size := Vector2(0.6, 0.8)
@@ -41,16 +61,28 @@ func build() -> void:
 	if display_name == "":
 		display_name = "Miroir"
 	can_speak = true
+	var full := not Builder.soft_render()
 	var white := plain_mat(Color(0.86, 0.86, 0.84), 0.35)
+	if full:
+		white = plain_mat(FRAME_ABS, FRAME_ROUGH)
+		white.metallic_specular = FRAME_SPEC
 	var fw := frame_size.x
 	var fh := frame_size.y
 	var b := 0.035
-	# cadre en plastique blanc et dos
+	# cadre en plastique blanc et dos (vraie carte : barres aux arêtes arrondies ; les montants entrent
+	# dans les traverses, sans joint visible)
 	add_box(Vector3(fw, fh, 0.012), Vector3(0, 0, 0.006), plain_mat(Color(0.3, 0.3, 0.3), 0.6))
-	add_box(Vector3(fw, b, 0.03), Vector3(0, fh / 2.0 - b / 2.0, 0.015), white)
-	add_box(Vector3(fw, b, 0.03), Vector3(0, -fh / 2.0 + b / 2.0, 0.015), white)
-	add_box(Vector3(b, fh - 2 * b, 0.03), Vector3(-fw / 2.0 + b / 2.0, 0, 0.015), white)
-	add_box(Vector3(b, fh - 2 * b, 0.03), Vector3(fw / 2.0 - b / 2.0, 0, 0.015), white)
+	if full:
+		var r := FRAME_ROUND
+		for sy in [1.0, -1.0]:
+			add_mesh(Builder.rounded_box_mesh(Vector3(fw, b, 0.03), r, 2), Vector3(0, sy * (fh / 2.0 - b / 2.0), 0.015), white)
+		for sx in [1.0, -1.0]:
+			add_mesh(Builder.rounded_box_mesh(Vector3(b, fh - 2 * b + 2.0 * r, 0.029), r, 2), Vector3(sx * (fw / 2.0 - b / 2.0), 0, 0.0145), white)
+	else:
+		add_box(Vector3(fw, b, 0.03), Vector3(0, fh / 2.0 - b / 2.0, 0.015), white)
+		add_box(Vector3(fw, b, 0.03), Vector3(0, -fh / 2.0 + b / 2.0, 0.015), white)
+		add_box(Vector3(b, fh - 2 * b, 0.03), Vector3(-fw / 2.0 + b / 2.0, 0, 0.015), white)
+		add_box(Vector3(b, fh - 2 * b, 0.03), Vector3(fw / 2.0 - b / 2.0, 0, 0.015), white)
 	# l'œil de la caméra, en haut du cadre
 	add_mesh(cyl(0.008, 0.008, 0.004, 12), Vector3(0, fh / 2.0 - b / 2.0, 0.031), plain_mat(Color(0.02, 0.02, 0.03), 0.1), Vector3(PI / 2.0, 0, 0))
 	make_led(Vector3(0.025, fh / 2.0 - b / 2.0, 0.031), 0.0025, false, Color.BLACK)
@@ -59,7 +91,7 @@ func build() -> void:
 	screen.name = "Dalle"
 	screen.kind = "miroir"
 	screen.screen_size = screen_size
-	screen.res = RES
+	screen.res = UI_RES
 	screen.curvature = 0.0
 	screen.glow_color = Color(0.75, 0.85, 1.0)
 	screen.glow_energy = 0.18      # (à 0,45, la dalle brûlait la faïence brillante tout autour)
@@ -74,9 +106,11 @@ func build() -> void:
 	screen.light.shadow_enabled = false
 	for mi in screen.find_children("*", "MeshInstance3D", false, false):
 		no_gi(mi as MeshInstance3D)
-	# le verre : un miroir sombre tant que l'écran est éteint
+	# le verre : un miroir sombre tant que l'écran est éteint (vraie carte : verre sans tain, il reflète)
 	var gm := plain_mat(Color(0.42, 0.45, 0.48), 0.08, 0.85)
 	gm.metallic_specular = 1.0
+	if full:
+		gm = plain_mat(GLASS_NET, GLASS_ROUGH_NET, 1.0)
 	var q := QuadMesh.new()
 	q.size = screen_size
 	glass = add_mesh(q, Vector3(0, 0, 0.0135), gm)
@@ -92,6 +126,8 @@ func build() -> void:
 	feed.flip_h = true
 	feed.ir = 0.5
 	feed.exposure = 2.6      # (à 1,6, la salle de bain à 20 % était noire : la silhouette sombre s'y perdait)
+	if full:
+		feed.exposure = FEED_EXPOSURE_NET
 	feed.shadows = true
 	feed.cull_mask = FeedCam.mask_with_feed_only()
 	feed.wanted = false
@@ -117,19 +153,21 @@ func _label(fs: int, c := TEXT_COLOR) -> Label:
 func _build_ui() -> void:
 	ui = Control.new()
 	ui.name = "Interface"
-	ui.size = Vector2(RES)
+	ui.size = Vector2(UI_RES)
 	ui.visible = false
 	screen.vp.add_child(ui)
 	var bg := ColorRect.new()
 	bg.color = Color(0.0, 0.01, 0.025)
-	bg.size = Vector2(RES)
+	bg.size = Vector2(UI_RES)
 	ui.add_child(bg)
-	# le flux (retourné, couleurs un peu lavées)
+	# le flux (retourné, couleurs un peu lavées), en RES, agrandi en douceur dans la dalle (filtrage
+	# linéaire : une image de caméra, pas des blocs de pixels) ; grain et lignes au pixel de la dalle
 	feed_rect = TextureRect.new()
 	feed_rect.texture = feed.texture()
 	feed_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	feed_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	feed_rect.size = Vector2(RES)
+	feed_rect.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	feed_rect.size = Vector2(UI_RES)
 	var m := ShaderMaterial.new()
 	m.shader = FeedCam.feed_shader()
 	m.set_shader_parameter("mono", 0.35)
@@ -139,53 +177,54 @@ func _build_ui() -> void:
 	m.set_shader_parameter("fps", 15.0)
 	m.set_shader_parameter("gain", FEED_GAIN)
 	m.set_shader_parameter("contrast", 1.0)
-	m.set_shader_parameter("res", Vector2(RES))
+	m.set_shader_parameter("res", Vector2(UI_RES))
 	feed_rect.material = m
 	feed_rect.visible = false
 	ui.add_child(feed_rect)
-	# en-tête (« TÉLÉASSISTANCE », « MODE MIROIR ») en 20 px, la taille nette de VT323 : en 10 px,
-	# chaque pixel de la police tombe sur un demi-pixel de la dalle et « MODE MIROIR » se lisait
-	# « MXDE MIRXIR » (14 lettres × 8 px = 112 px : ça tient dans les 144 px)
+	# en-tête (« TÉLÉASSISTANCE », « MODE MIROIR ») en 40 px, une taille nette de VT323 (14 lettres de
+	# 16 px : 224 px sur 432, le titre tient entier)
 	header_lbl = _label(HEADER_FONT, Color(0.55, 0.7, 0.9))
 	header_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	header_lbl.size = Vector2(RES.x, HEADER_FONT)
-	header_lbl.position = Vector2(0, 1)
+	header_lbl.size = Vector2(UI_RES.x, HEADER_FONT + 4)
+	header_lbl.position = Vector2(0, 8)
+	header_lbl.add_theme_constant_override("outline_size", 6)
+	header_lbl.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
 	ui.add_child(header_lbl)
 	# le texte (tapé), sur un fond sombre quand le flux est derrière
 	text_panel = PanelContainer.new()
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0, 0, 0, 0.0)
-	sb.set_content_margin_all(4)
+	sb.set_content_margin_all(12)
 	text_panel.add_theme_stylebox_override("panel", sb)
-	text_panel.position = Vector2(6, 23)
-	text_panel.size = Vector2(RES.x - 12, 20)
+	text_panel.position = Vector2(UI_MARGIN, 66)
+	text_panel.size = Vector2(UI_RES.x - 2 * UI_MARGIN, 60)
 	ui.add_child(text_panel)
 	text_lbl = _label(TEXT_FONT)
 	text_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	text_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	text_lbl.custom_minimum_size = Vector2(RES.x - 20, 0)
+	text_lbl.custom_minimum_size = Vector2(UI_RES.x - 2 * UI_MARGIN - 24, 0)
 	# (interligne 0 : à −3, l'accent d'une capitale touchait la ligne du dessus : « À VOS » sous
 	# « 03:20 » faisait lire « Q3:20 », et l'accent de « RÉEL » marquait « MIROIR »)
 	text_lbl.add_theme_constant_override("line_spacing", TEXT_LINE_SPACING)
-	text_lbl.add_theme_constant_override("outline_size", 3)
+	text_lbl.add_theme_constant_override("outline_size", 9)
 	text_lbl.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
 	text_panel.add_child(text_lbl)
 	# barre de progression
 	bar_root = Control.new()
-	bar_root.position = Vector2(14, RES.y - 18)
-	bar_root.size = Vector2(RES.x - 28, 7)
+	bar_root.position = Vector2(42, UI_RES.y - 54)
+	bar_root.size = Vector2(UI_RES.x - 84, BAR_H)
 	bar_root.visible = false
 	ui.add_child(bar_root)
 	var frame := ReferenceRect.new()
 	frame.border_color = TEXT_COLOR
-	frame.border_width = 1.0
+	frame.border_width = 3.0
 	frame.editor_only = false
 	frame.size = bar_root.size
 	bar_root.add_child(frame)
 	bar_fill = ColorRect.new()
 	bar_fill.color = TEXT_COLOR
-	bar_fill.position = Vector2(2, 2)
-	bar_fill.size = Vector2(0, bar_root.size.y - 4)
+	bar_fill.position = Vector2(6, 6)
+	bar_fill.size = Vector2(0, bar_root.size.y - 12)
 	bar_root.add_child(bar_fill)
 
 
@@ -268,7 +307,7 @@ func _text_bg() -> void:
 	if sb:
 		sb.bg_color = Color(0, 0, 0, 0.55 if feed_shown and text_lbl.text != "" else 0.0)
 	text_panel.reset_size()
-	text_panel.size.x = RES.x - 12
+	text_panel.size.x = UI_RES.x - 2 * UI_MARGIN
 
 
 ## Mode miroir : l'écran montre le flux de la caméra, retourné. La caméra ne tourne que dans ce mode
@@ -297,7 +336,7 @@ func set_progress(v: float) -> void:
 	if _bar_tw and v < 0.0:
 		_bar_tw.kill()
 	bar_root.visible = v >= 0.0
-	bar_fill.size.x = (bar_root.size.x - 4) * clampf(v, 0.0, 1.0)
+	bar_fill.size.x = (bar_root.size.x - 12) * clampf(v, 0.0, 1.0)
 
 
 ## La barre se remplit en « seconds » secondes (await mirror.progress(15.0)).
@@ -466,7 +505,9 @@ func make_silhouette(parent: Node = null) -> MeshInstance3D:
 		m.albedo_texture = load(SILHOUETTE_TEX)
 	else:
 		m.albedo_color = Color(0.02, 0.02, 0.025, 1)
-	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	# (filtrage linéaire sans mipmaps : en plein cadre, au pixel près, elle devenait un bloc de pixels ;
+	# avec mipmaps, ses membres fins devenaient translucides dans le petit flux, un fantôme gris)
+	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR
 	var mi := MeshInstance3D.new()
 	mi.name = "SilhouetteFlux"
 	mi.mesh = q

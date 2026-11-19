@@ -30,6 +30,10 @@ extends Node
 ## 4) La pluie aux fenêtres : une boucle douce derrière chaque fenêtre de HouseData.F1_WINDOWS (plus
 ##    discrète derrière un store baissé ou un verre dépoli, plus forte derrière une fenêtre ouverte :
 ##    set_window_open), et un fond « pluie sur le toit », plat, sur le bus Ambiance.
+## 5) La maison qui vit (lot V2-CREATURE), toujours sur le bus Ambiance, pour que le silence de l'entité
+##    s'entende partout : le vent contre la maison (boucle plate), le compresseur du frigo en bas (par la
+##    cage d'escalier), et de temps en temps (MAISON_EVERY s) la charpente qui travaille ou les tuyaux du
+##    chauffage, dans une pièce voisine (jamais pendant un dialogue, une scène écrite ou un silence).
 ## La logique (fonctions statiques) est vérifiée sans nœud par tests/acoustique_banc.gd. Aucun tirage du
 ## hasard global (randf, randi) : l'ordre des tirages du jeu ne change pas.
 
@@ -52,13 +56,17 @@ const ZONE_INSET := 0.02
 ## (acoustique_banc --calibrage) pour que les sons écrits à travers une porte (pas de l'ouverture de l'acte I,
 ## ronflement, respiration derrière P2) gardent leur niveau perçu à ±3 dB : le passe-bas étouffe, il ne doit
 ## pas faire disparaître.
+## Lot V2-CREATURE : derrière une porte fermée, le son s'éloigne vraiment (-5 dB ; « loin » -10 dB : on doit
+## tendre l'oreille). Les sons écrits calibrés au banc (Sfx.STORY_SOUNDS, méta « recit ») gardent leur niveau :
+## leur lecteur reçoit RECIT_COMP en plus dans ces classes (le calibrage de V2-SON : +0,5 et -3 dB).
 const CLASSES := {
 	"meme": [0.0, 0, 0.0],
 	"ouverte": [7500.0, 0, -0.5],
 	"entrouverte": [2400.0, 0, -1.5],
-	"fermee": [1100.0, 1, 0.5],
-	"loin": [420.0, 1, -3.0],
+	"fermee": [1100.0, 1, -5.0],
+	"loin": [420.0, 1, -10.0],
 }
+const RECIT_COMP := {"fermee": 5.5, "loin": 7.0}
 const CLASS_ORDER := ["meme", "ouverte", "entrouverte", "fermee", "loin"]
 
 ## Coûts de passage (en « dB » d'isolement) : porte ouverte, entrouverte, fermée (P6, vitrée : moins),
@@ -129,6 +137,18 @@ const RAIN_INSIDE := 0.22        # la boucle est posée à 22 cm à l'intérieur
 const ROOF_SOUND := "rain_roof"
 const ROOF_DB := -27.0
 
+## La maison (lot V2-CREATURE) : vent (plat), frigo (en bas, sous la cage d'escalier), bruits épars.
+const VENT_SOUND := "maison/vent"
+const VENT_DB := -31.0
+const FRIGO_SOUND := "maison/frigo"
+const FRIGO_DB := -16.0
+const FRIGO_POS := Vector3(7.6, -2.3, 0.9)
+const FRIGO_UNIT := 1.2
+const MAISON_EVERY := [25.0, 70.0]
+const MAISON_FIRST := [8.0, 20.0]
+## [son, nombre de variantes, volume (dB), hauteur (m au-dessus du plancher), unit_size, variation de hauteur]
+const MAISON_SOUNDS := [["maison/charpente_%d", 4, -15.0, 2.45, 1.6, 0.08], ["maison/tuyau_%d", 3, -17.0, 0.25, 1.4, 0.05]]
+
 static var occludable: Array = OCCLUDED_DEFAULT.duplicate()
 static var routes := ROUTES.duplicate()        # clé de route -> couche (les nouvelles s'ajoutent)
 static var _edges: Array = []     # [pièce a, pièce b, id de porte ou "" pour une cloison, porte vitrée]
@@ -142,9 +162,14 @@ var zones := {}                 # clé de route -> {id de pièce -> Area3D}
 var rain := {}                  # id de fenêtre -> AudioStreamPlayer3D
 var roof: AudioStreamPlayer
 var open_windows := {}          # id de fenêtre -> true
+var vent: AudioStreamPlayer
+var frigo: AudioStreamPlayer3D
+var maison_next := 0.0          # s avant le prochain bruit de la maison
+var maison_log: Array = []      # [son, pièce] des bruits joués (bancs)
 var _players: Array = []        # AudioStreamPlayer3D enregistrés (register)
 var _t := 0.0
 var _fresh := false
+var _rng := RandomNumberGenerator.new()
 
 
 # ------------------------------------------------------------------ logique (statique, testée au banc)
@@ -386,6 +411,7 @@ func build(h: Node) -> void:
 	for key in routes:
 		_build_route(key)
 	_build_rain()
+	_build_maison()
 	refresh()
 
 
@@ -446,6 +472,52 @@ func _rain_db(w: Dictionary) -> float:
 	if open_windows.has(w.id):
 		db += RAIN_DB_OPEN
 	return db
+
+
+## La maison qui vit : vent et frigo en boucle ; les bruits épars sont tirés par _maison_tick (hasard propre).
+func _build_maison() -> void:
+	_rng.seed = 7_202_040
+	maison_next = _rng.randf_range(float(MAISON_FIRST[0]), float(MAISON_FIRST[1]))
+	vent = Sfx.loop(VENT_SOUND, VENT_DB, Vector3.INF, self) as AudioStreamPlayer
+	if vent:
+		vent.name = "Vent"
+		if vent.stream and vent.stream.get_length() > 0.0:
+			vent.seek(_rng.randf_range(0.0, vent.stream.get_length()))
+	frigo = Sfx.play_3d(FRIGO_SOUND, FRIGO_POS, {"db": FRIGO_DB, "unit_size": FRIGO_UNIT, "bus": "Ambiance",
+		"loop": true, "parent": self, "name": "Frigo", "max_distance": 16.0})
+
+
+## Un bruit de la maison de temps en temps, dans une pièce voisine de l'auditeur (pas la sienne), jamais
+## pendant un dialogue, une scène écrite ou un silence (on attend).
+func _maison_tick(dt: float) -> void:
+	maison_next -= dt
+	if maison_next > 0.0:
+		return
+	# (le Haunt sans son type : acoustique.gd ne dépend pas de haunt.gd)
+	var h: Node = get_tree().get_first_node_in_group("haunt")
+	var busy: bool = h != null and h.has_method("is_busy") and bool(h.call("is_busy"))
+	if Game.phase == "title" or Sfx.is_silent() or Sfx._dialogue_on() or busy or listener_room == "":
+		maison_next = 3.0
+		return
+	maison_next = _rng.randf_range(float(MAISON_EVERY[0]), float(MAISON_EVERY[1]))
+	var near: Array = []
+	for e in edges():
+		if e[0] == listener_room and not near.has(e[1]):
+			near.append(e[1])
+		elif e[1] == listener_room and not near.has(e[0]):
+			near.append(e[0])
+	if near.is_empty():
+		return
+	var room: String = near[_rng.randi_range(0, near.size() - 1)]
+	var spec: Array = MAISON_SOUNDS[_rng.randi_range(0, MAISON_SOUNDS.size() - 1)]
+	var snd: String = String(spec[0]) % _rng.randi_range(1, int(spec[1]))
+	var r: Array = D.F1_ROOMS[room].rect
+	var pos := Vector3(_rng.randf_range(float(r[0]) + 0.4, float(r[1]) - 0.4), D.F1_Y + float(spec[3]),
+		_rng.randf_range(float(r[2]) + 0.4, float(r[3]) - 0.4))
+	var p := Sfx.play_3d(snd, pos, {"db": float(spec[2]), "unit_size": float(spec[4]), "bus": "Ambiance",
+		"pitch": 1.0 + _rng.randf_range(-float(spec[5]), float(spec[5])), "name": "Maison"})
+	if p:
+		maison_log.append([snd, room])
 
 
 ## Une fenêtre ouverte : sa pluie est plus forte (aucune ne s'ouvre dans cette version).
@@ -515,6 +587,11 @@ func twin_send(pos: Vector3) -> Array:
 func _set_class(p: AudioStreamPlayer3D, cl: String) -> void:
 	p.set_meta("classe", cl)
 	p.bus = bus_for(String(p.get_meta("bus_origine", "Master")), cl)
+	if p.has_meta("recit"):
+		# son écrit : il garde le niveau calibré au banc à travers une porte (RECIT_COMP)
+		var comp := float(RECIT_COMP.get(cl, 0.0)) if occludable.has(String(p.get_meta("bus_origine", "Master"))) else 0.0
+		p.volume_db += comp - float(p.get_meta("comp", 0.0))
+		p.set_meta("comp", comp)
 
 
 ## Recalcule tout (pièce de l'auditeur, portes, classes des pièces, zones, bus de l'auditeur).
@@ -529,6 +606,7 @@ func _process(delta: float) -> void:
 	_t += delta
 	if _t < TICK:
 		return
+	_maison_tick(_t)
 	_t = 0.0
 	var moved := _update_listener()
 	var doors := _update_doors()

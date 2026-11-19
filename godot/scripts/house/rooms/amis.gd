@@ -35,6 +35,26 @@ const BUCKET_WATER_Y := 0.17
 const DESK_POS := Vector3(-2.85, 0, 3.45)
 const TIN_POS := Vector3(-2.9, 0.0, 3.88)   # y : posée sur le plateau (calculé)
 
+## Passe « triple A », lot V2-AMIS. Toiles simulées HORS JEU (godot/tools/gen_bache.py : dynamique par
+## positions, collisions avec le lit, le carton, les couvertures, la tête de lit, le chevet et le sol ;
+## maillages double face, UV en mètres de toile) : rien n'est calculé à la construction. Si un fichier
+## manque, l'ancien champ de hauteurs revient.
+const COULOIR := preload("res://scripts/house/rooms/couloir.gd")   # _tube_mesh (pied du mannequin)
+const TARP_MESH := "res://assets/models/amis/bache_lit.res"           # repère de la pièce
+const HOUSSE_MESH := "res://assets/models/amis/housse_bergere.res"    # repère du fauteuil (avant +z)
+## Froissure du polyéthylène (gen_bache.py froissure) : plis d'emballage et faux plis, 0,8 m par tuile.
+const TARP_NORMAL := "res://assets/textures/amis/bache_normal_gl.jpg"
+const TARP_TILE := 0.8
+## Vraie carte : vieille bâche gris laiteux (albédo ≈ 0,48), satinée, un peu translucide.
+const TARP_ROUGH_NET := 0.46
+const TARP_BACKLIGHT_NET := 0.2
+const TARP_ALBEDO_NET := Color(0.43, 0.45, 0.47)
+## Robe du mannequin : tissu marine à pois crème de 1 cm (gen_bache.py pois), 8 pois de 2,4 cm par tuile.
+const DRESS_DOTS := "res://assets/textures/amis/robe_pois.png"
+const DRESS_TILE := 0.192
+## Ancienne texture de pois (rendu logiciel) : 4 pois par tuile de 64 px, à 2,6 cm.
+const DRESS_TILE_OLD := 0.104
+
 var house: House
 var rng := RandomNumberGenerator.new()
 
@@ -66,6 +86,11 @@ var _ripple: MeshInstance3D
 var _drip_t := 0.0
 var _ripple_t := -1.0
 var _dripped := false
+
+var _vhs: Array[Node3D] = []          # cassettes posées sur le meuble télé
+var _tv_kenney: Array[Node3D] = []    # molettes et voyant de la télé Kenney (cachés avec elle)
+var _antenna_lead: Node3D             # fil plat et vis de l'antenne (refaits sur la télé de 1990)
+var _old_stains: Array[Decal] = []    # auréoles d'avant (remplacées par Wear en vraie carte)
 
 var _new_white: StandardMaterial3D
 var _cable_mat: StandardMaterial3D
@@ -537,13 +562,87 @@ func _bed() -> void:
 		{"carpet": Color(0.46, 0.3, 0.3), "carpetwhite": Color(0.72, 0.68, 0.6)})
 	var top := 0.445
 	# sous la bâche : un carton et des couvertures pliées, posés là « en attendant »
-	var cb := _box(Vector3(0.42, 0.3, 0.38), Vector3(0.34, top + 0.15, 4.65), _m(Color(0.5, 0.36, 0.22), 0.95))
-	# (vraie carte : droit, sinon ses coins percent la bâche, posée sur un support aligné sur les axes)
-	cb.rotation.y = 0.12 if Builder.soft_render() else 0.0
+	var cb := _box(Vector3(0.4, 0.285, 0.36), Vector3(0.34, top + 0.1425, 4.65), _m(Color(0.5, 0.36, 0.22), 0.95))
+	# (droit : la toile a été simulée sur une boîte alignée sur les axes ; tourné, ses coins la perçaient)
+	cb.rotation.y = 0.0
 	for k in 3:
 		_box(Vector3(0.52 - k * 0.02, 0.04, 0.58 - k * 0.03), Vector3(-0.36, top + 0.02 + k * 0.04, 4.85),
 			_m([Color(0.55, 0.45, 0.32), Color(0.3, 0.35, 0.45), Color(0.6, 0.3, 0.25)][k], 1.0))
 	# la bâche : un drap de plastique laiteux, plissé, qui retombe jusqu'au sol
+	var tarp := StandardMaterial3D.new()
+	tarp.albedo_color = Color(0.6, 0.64, 0.68)
+	tarp.roughness = 0.42
+	tarp.metallic_specular = 0.6
+	if not Builder.soft_render():
+		# vraie carte : vieille bâche de peintre gris laiteux, satinée et froissée (plis d'emballage, faux
+		# plis), un peu translucide ; poussiéreuse. Elle redevient une silhouette dans le faisceau (elle
+		# brûlait en beige sous la lampe : revues de la vague 2)
+		tarp.albedo_color = TARP_ALBEDO_NET
+		tarp.roughness = TARP_ROUGH_NET
+		tarp.metallic_specular = 0.4
+		if ResourceLoader.exists(TARP_NORMAL):
+			tarp.normal_enabled = true
+			tarp.normal_texture = load(TARP_NORMAL)
+			tarp.normal_scale = 1.5
+			tarp.uv1_scale = Vector3(1.0 / TARP_TILE, 1.0 / TARP_TILE, 1.0)
+		tarp.backlight_enabled = true
+		tarp.backlight = Color(TARP_BACKLIGHT_NET, TARP_BACKLIGHT_NET, TARP_BACKLIGHT_NET)
+		tarp = _grimy(tarp, 1.3)
+	var draped: Mesh = load(TARP_MESH) as Mesh if ResourceLoader.exists(TARP_MESH) else null
+	if draped:
+		# la toile simulée : elle déborde du matelas de 10 à 15 cm, tombe en plis évasés jusqu'à 1 ou 2 cm
+		# du sol, se tend en plis du carton vers la tête de lit ; coin du chevet recoupé
+		var dm := _no_gi(_mesh(draped, Vector3.ZERO, tarp))
+		dm.name = "Bache"
+		_tarp_tape(true)
+		return
+	_tarp_heightfield(top, tarp)
+	_tarp_tape(false)
+
+
+## Les deux bandes de scotch qui tiennent la bâche à la tête de lit (vraie carte, toile simulée : du
+## ruban adhésif brun, Tape004, sinon deux plaques).
+func _tarp_tape(draped: bool) -> void:
+	if draped and not Builder.soft_render() and ResourceLoader.exists("res://assets/textures/Tape004/Tape004_albedo.png"):
+		for x in [-0.52, 0.5]:
+			# (bande couchée sur le dessus de la tête de lit, dans le sens du lit, qui mord sur la bâche)
+			var q := _tape_quad(Vector2(0.17, 0.05), 0 if x < 0.0 else 2)
+			q.position = Vector3(x, 0.6505, 6.17)
+			q.rotation = Vector3(-PI / 2.0, PI / 2.0 + (0.08 if x < 0.0 else -0.06), 0.0)
+			q.name = "Scotch"
+		return
+	for x in [-0.55, 0.55]:
+		_box(Vector3(0.05, 0.002, 0.14), Vector3(x, 0.652, 6.16), _plain(Color(0.45, 0.32, 0.18), 0.4))
+
+
+## Morceau de ruban adhésif (atlas Tape004 : 0, 1, 2 = bandes horizontales aux bouts déchirés), dans le
+## plan x-y du nœud (QuadMesh), de taille « size » (m : x le long de la bande).
+func _tape_quad(size: Vector2, piece: int, parent: Node3D = self) -> MeshInstance3D:
+	# rectangles des morceaux dans l'atlas (u0, v0, u1, v1), relevés sur l'image
+	var rects := [Rect2(0.141, 0.016, 0.445, 0.185), Rect2(0.148, 0.262, 0.44, 0.215),
+		Rect2(0.146, 0.531, 0.395, 0.184)]
+	var r: Rect2 = rects[clampi(piece, 0, 2)]
+	var m := StandardMaterial3D.new()
+	m.albedo_texture = load("res://assets/textures/Tape004/Tape004_albedo.png")
+	m.albedo_color = Color(0.5, 0.4, 0.3)
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+	m.alpha_scissor_threshold = 0.5
+	m.roughness = 0.35
+	m.metallic_specular = 0.6
+	m.uv1_scale = Vector3(r.size.x, r.size.y, 1.0)
+	m.uv1_offset = Vector3(r.position.x, r.position.y, 0.0)
+	var mi := MeshInstance3D.new()
+	var q := QuadMesh.new()
+	q.size = size
+	mi.mesh = q
+	mi.material_override = m
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	parent.add_child(mi)
+	return _no_gi(mi) as MeshInstance3D
+
+
+## L'ancienne bâche (si le maillage simulé manque) : un champ de hauteurs posé sur le lit.
+func _tarp_heightfield(top: float, tarp: Material) -> void:
 	var supports := [
 		[Rect2(-0.75, 4.25, 1.5, 1.82), top + 0.008],         # matelas
 		[Rect2(-0.58, 5.72, 1.16, 0.35), top + 0.05],          # oreillers
@@ -615,24 +714,10 @@ func _bed() -> void:
 			st.add_index(d)
 			st.add_index(c)
 	st.generate_normals()
-	# bâche de peintre en polyéthylène épais, opaque et laiteuse : froissée (le relief de la surface),
-	# satinée. (Transparente, elle faisait bloc de gélatine : pas d'occlusion ni d'ombre reçue dans la passe
-	# transparente, et une ombre pleine quand même.)
-	var tarp := StandardMaterial3D.new()
-	tarp.albedo_color = Color(0.6, 0.64, 0.68)
-	tarp.roughness = 0.42
-	tarp.metallic_specular = 0.6
-	if not Builder.soft_render():
-		# vraie carte : vieille toile grise et satinée, qui redevient une silhouette dans le faisceau (elle
-		# brûlait en beige sous la lampe : revues de la vague 2)
-		tarp.albedo_color = TARP_NET
-		tarp.roughness = 0.62
-		tarp.metallic_specular = 0.35
+	# (bâche de peintre en polyéthylène épais, opaque et laiteuse : transparente, elle faisait bloc de
+	# gélatine : pas d'occlusion ni d'ombre reçue dans la passe transparente, et une ombre pleine quand même)
 	var mi := _no_gi(_mesh(st.commit(), Vector3.ZERO, tarp))
 	mi.name = "Bache"
-	# deux bandes de scotch brun pour la tenir à la tête de lit
-	for x in [-0.55, 0.55]:
-		_box(Vector3(0.05, 0.002, 0.14), Vector3(x, 0.652, 6.16), _plain(Color(0.45, 0.32, 0.18), 0.4))
 
 
 # ------------------------------------------------------------------ le chevet et le babyphone
@@ -750,6 +835,11 @@ func _floor_lamp() -> void:
 	lamp_light.shadow_enabled = false     # l'ombre seulement quand il est allumé (set_lamp)
 	lamp_light.shadow_bias = 0.05
 	lamp_light.position = Vector3(-1.6, 1.4, 6.0)
+	if not Builder.soft_render():
+		# (vraie carte : ombres douces de la taille de l'abat-jour en Ultra ; énergie allumée pour la sonde)
+		lamp_light.set_meta("taille", 0.08)
+		lamp_light.set_meta("energie_base", 0.55)
+		lamp_light.light_size = Qualite.pcss_size(0.08)
 	add_child(lamp_light)
 	# son cordon, vieux, marron, jusqu'à la prise du pignon
 	var bz := ZS - DADO - 0.003
@@ -800,6 +890,7 @@ func _tv() -> void:
 		add_child(t)
 		t.position = Vector3(-0.8, ctop + 0.013 + k * 0.026, TV_POS.z + 0.02)
 		t.rotation.y = rng.randf_range(-0.12, 0.12)
+		_vhs.append(t)
 		_box(Vector3(0.105, 0.025, 0.19), Vector3.ZERO, vhs, false, t)
 		_box(Vector3(0.002, 0.016, 0.15), Vector3(0.0535, 0.0, 0.0), label_mat, false, t)
 	# le téléviseur : une télé à tube de 1990, caisse façon bois, pas de prise réseau
@@ -844,8 +935,8 @@ func _tv() -> void:
 	# boutons du panneau de droite : deux molettes, le voyant de veille (éteint)
 	var knob := _m(Color(0.1, 0.09, 0.08), 0.4)
 	for k in 2:
-		_mesh(_cyl(0.016, 0.018, 0.016, 14), Vector3((0.31 + k * 0.05 - 0.205) * s, 0.2 * s, 0.135 * s + 0.006), knob, Vector3(PI / 2.0, 0, 0), tv_holder)
-	_mesh(_sphere(0.004, 6), Vector3((0.36 - 0.205) * s, 0.04 * s, 0.135 * s + 0.002), _plain(Color(0.25, 0.04, 0.03), 0.4), Vector3.ZERO, tv_holder)
+		_tv_kenney.append(_mesh(_cyl(0.016, 0.018, 0.016, 14), Vector3((0.31 + k * 0.05 - 0.205) * s, 0.2 * s, 0.135 * s + 0.006), knob, Vector3(PI / 2.0, 0, 0), tv_holder))
+	_tv_kenney.append(_mesh(_sphere(0.004, 6), Vector3((0.36 - 0.205) * s, 0.04 * s, 0.135 * s + 0.002), _plain(Color(0.25, 0.04, 0.03), 0.4), Vector3.ZERO, tv_holder))
 	# son cordon d'alimentation, marron, derrière le meuble, jusqu'à la prise
 	var back_z := TV_POS.z + 0.02 - ts.z / 2.0
 	var wz := ZN + DADO + 0.004
@@ -927,18 +1018,10 @@ func _antenna() -> void:
 		_mesh(_sphere(0.0048, 8), p, rod, Vector3.ZERO, antenna)
 	# le fil plat, marron, qui descend derrière la télé jusqu'aux deux vis, posées sur le dos de la
 	# caisse (points donnés dans le repère du téléviseur, puis ramenés dans celui de l'antenne)
-	var lead := _plain(Color(0.35, 0.25, 0.16), 0.6)
-	var to_ant := antenna.transform.affine_inverse()
 	var back := -ts.z / 2.0
-	var a: Vector3 = to_ant * Vector3(0.02, ts.y + 0.012, -0.085)
-	var b: Vector3 = to_ant * Vector3(0.05, ts.y + 0.002, back + 0.004)
-	var c: Vector3 = to_ant * Vector3(0.08, ts.y - 0.08, back - 0.003)
-	for pair in [[a, b], [b, c]]:
-		var seg := _rod(pair[0], pair[1], 0.003, lead, antenna, 6)
-		seg.scale = Vector3(2.2, 1.0, 0.5)
-	for k in 2:
-		var screw := _mesh(_cyl(0.005, 0.005, 0.004, 8), to_ant * Vector3(0.07 + k * 0.025, ts.y - 0.08, back - 0.002), _chrome, Vector3(PI / 2.0, 0, 0), antenna)
-		screw.rotation.y = -antenna.rotation.y
+	_antenna_wire([Vector3(0.02, ts.y + 0.012, -0.085), Vector3(0.05, ts.y + 0.002, back + 0.004),
+		Vector3(0.08, ts.y - 0.08, back - 0.003)], [Vector3(0.07, ts.y - 0.08, back - 0.002),
+		Vector3(0.095, ts.y - 0.08, back - 0.002)])
 	var world := tv_holder.position + Vector3(0.02, ts.y + 0.2, -0.04)
 	antenna_it = _interactable("Examiner l'antenne", Vector3(0.72, 0.4, 0.26), world, self, LAYER_INTERACT, 2.4)
 	antenna_it.used.connect(func(_i: Interactable) -> void:
@@ -946,6 +1029,24 @@ func _antenna() -> void:
 			unscrew_antenna()
 		else:
 			examine_antenna())
+
+
+## Fil plat de l'antenne (ligne brisée « pts ») et ses vis (« screws ») : points dans le repère du
+## téléviseur (tv_holder), ramenés dans celui de l'antenne ; nœud « Fil » (remplacé s'il existe).
+func _antenna_wire(pts: Array, screws: Array) -> void:
+	if _antenna_lead:
+		_antenna_lead.free()
+	_antenna_lead = Node3D.new()
+	_antenna_lead.name = "Fil"
+	antenna.add_child(_antenna_lead)
+	var lead := _plain(Color(0.35, 0.25, 0.16), 0.6)
+	var to_ant := antenna.transform.affine_inverse()
+	for i in pts.size() - 1:
+		var seg := _rod(to_ant * (pts[i] as Vector3), to_ant * (pts[i + 1] as Vector3), 0.003, lead, _antenna_lead, 6)
+		seg.scale = Vector3(2.2, 1.0, 0.5)
+	for p in screws:
+		var screw := _mesh(_cyl(0.005, 0.005, 0.004, 8), to_ant * (p as Vector3), _chrome, Vector3(PI / 2.0, 0, 0), _antenna_lead)
+		screw.rotation.y = -antenna.rotation.y
 
 
 func _update_antenna_label() -> void:
@@ -1226,75 +1327,339 @@ func _hide_madeleine() -> void:
 
 # ------------------------------------------------------------------ le mannequin de couture (immobile)
 
+## Buste de couture, taille 40 (repère du mannequin, avant vers +z) : [hauteur, largeur, profondeur,
+## exposant de superellipse devant, derrière (dos aplati), bosses de poitrine (m)], interpolé entre deux
+## lignes. Mesures de l'étude « assets » : hanches 0,36 × 0,27 à 0,80 m, taille 0,27 × 0,20 à 1,06,
+## poitrine 0,34 × 0,25 à 1,25, carrure 0,40 × 0,15 à 1,42 (emmanchures aplaties), cou de 10 cm.
+const BUST := [
+	[0.735, 0.33, 0.245, 2.2, 3.2, 0.0],
+	[0.80, 0.36, 0.27, 2.2, 3.4, 0.0],
+	[0.88, 0.345, 0.255, 2.2, 3.4, 0.0],
+	[0.97, 0.305, 0.222, 2.1, 3.4, 0.0],
+	[1.06, 0.27, 0.20, 2.0, 3.4, 0.0],
+	[1.12, 0.278, 0.205, 2.0, 3.4, 0.0],
+	[1.17, 0.30, 0.22, 2.0, 3.5, 0.004],
+	[1.215, 0.325, 0.24, 2.0, 3.5, 0.012],
+	[1.25, 0.34, 0.25, 2.0, 3.5, 0.015],
+	[1.29, 0.35, 0.235, 2.1, 3.5, 0.01],
+	[1.34, 0.368, 0.205, 2.4, 3.5, 0.002],
+	[1.385, 0.39, 0.172, 2.8, 3.5, 0.0],
+	[1.42, 0.40, 0.152, 3.3, 3.5, 0.0],
+	[1.45, 0.34, 0.138, 3.0, 3.2, 0.0],
+	[1.468, 0.22, 0.118, 2.4, 2.6, 0.0],
+	[1.478, 0.106, 0.10, 2.0, 2.0, 0.0],
+]
+const BUST_SEG := 96
+## Passepoils du buste (degrés, multiples de 360 / BUST_SEG ; 90 = milieu devant, 0 = côté +x) : milieux,
+## côtés, coutures princesse (par la pointe des seins).
+const BUST_SEAMS := [90.0, 270.0, 0.0, 180.0, 52.5, 127.5, 232.5, 307.5]
+const BUST_PIPING := 0.0016
+const DRESS_OFF := 0.006           # la robe, décollée du buste
+const SKIRT_HEM := 0.44            # ourlet de la jupe (au sol : le trépied dessous)
+const SKIRT_FLARE := 1.45          # évasement sous les hanches (par m)
+const SKIRT_FOLD := 0.07           # amplitude des seize plis à l'ourlet
+
+
+## Une ligne de BUST à la hauteur y (interpolée ; bornée aux deux bouts).
+static func _bust_row(y: float) -> Array:
+	var rows: Array = BUST
+	if y <= float(rows[0][0]):
+		return rows[0]
+	for i in range(1, rows.size()):
+		var b: Array = rows[i]
+		if y <= float(b[0]):
+			var a: Array = rows[i - 1]
+			var t := (y - float(a[0])) / (float(b[0]) - float(a[0]))
+			var out := [y]
+			for k in range(1, 6):
+				out.append(lerpf(float(a[k]), float(b[k]), t))
+			return out
+	return rows[rows.size() - 1]
+
+
+## Point (x, z) du contour du buste à l'angle th (radians ; 0 = côté +x, PI / 2 = milieu devant), poussé
+## de « off » m vers l'extérieur.
+static func _bust_xz(row: Array, th: float, off := 0.0) -> Vector2:
+	var a: float = float(row[1]) / 2.0
+	var b: float = float(row[2]) / 2.0
+	var c := cos(th)
+	var s := sin(th)
+	var e := 2.0 / float(row[3] if s >= 0.0 else row[4])
+	var p := Vector2(a * signf(c) * pow(absf(c), e), b * signf(s) * pow(absf(s), e))
+	var bump: float = row[5]
+	if bump > 0.0 and p.y > 0.0:
+		p.y += bump * exp(-pow((absf(p.x) - 0.088) / 0.05, 2.0)) * clampf(p.y / b * 1.6, 0.0, 1.0)
+	if off != 0.0:
+		var l := p.length()
+		if l > 1e-5:
+			p *= (l + off) / l
+	return p
+
+
+## Surface en grille : « rows » (PackedVector3Array de même taille, du haut vers le bas), refermées sur
+## elles-mêmes si « closed ». Normales et tangentes calculées sur la grille (sans couture à la fermeture),
+## orientées à l'opposé de l'axe vertical du nœud ; UV en mètres (u le long des lignes, v = hauteur).
+## both : une face intérieure en plus (1,5 mm en dedans, normales inversées), pour un tissu vu des deux côtés.
+static func _grid_mesh(rows: Array, closed: bool, both := false) -> ArrayMesh:
+	var nr := rows.size()
+	var nc: int = (rows[0] as PackedVector3Array).size()
+	var cols := nc + 1 if closed else nc
+	var verts := PackedVector3Array()
+	var norms := PackedVector3Array()
+	var tans := PackedFloat32Array()
+	var uvs := PackedVector2Array()
+	for i in nr:
+		var r: PackedVector3Array = rows[i]
+		var up: PackedVector3Array = rows[maxi(i - 1, 0)]
+		var dn: PackedVector3Array = rows[mini(i + 1, nr - 1)]
+		var u := 0.0
+		for j in cols:
+			var jj := j % nc
+			if j > 0:
+				u += r[jj].distance_to(r[(j - 1) % nc])
+			var jn := (jj + 1) % nc if closed else mini(jj + 1, nc - 1)
+			var jp := (jj - 1 + nc) % nc if closed else maxi(jj - 1, 0)
+			var du := r[jn] - r[jp]
+			var dv := up[jj] - dn[jj]
+			var n := du.cross(dv)
+			var radial := Vector3(r[jj].x, 0.0, r[jj].z)
+			if n.dot(radial) < 0.0:
+				n = -n
+			n = n.normalized() if n.length() > 1e-9 else radial.normalized()
+			var t := (du - n * n.dot(du)).normalized()
+			var w := 1.0 if n.cross(t).dot(dv) >= 0.0 else -1.0
+			verts.append(r[jj])
+			norms.append(n)
+			tans.append_array([t.x, t.y, t.z, w])
+			uvs.append(Vector2(u, -r[jj].y))
+	var idx := PackedInt32Array()
+	# sens des triangles : face avant dans le sens des normales (vérifié sur le premier quadrilatère)
+	var a0 := verts[0]
+	var flip := (verts[1] - a0).cross(verts[cols] - a0).dot(norms[0]) > 0.0
+	for i in nr - 1:
+		for j in cols - 1:
+			var a := i * cols + j
+			var b := a + 1
+			var c := a + cols
+			var d := c + 1
+			if flip:
+				idx.append_array([a, c, b, b, c, d])
+			else:
+				idx.append_array([a, b, c, b, d, c])
+	if both:
+		var n0 := verts.size()
+		for k in n0:
+			verts.append(verts[k] - norms[k] * 0.0015)
+			norms.append(-norms[k])
+			tans.append_array([tans[k * 4], tans[k * 4 + 1], tans[k * 4 + 2], -tans[k * 4 + 3]])
+			uvs.append(uvs[k])
+		var m := idx.size()
+		for k in range(0, m, 3):
+			idx.append_array([idx[k] + n0, idx[k + 2] + n0, idx[k + 1] + n0])
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_NORMAL] = norms
+	arrays[Mesh.ARRAY_TANGENT] = tans
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_INDEX] = idx
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
+
+
+## Le mannequin de couture de Mamie (lot V2-AMIS) : un vrai buste de couture en loft de superellipses
+## (poitrine, taille, hanches, dos aplati, emmanchures nettes, passepoils des coutures princesse), en lin
+## écru ; bouchons en bois ; pied chromé à molette sur un trépied en fonte. La robe en cours : jupe
+## marine à pois de 1 cm, à seize plis qui s'évasent vers un ourlet irrégulier, et corsage épinglé sur
+## la moitié gauche. Nœud « Mannequin », position, rotation, collision et regard inchangés.
 func _mannequin() -> void:
 	var mq := Node3D.new()
 	mq.name = "Mannequin"
 	add_child(mq)
 	mq.position = Vector3(-2.6, 0, 5.9)
 	mq.rotation.y = 1.95      # il « regarde » la porte
-	var wood := _m(Color(0.25, 0.17, 0.11), 0.5)
-	var linen := _linen(Color(0.86, 0.9, 0.82))
-	# trépied
+	# (l'ancienne robe à pois : ses 4 096 tirages restent ici, dans l'ordre du hasard de la pièce, R4)
+	var old_dots := _dots_texture()
+	var soft := Builder.soft_render()
+	var linen: StandardMaterial3D
+	var wood: StandardMaterial3D
+	var chrome: StandardMaterial3D
+	var iron: StandardMaterial3D
+	var dress := StandardMaterial3D.new()
+	dress.roughness = 0.88
+	if soft:
+		linen = _linen(Color(0.86, 0.9, 0.82))
+		wood = _m(Color(0.25, 0.17, 0.11), 0.5)
+		chrome = _plain(Color(0.4, 0.38, 0.35), 0.35, 0.6)
+		iron = _plain(Color(0.07, 0.068, 0.065), 0.5, 0.3)
+		dress.albedo_texture = old_dots
+		dress.uv1_scale = Vector3(1.0 / DRESS_TILE_OLD, 1.0 / DRESS_TILE_OLD, 1.0)
+	else:
+		# lin écru (Fabric045, neutre, teinté), posé sur les UV du loft (mètres) ; bois sombre ciré ;
+		# chrome terni ; fonte noire
+		linen = Surfaces.pbr_acg("Fabric045/Fabric045", 0.3, Color(0.8, 0.73, 0.6), 0.8)
+		linen.uv1_triplanar = false
+		linen.uv1_world_triplanar = false
+		linen.uv1_scale = Vector3(1.0 / 0.3, 1.0 / 0.3, 1.0)
+		linen = _grimy(linen, 1.2)
+		wood = _grimy(Surfaces.pbr("Wood008/Wood008", 0.35, Color(0.62, 0.5, 0.42)), 1.5)
+		chrome = Surfaces.pbr("Metal049B/Metal049B", 0.25, Color(0.86, 0.85, 0.83), 1.0, true, false, -1.0, true)
+		iron = Surfaces.pbr("Metal046B/Metal046B", 0.3, Color(0.42, 0.41, 0.4), 1.0, true, false, -1.0, true)
+		dress.albedo_texture = load(DRESS_DOTS)
+		dress.uv1_scale = Vector3(1.0 / DRESS_TILE, 1.0 / DRESS_TILE, 1.0)
+		dress.normal_enabled = true
+		dress.normal_texture = load("res://assets/textures/Fabric045/Fabric045_NormalGL.jpg")
+		dress.normal_scale = 0.5
+		dress.rim_enabled = true
+		dress.rim = 0.25
+		dress.rim_tint = 0.5
+		dress.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+	dress = _grimy(dress, 0.8)
+	# --- le buste
+	var seams := {}
+	for d in BUST_SEAMS:
+		seams[int(round(float(d) / 360.0 * BUST_SEG)) % BUST_SEG] = true
+	var secs := []
+	var ys := PackedFloat32Array()
+	for row in BUST:
+		var ring := PackedVector2Array()
+		ring.resize(BUST_SEG)
+		var piping := BUST_PIPING if float(row[0]) < 1.462 else 0.0
+		for k in BUST_SEG:
+			ring[k] = _bust_xz(row, TAU * k / BUST_SEG, piping if seams.has(k) else 0.0)
+		secs.append(ring)
+		ys.append(float(row[0]))
+	var torso := _mesh(Builder.loft_mesh(secs, ys, true), Vector3.ZERO, linen, Vector3.ZERO, mq)
+	torso.name = "Buste"
+	# cou, bouchon du haut (bois, bouton), plaque du bas
+	_mesh(Builder.cylinder_mesh(0.046, 0.052, 0.09, 28), Vector3(0, 1.476 + 0.045, 0), linen, Vector3.ZERO, mq)
+	_mesh(Builder.cylinder_mesh(0.049, 0.049, 0.012, 28), Vector3(0, 1.572, 0), wood, Vector3.ZERO, mq)
+	_mesh(Builder.cylinder_mesh(0.007, 0.009, 0.02, 10), Vector3(0, 1.588, 0), wood, Vector3.ZERO, mq)
+	_ellipsoid(Vector3(0.026, 0.02, 0.026), Vector3(0, 1.602, 0), wood, mq, 12)
+	_mesh(Builder.cylinder_mesh(0.072, 0.075, 0.014, 32), Vector3(0, 0.729, 0), wood, Vector3.ZERO, mq)
+	# --- le pied : colonne chromée télescopique, molette crantée, trépied en fonte à patins
+	_mesh(Builder.cylinder_mesh(0.0145, 0.0145, 0.27, 16), Vector3(0, 0.45, 0), chrome, Vector3.ZERO, mq)
+	_mesh(Builder.cylinder_mesh(0.011, 0.011, 0.16, 14), Vector3(0, 0.645, 0), chrome, Vector3.ZERO, mq)
+	_mesh(Builder.cylinder_mesh(0.023, 0.023, 0.03, 20), Vector3(0, 0.585, 0), chrome, Vector3.ZERO, mq)
+	for k in 12:
+		var a := TAU * k / 12.0
+		_mesh(Builder.cylinder_mesh(0.0035, 0.0035, 0.028, 6), Vector3(cos(a) * 0.0235, 0.585, sin(a) * 0.0235), chrome, Vector3.ZERO, mq)
+	_mesh(Builder.cylinder_mesh(0.006, 0.006, 0.05, 10), Vector3(0.045, 0.585, 0), chrome, Vector3(0, 0, PI / 2.0), mq)
+	_ellipsoid(Vector3(0.024, 0.024, 0.024), Vector3(0.072, 0.585, 0), iron, mq, 10)
+	_mesh(Builder.cylinder_mesh(0.03, 0.04, 0.08, 20), Vector3(0, 0.29, 0), iron, Vector3.ZERO, mq)
+	var leg_r := 0.0105
 	for k in 3:
 		var a := TAU * k / 3.0 + 0.3
-		_rod(Vector3(0, 0.34, 0), Vector3(cos(a) * 0.26, 0.015, sin(a) * 0.26), 0.012, wood, mq, 8)
-		_mesh(_sphere(0.016, 8), Vector3(cos(a) * 0.26, 0.012, sin(a) * 0.26), _plain(Color(0.08, 0.08, 0.08), 0.5), Vector3.ZERO, mq)
-	_mesh(_cyl(0.03, 0.035, 0.06, 12), Vector3(0, 0.34, 0), wood, Vector3.ZERO, mq)
-	_mesh(_cyl(0.013, 0.013, 0.7, 10), Vector3(0, 0.7, 0), _plain(Color(0.4, 0.38, 0.35), 0.35, 0.6), Vector3.ZERO, mq)
-	_mesh(_cyl(0.03, 0.03, 0.025, 12), Vector3(0, 0.77, 0), _plain(Color(0.4, 0.38, 0.35), 0.35, 0.6), Vector3.ZERO, mq)
-	# le buste, en lin, sans tête
-	_ellipsoid(Vector3(0.34, 0.24, 0.24), Vector3(0, 1.04, 0), linen, mq)
-	_ellipsoid(Vector3(0.26, 0.24, 0.19), Vector3(0, 1.2, 0), linen, mq)
-	_ellipsoid(Vector3(0.33, 0.24, 0.24), Vector3(0, 1.35, 0.005), linen, mq)
-	for s in [-1.0, 1.0]:
-		_ellipsoid(Vector3(0.12, 0.11, 0.1), Vector3(s * 0.065, 1.355, 0.075), linen, mq, 10)
-	_ellipsoid(Vector3(0.39, 0.12, 0.21), Vector3(0, 1.47, 0), linen, mq)
-	_mesh(_cyl(0.045, 0.05, 0.1, 14), Vector3(0, 1.55, 0), linen, Vector3.ZERO, mq)
-	_mesh(_cyl(0.05, 0.05, 0.02, 14), Vector3(0, 1.61, 0), wood, Vector3.ZERO, mq)
-	_mesh(_sphere(0.018, 10), Vector3(0, 1.63, 0), wood, Vector3.ZERO, mq)
-	# la robe : jupe bleu marine à pois, corsage épinglé sur la moitié gauche seulement
-	var dots := StandardMaterial3D.new()
-	dots.albedo_texture = _dots_texture()
-	dots.roughness = 0.9
-	dots.uv1_scale = Vector3(4.0, 3.0, 1.0)
-	var dress := _grimy(dots, 0.8)
-	var skirt := CylinderMesh.new()
-	skirt.top_radius = 0.165
-	skirt.bottom_radius = 0.29
-	skirt.height = 0.52
-	skirt.radial_segments = 20
-	skirt.rings = 1
-	_mesh(skirt, Vector3(0, 0.73, 0), dress, Vector3.ZERO, mq)
-	var half := SphereMesh.new()
-	half.radius = 0.5
-	half.height = 1.0
-	half.is_hemisphere = true
-	half.radial_segments = 16
-	half.rings = 6
-	for part in [[Vector3(0.0, 1.06, 0), Vector3(0.36, 0.25, 0.26)], [Vector3(0.0, 1.2, 0), Vector3(0.275, 0.25, 0.2)],
-			[Vector3(0.0, 1.35, 0.005), Vector3(0.35, 0.25, 0.26)]]:
-		var hm := _mesh(half, part[0], dress, Vector3(0, 0, PI / 2.0), mq)
-		var sz: Vector3 = part[1]
-		hm.scale = Vector3(sz.y, sz.x, sz.z)
-	# épingles le long du bord, et quelques-unes à l'ourlet
+		var dir := Vector3(cos(a), 0.0, sin(a))
+		var pts := PackedVector3Array()
+		for i in 9:
+			var t := i / 8.0
+			pts.append(dir * (0.028 + 0.25 * t) + Vector3.UP * (0.012 + 0.262 * pow(1.0 - t, 1.6)))
+		var leg := MeshInstance3D.new()
+		leg.mesh = COULOIR._tube_mesh(pts, leg_r, 6 if soft else 10)
+		leg.material_override = iron
+		mq.add_child(leg)
+		_mesh(Builder.cylinder_mesh(0.019, 0.021, 0.012, 16), dir * 0.278 + Vector3.UP * 0.006, _plain(Color(0.05, 0.05, 0.05), 0.7), Vector3.ZERO, mq)
+	# --- la robe : jupe (cercle complet, plis et ourlet), corsage épinglé sur la moitié gauche
+	var sk_y := [1.082, 1.072, 1.052, 1.04, 1.0, 0.95, 0.9, 0.85, 0.8, 0.76, 0.71, 0.66, 0.61, 0.56, 0.51, 0.47, SKIRT_HEM]
+	var rows := []
+	for y in sk_y:
+		var yy: float = y
+		var row := PackedVector3Array()
+		row.resize(BUST_SEG)
+		var t := clampf((0.83 - yy) / 0.39, 0.0, 1.0)
+		# ceinture : un bourrelet de 1,2 cm entre 1,04 et 1,072
+		var off := DRESS_OFF + (0.005 if yy > 1.045 and yy < 1.075 else 0.0) + 0.008 * clampf((1.04 - yy) / 0.24, 0.0, 1.0)
+		var brow := _bust_row(maxf(yy, 0.8))
+		var flare := 1.0 + maxf(0.8 - yy, 0.0) * SKIRT_FLARE
+		for k in BUST_SEG:
+			var th := TAU * k / BUST_SEG
+			var p := _bust_xz(brow, th, off) * flare
+			var fold := 1.0 + SKIRT_FOLD * pow(t, 1.3) * sin(16.0 * th + 0.35 * sin(3.0 * th) + 0.6) + 0.015 * t * sin(5.0 * th + 1.3)
+			p *= fold
+			var py := yy
+			if yy <= SKIRT_HEM + 0.001:
+				# ourlet irrégulier : la jupe pend plus bas d'un côté, les creux des plis un peu plus bas
+				py += 0.01 * sin(th + 0.9) - 0.004 * sin(16.0 * th + 0.35 * sin(3.0 * th) + 0.6)
+			row[k] = Vector3(p.x, py, p.y)
+		rows.append(row)
+	var skirt := _mesh(_grid_mesh(rows, true, true), Vector3.ZERO, dress, Vector3.ZERO, mq)
+	skirt.name = "Jupe"
+	# corsage : du milieu du dos (−90°) au milieu devant (+90°) par le côté +x ; encolure creusée devant,
+	# emmanchure sur le côté
+	var cols := 49
+	var nrow := 14
+	var brows := []
+	for i in nrow:
+		var row := PackedVector3Array()
+		row.resize(cols)
+		for j in cols:
+			var deg := -90.0 + 180.0 * j / (cols - 1)
+			var y_top := 1.44 - 0.11 * exp(-pow(deg / 26.0, 2.0)) - 0.12 * exp(-pow((deg - 90.0) / 32.0, 2.0)) \
+				- 0.03 * exp(-pow((deg + 90.0) / 30.0, 2.0))
+			var yy := lerpf(y_top, 1.05, float(i) / (nrow - 1))
+			var p := _bust_xz(_bust_row(yy), deg_to_rad(deg), DRESS_OFF + 0.002)
+			row[j] = Vector3(p.x, yy, p.y)
+		brows.append(row)
+	var bodice := _mesh(_grid_mesh(brows, false, true), Vector3.ZERO, dress, Vector3.ZERO, mq)
+	bodice.name = "Corsage"
+	# épingles : le long du bord du corsage (milieu devant), à la couture de côté, à l'ourlet
 	var pin_heads := [Color(0.9, 0.9, 0.85), Color(0.85, 0.2, 0.2), Color(0.2, 0.45, 0.85), Color(0.95, 0.75, 0.2)]
 	for k in 9:
-		var y := 0.98 + k * 0.05
-		_mesh(_sphere(0.004, 6), Vector3(0.004, y, 0.13 - absf(y - 1.2) * 0.12), _plain(pin_heads[k % 4], 0.3), Vector3.ZERO, mq)
+		var yy := 1.07 + k * 0.028
+		var p := _bust_xz(_bust_row(yy), PI / 2.0 - 0.05, DRESS_OFF + 0.006)
+		_mesh(_sphere(0.0038, 6), Vector3(p.x, yy, p.y), _plain(pin_heads[k % 4], 0.3), Vector3.ZERO, mq)
+	for k in 4:
+		var yy := 1.1 + k * 0.05
+		var p := _bust_xz(_bust_row(yy), 0.04, DRESS_OFF + 0.006)
+		_mesh(_sphere(0.0038, 6), Vector3(p.x, yy, p.y), _plain(pin_heads[(k + 2) % 4], 0.3), Vector3.ZERO, mq)
 	for k in 6:
-		var a := -0.6 + k * 0.4
-		_mesh(_sphere(0.004, 6), Vector3(cos(a) * 0.29, 0.48, sin(a) * 0.29 + 0.0), _plain(pin_heads[(k + 1) % 4], 0.3), Vector3.ZERO, mq)
-	# le mètre ruban autour du cou
+		var th := 0.75 + k * 0.33
+		var yy := SKIRT_HEM + 0.035
+		var p := _bust_xz(_bust_row(0.8), th, DRESS_OFF + 0.008) * (1.0 + (0.8 - yy) * SKIRT_FLARE)
+		p *= 1.0 + SKIRT_FOLD * 0.92 * sin(16.0 * th + 0.35 * sin(3.0 * th) + 0.6) + 0.015 * sin(5.0 * th + 1.3) + 0.012
+		_mesh(_sphere(0.0038, 6), Vector3(p.x, yy, p.y), _plain(pin_heads[(k + 1) % 4], 0.3), Vector3.ZERO, mq)
+	# le mètre ruban : un tour du cou, les deux bouts sur la poitrine
 	var tape := _plain(Color(0.85, 0.7, 0.2), 0.6)
-	for s in [-1.0, 1.0]:
-		var strip := _box(Vector3(0.016, 0.36, 0.002), Vector3(s * 0.07, 1.36, 0.135), tape, false, mq)
-		strip.rotation = Vector3(-0.28, 0, s * 0.12)
 	var neck := TorusMesh.new()
-	neck.inner_radius = 0.05
-	neck.outer_radius = 0.056
-	neck.rings = 16
+	neck.inner_radius = 0.052
+	neck.outer_radius = 0.058
+	neck.rings = 24
 	neck.ring_segments = 4
-	_mesh(neck, Vector3(0, 1.525, 0.01), tape, Vector3(0.25, 0, 0), mq)
+	var collar := _mesh(neck, Vector3(0, 1.49, 0.006), tape, Vector3(0.22, 0, 0), mq)
+	collar.scale = Vector3(1.0, 0.35, 1.0)
+	for sgn in [-1.0, 1.0]:
+		# une ligne brisée posée sur la surface : du cou, par-dessus la carrure, jusque sur la poitrine
+		# (côté du corsage, +x : par-dessus le tissu)
+		var pts: Array[Vector3] = []
+		var hs := [1.49, 1.476, 1.462, 1.44, 1.4, 1.35, 1.3, 1.25, 1.21 + (0.03 if sgn > 0.0 else 0.0)]
+		for k in hs.size():
+			var yy: float = hs[k]
+			var ang := lerpf(1.05, 0.42, clampf((1.476 - yy) / 0.12, 0.0, 1.0))
+			var th: float = PI / 2.0 - sgn * ang
+			var off := 0.0035 + (DRESS_OFF + 0.006 if sgn > 0.0 and yy < 1.4 else 0.0)
+			if yy >= 1.476:
+				pts.append(Vector3(cos(th), 0.0, sin(th)) * (0.05 + off) + Vector3.UP * yy)
+			else:
+				var p := _bust_xz(_bust_row(yy), th, off)
+				pts.append(Vector3(p.x, yy, p.y))
+		for k in pts.size() - 1:
+			var a0: Vector3 = pts[k]
+			var a1: Vector3 = pts[k + 1]
+			var yv := (a0 - a1).normalized()
+			var zv := Vector3((a0.x + a1.x) / 2.0, 0.0, (a0.z + a1.z) / 2.0).normalized()
+			zv = (zv - yv * zv.dot(yv)).normalized()
+			var strip := MeshInstance3D.new()
+			var sb := BoxMesh.new()
+			sb.size = Vector3(0.016, a0.distance_to(a1) + 0.002, 0.0012)
+			strip.mesh = sb
+			strip.material_override = tape
+			strip.transform = Transform3D(Basis(yv.cross(zv), yv, zv), (a0 + a1) / 2.0)
+			mq.add_child(strip)
+	# (hors de la cuisson VoxelGI, comme les modèles Poly Haven : 15 000 triangles pour un rebond invisible)
+	for g in mq.find_children("*", "GeometryInstance3D", true, false):
+		(g as GeometryInstance3D).gi_mode = GeometryInstance3D.GI_MODE_DISABLED
 	_collider(Vector3(0.42, 1.65, 0.42), Vector3(0, 0.825, 0), mq)
 	_look("Regarder le mannequin", Vector3(0.5, 1.2, 0.45), mq.position + Vector3(0, 1.0, 0),
 		"Le mannequin de couture de Mamie. Une robe à moitié épinglée.", "mannequin")
@@ -1339,15 +1704,29 @@ func _boxes() -> void:
 
 const ARMCHAIR_POS := Vector3(1.95, 0, 5.74)
 
-## Entre le chevet et les cartons, une bergère sous un drap de coton : un champ de hauteurs posé sur
-## l'assise, le dossier et les accoudoirs (comme la bâche du lit), qui tombe droit jusqu'au sol et y
-## fait un ourlet froissé ; des plis verticaux sur les côtés. Opaque : rien n'est modelé dessous.
+## Entre le chevet et les cartons, une bergère sous un drap de coton. Opaque : rien n'est modelé dessous.
+## Le drap est une toile simulée hors jeu (HOUSSE_MESH) ; sans elle, un champ de hauteurs posé sur
+## l'assise, le dossier et les accoudoirs, qui tombe droit jusqu'au sol (l'ancienne housse).
 func _covered_armchair() -> void:
 	var holder := Node3D.new()
 	holder.name = "FauteuilHousse"
 	add_child(holder)
 	holder.position = ARMCHAIR_POS
 	holder.rotation.y = PI + 0.12      # dos au pignon, tourné un peu vers le lit
+	var linen := _linen(Color(0.9, 0.95, 0.98) if Builder.soft_render() else HOUSSE_NET, 0.5)
+	var draped: Mesh = load(HOUSSE_MESH) as Mesh if ResourceLoader.exists(HOUSSE_MESH) else null
+	if draped:
+		# le drap simulé (gen_bache.py) : jeté par-dessus le dossier, rentré dans l'assise (plis
+		# d'écrasement), il marque les manchettes des accoudoirs et le chapeau de gendarme, pend en pointes
+		# aux quatre coins ; contre le chevet et les cartons, il glisse sans s'y poser
+		var dm := MeshInstance3D.new()
+		dm.name = "Housse"
+		dm.mesh = draped
+		dm.material_override = linen
+		dm.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+		holder.add_child(dm)
+		_collider(Vector3(0.8, 1.0, 0.78), Vector3(0, 0.5, 0.0), holder)
+		return
 	# repère du fauteuil, avant vers +z : [rectangle (x, z), hauteur du dessus]
 	var supports := [
 		[Rect2(-0.25, -0.2, 0.5, 0.55), 0.47],      # coussin d'assise
@@ -1428,7 +1807,7 @@ func _covered_armchair() -> void:
 	var mi := MeshInstance3D.new()
 	mi.name = "Housse"
 	mi.mesh = st.commit()
-	mi.material_override = _linen(Color(0.9, 0.95, 0.98) if Builder.soft_render() else HOUSSE_NET, 0.5)
+	mi.material_override = linen
 	mi.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
 	holder.add_child(mi)
 	_collider(Vector3(0.8, 1.0, 0.78), Vector3(0, 0.5, 0.0), holder)
@@ -1491,9 +1870,9 @@ func _bucket() -> void:
 	_ripple.scale = Vector3(0.1, 0.2, 0.1)
 	# auréole au plafond, tache sur la moquette
 	var stain: Texture2D = load("res://assets/decals/stain_water.png")
-	_decal(stain, Vector3(BUCKET_POS.x, LEAK_Y, BUCKET_POS.z), Vector3.DOWN, Vector3.BACK, 1.3, 1.1, 0.3, Color(0.8, 0.75, 0.65, 1.0))
-	_decal(stain, Vector3(BUCKET_POS.x + 0.05, LEAK_Y, BUCKET_POS.z - 0.04), Vector3.DOWN, Vector3.BACK, 0.45, 0.4, 0.3, Color(0.45, 0.4, 0.32, 1.0))
-	_decal(stain, Vector3(BUCKET_POS.x, 0.0, BUCKET_POS.z), Vector3.UP, Vector3.FORWARD, 0.8, 0.7, 0.1, Color(0.35, 0.33, 0.3, 0.7))
+	_old_stains.append(_decal(stain, Vector3(BUCKET_POS.x, LEAK_Y, BUCKET_POS.z), Vector3.DOWN, Vector3.BACK, 1.3, 1.1, 0.3, Color(0.8, 0.75, 0.65, 1.0)))
+	_old_stains.append(_decal(stain, Vector3(BUCKET_POS.x + 0.05, LEAK_Y, BUCKET_POS.z - 0.04), Vector3.DOWN, Vector3.BACK, 0.45, 0.4, 0.3, Color(0.45, 0.4, 0.32, 1.0)))
+	_old_stains.append(_decal(stain, Vector3(BUCKET_POS.x, 0.0, BUCKET_POS.z), Vector3.UP, Vector3.FORWARD, 0.8, 0.7, 0.1, Color(0.35, 0.33, 0.3, 0.7)))
 	_look("Regarder le seau", Vector3(0.36, 0.32, 0.36), BUCKET_POS + Vector3(0, 0.16, 0),
 		"La fuite du toit. Une goutte toutes les trois secondes. Tu comptes malgré toi.", "seau")
 
@@ -1572,16 +1951,30 @@ func _drapes() -> void:
 	cm.set_shader_parameter("color", Color(0.4, 0.24, 0.24))
 	cm.set_shader_parameter("sway", 0.004)
 	var x := XW + 0.115
+	var full := not Builder.soft_render()
+	if full:
+		# vraie carte (curtain.gdshader du lot V2-SDB : plis aux vraies normales) : rose passé mat, lisière
+		# de velours sous la lumière rasante, plis serrés sous la tringle ; un pan diffère de l'autre
+		cm.set_shader_parameter("height_m", 1.38)
+		cm.set_shader_parameter("rim_k", 0.4)
+		cm.set_shader_parameter("roughness_v", 0.88)
+		cm.set_shader_parameter("fold_period", 0.1)
+	var pan := 0
 	for side in [[3.47, 3.98], [5.02, 5.53]]:
 		var pm := PlaneMesh.new()
 		pm.orientation = PlaneMesh.FACE_Z
 		pm.size = Vector2(1.0, 1.38)
-		pm.subdivide_width = 30
-		pm.subdivide_depth = 6
+		pm.subdivide_width = 48 if full else 30
+		pm.subdivide_depth = 12 if full else 6
 		var mi := MeshInstance3D.new()
 		mi.name = "Rideau"
 		mi.mesh = pm
 		mi.material_override = cm
+		if full:
+			var own := cm.duplicate() as ShaderMaterial
+			own.set_shader_parameter("seed", 3.7 + pan * 5.3)
+			mi.material_override = own
+		pan += 1
 		mi.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
 		var z0: float = side[0]
 		var z1: float = side[1]
@@ -1625,8 +2018,8 @@ func _walls() -> void:
 		leaf.rotation.z = 0.5 + k * 0.2
 	# l'ancien emplacement d'un cadre, et la moisissure de la fuite qui descend le long du mur
 	var mold: Texture2D = load("res://assets/decals/mold.png")
-	_decal(mold, Vector3(XE, 2.3, 4.7), Vector3.LEFT, Vector3.UP, 1.0, 0.7, 0.2, Color(1, 1, 1, 0.7))
-	_decal(mold, Vector3(2.6, LEAK_Y, 5.9), Vector3.DOWN, Vector3.RIGHT, 0.9, 0.7, 0.3, Color(1, 1, 1, 0.6))
+	_old_stains.append(_decal(mold, Vector3(XE, 2.3, 4.7), Vector3.LEFT, Vector3.UP, 1.0, 0.7, 0.2, Color(1, 1, 1, 0.7)))
+	_old_stains.append(_decal(mold, Vector3(2.6, LEAK_Y, 5.9), Vector3.DOWN, Vector3.RIGHT, 0.9, 0.7, 0.3, Color(1, 1, 1, 0.6)))
 
 
 func _ceiling() -> void:
@@ -1637,6 +2030,259 @@ func _ceiling() -> void:
 	_mesh(_cyl(0.025, 0.03, 0.04, 12), p + Vector3(0, -0.41, 0), _m(Color(0.5, 0.4, 0.2), 0.4, 0.6))
 	var globe := _mesh(_sphere(0.13, 18), p + Vector3(0, -0.53, 0), _m(Color(0.82, 0.78, 0.68), 0.35))
 	globe.scale = Vector3(1, 0.85, 1)
+
+
+# ------------------------------------------------------------------ habillage différé (lot V2-AMIS)
+
+## Télé de 1990 (Poly Haven television_02, taille réelle) : verre bombé de la coque, z(x, dy) relevé sur le
+## modèle (moindres carrés, écart 0,5 mm) : [1, x, x², dy, dy², x²·dy²] avec dy = y − 0,26.
+const TV_PH := "television_02"
+const TV_GLASS := [0.1222, -0.0033, -0.9944, -0.0034, -1.1354, 15.91]
+## Centre du verre dans le repère du support posé (modèle centré : x + 0,002, z + 0,053).
+const TV_GLASS_C := Vector3(0.002, 0.26, 0.053)
+## Dessus de la coque (plat de z = 0,033 à 0,173 dans le support), où se pose l'antenne.
+const TV_TOP := 0.4114
+const TV_ANTENNA_AT := Vector3(0.02, TV_TOP, 0.088)
+## Neige de la télé en vraie carte : grain et lignes deux fois plus fins (160 × 120 avant).
+const TV_SNOW_RES := Vector2(320.0, 240.0)
+
+
+## Objets de décor (Builder.detail), télé de 1990, moquette et usure (Wear) : appelé par Main après la
+## mesure de B16, seulement avec une vraie carte graphique (R3). Rien d'interactif, aucune collision ;
+## les Kenney remplacés (meuble télé, téléviseur) restent dans l'arbre, cachés : props[], collisions et
+## boîtes d'interaction ne changent pas. Le vide-grenier est posé contre les murs, hors du battant de P3
+## (x 2,25 → 3,2 ; z 2,9 → 3,9) et des chemins vers la boîte à biscuits, la télé et l'antenne. Aucun
+## tirage dans le hasard de la pièce.
+func dress_details() -> void:
+	_dress_tv()
+	_dress_floor()
+	_vide_grenier()
+	_wear_room()
+
+
+## Profondeur du verre de television_02 (repère du modèle) en (x, dy).
+static func _tv_glass_z(x: float, dy: float) -> float:
+	var c: Array = TV_GLASS
+	return c[0] + c[1] * x + c[2] * x * x + c[3] * dy + c[4] * dy * dy + c[5] * x * x * dy * dy
+
+
+## Plaque courbe de w × h m qui épouse le verre, « lift » m devant ; origine au sommet du verre ; UV d'un
+## QuadMesh (u de gauche à droite, v de haut en bas), face avant vers +z.
+static func _tv_curved(w: float, h: float, lift: float, nx := 24, ny := 18) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var apex := _tv_glass_z(0.0, 0.0)
+	for j in ny + 1:
+		for i in nx + 1:
+			var u := float(i) / nx
+			var v := float(j) / ny
+			var x := (u - 0.5) * w
+			var y := (0.5 - v) * h
+			st.set_uv(Vector2(u, v))
+			st.add_vertex(Vector3(x, y, _tv_glass_z(x, y) - apex + lift))
+	for j in ny:
+		for i in nx:
+			var a := j * (nx + 1) + i
+			var c := a + nx + 1
+			for k in [a, a + 1, c, a + 1, c + 1, c]:
+				st.add_index(k)
+	st.generate_normals()
+	st.generate_tangents()
+	return st.commit()
+
+
+## La télé de 1990 sur une petite table en bois, à la place des deux Kenney (cachés : leurs collisions,
+## props et boîtes restent). La dalle (Device) et la vitre épousent le verre bombé, 2,5 et 4,5 mm devant ;
+## l'antenne est reposée sur le dessus de la coque, son fil descend le dos jusqu'aux vis.
+func _dress_tv() -> void:
+	var cab: Node3D = props.get("cabinetTelevision")
+	if cab == null or tv_holder == null or tv == null:
+		return
+	var ctop := (cab.get_meta("size") as Vector3).y
+	var table := detail("small_wooden_table_01", cab.position, 0.0, Vector3(0.0, ctop, 0.0),
+		{"sync": true, "fit": "y", "range": 0.0, "shadow": true})
+	if table and table.has_meta("size"):
+		(cab.get_child(0) as Node3D).visible = false
+		# (plus étroite que le Kenney : les cassettes se rangent à côté de la télé)
+		for t in _vhs:
+			t.position.x = TV_POS.x + 0.285
+	var tvset := detail(TV_PH, Vector3.ZERO, 0.0, Vector3.ZERO, {"sync": true, "parent": tv_holder, "range": 0.0, "shadow": true})
+	if tvset == null or not tvset.has_meta("size"):
+		return
+	(tv_holder.get_child(0) as Node3D).visible = false
+	for n in _tv_kenney:
+		n.visible = false
+	tv.position = TV_GLASS_C + Vector3(0.0, 0.0, _tv_glass_z(0.0, 0.0))
+	for c in tv.get_children():
+		if c is MeshInstance3D:
+			(c as MeshInstance3D).mesh = _tv_curved(0.32, 0.24, 0.0025)
+	var glass := tv_holder.get_node_or_null("VitreBombee") as MeshInstance3D
+	if glass:
+		glass.mesh = _tv_curved(0.312, 0.226, 0.0045)
+		glass.rotation = Vector3.ZERO
+		glass.scale = Vector3.ONE
+		glass.position = tv.position
+	if tv.mat:
+		tv.mat.set_shader_parameter("res", TV_SNOW_RES)
+	antenna.position = TV_ANTENNA_AT
+	# le fil : du socle, par l'arête du dessus, le long du dos en pente, jusqu'aux deux vis du panneau
+	_antenna_wire([Vector3(0.03, TV_TOP + 0.006, 0.05), Vector3(0.045, TV_TOP + 0.004, 0.03),
+		Vector3(0.052, 0.351, 0.0), Vector3(0.062, 0.296, -0.075), Vector3(0.07, 0.226, -0.15),
+		Vector3(0.075, 0.2, -0.176)], [Vector3(0.07, 0.19, -0.177), Vector3(0.095, 0.19, -0.177)])
+
+
+## Moquette de la chambre d'amis (vraie carte) : une copie de mats.moquette, au relief et à l'occlusion de
+## dirty_carpet (boucles tassées, crasse au pied du poil), même teinte rouille. La moquette du bureau ne
+## change pas.
+func _dress_floor() -> void:
+	var base := mats.moquette as StandardMaterial3D
+	const DC := "res://assets/textures/dirty_carpet/dirty_carpet_%s.jpg"
+	if base == null or not ResourceLoader.exists(DC % "normal_gl"):
+		return
+	for c in get_children():
+		var mi := c as MeshInstance3D
+		if mi == null or mi.material_override != base:
+			continue
+		var m := base.duplicate() as StandardMaterial3D
+		m.resource_name = "moquette_amis"
+		m.normal_texture = load(DC % "normal_gl")
+		m.normal_scale = 1.1
+		m.ao_enabled = true
+		m.ao_texture = load(DC % "orm")
+		m.ao_texture_channel = BaseMaterial3D.TEXTURE_CHANNEL_RED
+		m.ao_light_affect = 0.3
+		mi.material_override = m
+		break
+
+
+## Morceau de carton déchiré (atlas CardboardSet001, 4 × 4 morceaux) couché sur le sol.
+func _scrap(piece: Rect2, size: Vector2, pos: Vector3, rot: float) -> void:
+	const CB := "res://assets/textures/CardboardSet001/CardboardSet001_%s"
+	if not ResourceLoader.exists(CB % "albedo.png"):
+		return
+	var m := StandardMaterial3D.new()
+	m.albedo_texture = load(CB % "albedo.png")
+	m.albedo_color = Color(0.56, 0.5, 0.42)
+	m.normal_enabled = true
+	m.normal_texture = load(CB % "normal_gl.jpg")
+	m.roughness_texture = load(CB % "orm.jpg")
+	m.roughness_texture_channel = BaseMaterial3D.TEXTURE_CHANNEL_GREEN
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+	m.alpha_scissor_threshold = 0.5
+	m.uv1_scale = Vector3(piece.size.x, piece.size.y, 1.0)
+	m.uv1_offset = Vector3(piece.position.x, piece.position.y, 0.0)
+	var pm := PlaneMesh.new()
+	pm.size = size
+	var mi := _no_gi(_mesh(pm, pos, m, Vector3(0.0, rot, 0.0))) as MeshInstance3D
+	mi.name = "Carton_dechire"
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+
+## Le vide-grenier de Mamie : cartons empilés contre les murs, une caisse en bois, une caisse en plastique,
+## et ce qu'elle voulait vendre (la lampe-tempête, le cheval en porcelaine, le service à thé, les vases, le
+## vieux portable beige). Positions relevées sur le banc du lot (boîtes des meubles voisins).
+func _vide_grenier() -> void:
+	var nwall := ZN + DADO      # face du lambris, mur de ta mère
+	var wwall := XW + DADO      # face du lambris, façade
+	# (préréglage Basse : sans les trois bibelots les plus lourds, 96 000 triangles à eux trois)
+	var rich := Qualite.effective() > Qualite.BASSE
+	# 1. le coin entre la table de couture et la télé : la caisse en bois, la lampe-tempête, le cheval
+	var crate := detail("wooden_crate_01", Vector3(-2.03, 0, nwall + 0.19), 0.0, Vector3(0.72, 0.0, 0.36), {"sync": true, "shadow": true})
+	var crate_top := (crate.get_meta("size") as Vector3).y if crate and crate.has_meta("size") else 0.3
+	if rich:
+		detail("Lantern_01", Vector3(-1.8, crate_top, nwall + 0.2), 25.0, Vector3.ZERO, {"sync": true})
+		detail("horse_statue_01", Vector3(-2.2, crate_top, nwall + 0.17), 28.0, Vector3.ZERO, {"sync": true})
+	# 2. contre le mur de ta mère, entre la télé et le buffet (la prise du cordon de la télé reste libre) :
+	# deux cartons, le portable fermé dessus
+	var low := detail("cardboard_box_01", Vector3(-0.2, 0, nwall + 0.205), 90.0, Vector3.ZERO, {"sync": true, "shadow": true})
+	var h1 := (low.get_meta("size") as Vector3).y if low and low.has_meta("size") else 0.342
+	var high := detail("cardboard_box_01", Vector3(-0.18, h1, nwall + 0.2), 274.0, Vector3(0.0, h1 * 0.9, 0.0), {"sync": true, "fit": "y", "shadow": true})
+	var h2 := h1 + ((high.get_meta("size") as Vector3).y if high and high.has_meta("size") else 0.31)
+	# (le modèle fait 65 cm de large : ramené aux 33 cm d'un portable de 1992)
+	var lap := detail("classic_laptop", Vector3(-0.2, h2, nwall + 0.2), 176.0, Vector3(0.33, 0.0, 0.0), {"sync": true})
+	if lap:
+		var stand := lap.find_child("classic_laptop_stand", true, false) as Node3D
+		if stand:
+			stand.visible = false
+		var lid := lap.find_child("classic_laptop_screen", true, false) as Node3D
+		if lid:
+			lid.rotation.x = deg_to_rad(88.0)        # rabattu
+	# 3. sous la fenêtre : une caisse en plastique (un vase dedans), deux cartons, un vase dessus (il se
+	# découpe sur la vitre)
+	detail("plastic_crate_01", Vector3(wwall + 0.165, 0, 4.33), 0.0, Vector3.ZERO, {"sync": true, "shadow": true})
+	detail("ceramic_vase_02", Vector3(wwall + 0.165, 0.012, 4.34), 40.0, Vector3.ZERO, {"sync": true})
+	var wl := detail("cardboard_box_01", Vector3(wwall + 0.205, 0, 4.88), 2.0, Vector3.ZERO, {"sync": true, "shadow": true})
+	var w1 := (wl.get_meta("size") as Vector3).y if wl and wl.has_meta("size") else 0.342
+	var wh := detail("cardboard_box_01", Vector3(wwall + 0.215, w1, 4.87), 185.0, Vector3(0.0, w1 * 0.92, 0.0), {"sync": true, "fit": "y", "shadow": true})
+	var w2 := w1 + ((wh.get_meta("size") as Vector3).y if wh and wh.has_meta("size") else 0.315)
+	detail("antique_ceramic_vase_01", Vector3(wwall + 0.22, w2, 4.86), 0.0, Vector3.ZERO, {"sync": true, "shadow": true})
+	# 4. sur le carton fermé du mur du couloir : le service à thé de Mamie, resserré (la théière, le sucrier,
+	# deux tasses sur leurs soucoupes ; les grands plats rangés)
+	var tea := detail("tea_set_01", Vector3(2.74, 0.342, 5.4), -84.0, Vector3.ZERO, {"sync": true}) if rich else null
+	if tea:
+		var model := tea.get_node_or_null("Modele") as Node3D
+		var inst := model.get_child(0) as Node3D if model and model.get_child_count() > 0 else null
+		if inst:
+			inst.position = Vector3.ZERO
+			var layout := {
+				"tea_set_01_teapot_01": Vector3(-0.07, 0.0, -0.07), "tea_set_01_teapot_01_lid": Vector3(-0.07, 0.002, -0.07),
+				"tea_set_01_sugar_cup_01": Vector3(0.1, 0.0, -0.09), "tea_set_01_sugar_cup_01_lid": Vector3(0.1, 0.0, -0.09),
+				"tea_set_01_saucer_circular_03": Vector3(0.09, 0.0, 0.1), "tea_set_01_cup_small_01": Vector3(0.09, 0.012, 0.1),
+				"tea_set_01_saucer_circular_04": Vector3(-0.1, 0.0, 0.12), "tea_set_01_cup_small_02": Vector3(-0.1, 0.012, 0.12),
+			}
+			for n in inst.get_children():
+				var nd := n as Node3D
+				if nd == null:
+					continue
+				if layout.has(String(nd.name)):
+					nd.position = layout[String(nd.name)]
+					if String(nd.name).begins_with("tea_set_01_cup_small_02"):
+						nd.rotation.y = 2.2
+				else:
+					nd.visible = false
+	# 5. chutes de carton déchiré sur la moquette (CardboardSet001)
+	_scrap(Rect2(0.758, 0.543, 0.234, 0.184), Vector2(0.24, 0.19), Vector3(2.38, 0.006, 4.72), 0.5)
+	_scrap(Rect2(0.043, 0.027, 0.184, 0.215), Vector2(0.17, 0.2), Vector3(-2.66, 0.006, 4.62), -0.3)
+
+
+## Usure de la chambre (Wear, vraie carte, pas en Basse) : la fuite (auréole au plafond, coulures et
+## moisissure sur le mur du couloir, cerne autour du seau), la crasse du pied des murs et des coins, le
+## passage de la porte au lit et vers la table de couture, la poussière sur les cartons et l'appui de la
+## fenêtre. Les anciennes taches (stain_water, mold) sont cachées.
+func _wear_room() -> void:
+	if not Wear.deco_on():
+		return
+	for d in _old_stains:
+		if is_instance_valid(d):
+			d.visible = false
+	var b := BUCKET_POS
+	Wear.decal(self, "tache_plafond", Vector3(b.x, LEAK_Y, b.z), Vector3.DOWN, Vector3.BACK, 1.25, 1.1,
+		{"world": true, "variant": 2})
+	Wear.decal(self, "cerne", Vector3(b.x + 0.02, 0.0, b.z - 0.03), Vector3.UP, Vector3.FORWARD, 0.75, 0.68,
+		{"world": true, "variant": 0, "color": Color(0.36, 0.25, 0.21), "mix": 0.6})
+	# l'eau a coulé le long du mur du couloir, au-dessus des cartons
+	Wear.decal(self, "coulure", Vector3(XE - 0.012, 2.05, 4.72), Vector3.LEFT, Vector3.UP, 0.42, 1.05,
+		{"world": true, "variant": 1, "alpha": 0.85})
+	Wear.decal(self, "coulure", Vector3(XE - 0.012, 1.95, 5.15), Vector3.LEFT, Vector3.UP, 0.3, 0.8,
+		{"world": true, "variant": 4, "alpha": 0.7})
+	Wear.decal(self, "moisissure", Vector3(XE - 0.01, LEAK_Y - 0.12, 4.85), Vector3.LEFT, Vector3.UP, 1.1, 0.3,
+		{"world": true, "variant": 0, "alpha": 0.85})
+	Wear.decal(self, "moisissure", Vector3(2.6, LEAK_Y, 5.9), Vector3.DOWN, Vector3.RIGHT, 0.8, 0.65,
+		{"world": true, "variant": 1, "alpha": 0.75})
+	Wear.wall_base(self, 0.22, {"gaps": [Rect2(0.19, 2.71, 1.13, 0.62), Rect2(-1.6, 2.71, 0.82, 0.45),
+		Rect2(-3.19, 2.9, 0.72, 1.1), Rect2(2.5, 4.25, 0.7, 2.05), Rect2(-2.45, 2.71, 0.86, 0.45),
+		Rect2(-0.5, 2.71, 0.6, 0.45), Rect2(-3.19, 4.1, 0.45, 1.1), Rect2(-0.8, 6.0, 1.6, 0.3),
+		Rect2(0.95, 5.78, 0.42, 0.52)]})
+	Wear.ceiling_corners(self)
+	# passages : de la porte au lit (en évitant le seau), du tapis à la table de couture
+	Wear.path(self, [Vector2(3.0, 3.42), Vector2(2.1, 3.95), Vector2(1.25, 4.6), Vector2(0.98, 5.3)], 0.5)
+	Wear.path(self, [Vector2(-1.15, 4.25), Vector2(-2.1, 4.12)], 0.45)
+	# poussière : l'appui de la fenêtre, le dessus des cartons, du buffet et de la télé
+	Wear.decal(self, "poussiere", Vector3(XW + 0.07, 0.948, 4.5), Vector3.UP, Vector3.RIGHT, 1.4, 0.2,
+		{"world": true, "alpha": 0.8})
+	for top in [Vector3(-0.2, 0.68, ZN + DADO + 0.2), Vector3(XW + DADO + 0.21, 0.66, 4.87), Vector3(2.75, 0.42, 4.6),
+			Vector3(2.75, 0.342, 6.0), Vector3(-2.03, 0.31, ZN + DADO + 0.19)]:
+		Wear.decal(self, "poussiere", top, Vector3.UP, Vector3.BACK, 0.55, 0.5, {"world": true, "alpha": 0.85, "depth": 0.06})
 
 
 # ------------------------------------------------------------------ restauration (sauvegarde)

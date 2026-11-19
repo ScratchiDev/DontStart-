@@ -17,7 +17,13 @@ extends Node
 ## - les sous-titres des sons importants (C5, sound_caption, seulement avec l'option), y compris les
 ##   coups aux portes (P2, séance 1) et le bourdonnement qui traverse les murs ;
 ## - le journal des temps (C9) : chaque changement d'étape (step) écrit une ligne dans
-##   user://journal.txt (heure réelle, temps depuis l'étape précédente et depuis le début).
+##   user://journal.txt (heure réelle, temps depuis l'étape précédente et depuis le début) ;
+## - ses sons, sans voix (lot V2-CREATURE, Sfx.creature, creature_sfx.gd) : sa signature (un bip qui se
+##   déforme en souffle) à son arrivée dans un appareil et à ses premiers mots après un temps de calme ; son
+##   souffle électrique dans l'appareil habité (inhabited_id), qui la suit et gonfle quand elle parle ou à
+##   chaque impulsion de stress ; ses imitations (la toux de Mamie sous une ligne imitée, les pantoufles
+##   derrière toi, des coups qui répondent à l'envers) ; l'interférence des appareils qui agissent seuls.
+##   Aucun tirage du hasard du jeu en plus.
 ##
 ## Accès : Haunt.of(get_tree()) (le nœud est dans le groupe « haunt », créé par main.gd).
 ## Attention : à l'intérieur de ce script, appeler self.log(...) (log() seul est la fonction
@@ -238,7 +244,7 @@ func say(dev_id: String, text: String, who := "elle", whisper := true) -> float:
 		label += " · voix de " + who
 	var dur := subtitle_time(t)
 	var kind := "elle" if who == "elle" or who == "" else "proche"
-	var show := func() -> void: _voice(dev, t, dur, whisper)
+	var show := func() -> void: _voice(dev, t, dur, whisper, who)
 	var hud := _hud()
 	var total := dur
 	if hud and hud.has_method("subtitle"):
@@ -276,13 +282,15 @@ func say_nearest(text: String, who := "elle", among: Array = []) -> String:
 	return d.device_id
 
 
-func _voice(dev: Connected, text: String, dur: float, whisper: bool) -> void:
+func _voice(dev: Connected, text: String, dur: float, whisper: bool, who := "elle") -> void:
 	if dev and is_instance_valid(dev):
 		dev.speak(text, dur)
+		# sa signature (ou une imitation) ouvre la ligne : les bips de données partent juste après (mêmes tirages)
+		var lead := Sfx.creature.on_say(dev, who, dur) if Sfx.creature else 0.0
 		var pos := dev.speak_pos()
 		var n := clampi(text.length() / 14, 2, 6)
 		for i in n:
-			var delay := (dur * 0.7) * float(i) / n + randf_range(0.0, 0.12)
+			var delay := lead + (dur * 0.7) * float(i) / n + randf_range(0.0, 0.12)
 			get_tree().create_timer(delay, false).timeout.connect(func() -> void:
 				Sfx.voice_at("chirp", pos, -12.0, randf_range(0.85, 1.2), 1.6))
 	if whisper:
@@ -312,6 +320,8 @@ func move(from_id: String, to_id: String, sec := 1.2) -> void:
 	var pa := a.speak_pos()
 	var pb := b.speak_pos()
 	Sfx.hum_move(pa, pb, sec)
+	if Sfx.creature:
+		Sfx.creature.on_move(a, b, sec)
 	# § 6.4 : le bourdonnement est toujours sous-titré à sa première occurrence (sinon il n'est pas
 	# compris) ; ensuite, seulement avec l'option « Sous-titres des sons » (C5)
 	sound_caption(HUM_CAPTION, not _hum_captioned)
@@ -359,6 +369,8 @@ func stress(v: float, why := "") -> void:
 	self.log({"ev": "stress", "v": v, "why": why, "stress": snappedf(Game.stress, 0.001)})
 	if v > 0.0:
 		_track_pulse(v, why)
+	if Sfx.creature:
+		Sfx.creature.on_stress(v, why)
 
 
 ## Événement de scénario signalé par une pièce ou un appareil (« seche_cheveux_pris »,
@@ -370,6 +382,8 @@ func story_event(event_name: String, data := {}) -> void:
 	progress()
 	if STORY_STRESS.has(event_name) and bool(data.get("premiere", true)):
 		stress(float(STORY_STRESS[event_name]), event_name)
+	if Sfx.creature:
+		Sfx.creature.on_story(event_name, data)
 	story.emit(event_name, data)
 
 
@@ -520,6 +534,8 @@ func _on_door_used(_it: Interactable, dr: Node, id: String) -> void:
 	if n > int(_knocks_seen.get(id, 0)):
 		_knocks_seen[id] = n
 		sound_caption(KNOCK_CAPTION)
+		if Sfx.creature and dr is Node3D:
+			Sfx.creature.on_knock(dr as Node3D, id)
 
 
 func _on_absorbed() -> void:
