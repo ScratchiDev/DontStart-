@@ -46,8 +46,10 @@ func _ready() -> void:
 	haunt.name = "Haunt"
 	haunt.add_to_group("haunt")
 	add_child(haunt)
-	# la couche 11 (« flux uniquement ») n'est jamais vue par le joueur
+	# la couche 11 (« flux uniquement ») n'est jamais vue par le joueur, ni l'infrarouge des captures des
+	# caméras de flux (FeedCam.LAYER_IR : une lumière de cette couche n'éclaire que leur image)
 	player.camera.set_cull_mask_value(Builder.LAYER_FEED_ONLY, false)
+	player.camera.set_cull_mask_value(FeedCam.LAYER_IR, false)
 	terminal = room.terminal
 	_build_environment()
 	_build_house()
@@ -76,6 +78,14 @@ func _ready() -> void:
 		add_child(autotest)
 		autotest.setup(self)
 		autotest.run()
+		return
+	# banc d'essai des préréglages (« -- --banc », lot V3-ETALONNAGE) : à la place du menu
+	if Banc.wanted():
+		var b := Banc.new()
+		b.name = "Banc"
+		add_child(b)
+		b.setup(self)
+		b.run()
 		return
 	hud.fade.color.a = 0.0
 	if Engine.has_meta(CONTINUE_META):
@@ -126,6 +136,14 @@ func _build_environment() -> void:
 	env.ssao_enabled = true
 	env.adjustment_enabled = true
 	world.environment = env
+	# étalonnage (LUT 32³, rendu net sur vraie carte seulement ; lot V3-ETALONNAGE) : calculée une fois, hors
+	# du chrono de B16 ; le filtre la lit quand lut_mix > 0 (jamais en rétro ni en rendu logiciel)
+	var m := retro_mat()
+	if m and not Qualite.soft():
+		var t0 := Time.get_ticks_usec()
+		m.set_shader_parameter("lut", lut_texture())
+		m.set_shader_parameter("lut_size", float(LUT_SIZE))
+		print("LUT %d³ calculée en %.1f ms" % [LUT_SIZE, (Time.get_ticks_usec() - t0) / 1000.0])
 
 
 ## Le premier étage autour de la chambre (couloir, salle de bain, lingerie, bureau, chambre d'amis…),
@@ -254,19 +272,37 @@ func _apply_video() -> void:
 		env.ssao_detail = 0.6
 		env.ssao_light_affect = 0.15
 		# (pas de SSIL : la VoxelGI des pièces fait déjà rebondir la lumière ; le SSIL coûtait ~7 % de
-		# l'image en rendu logiciel pour un gain à peine visible)
-		env.ssil_enabled = false
+		# l'image en rendu logiciel pour un gain à peine visible ; Ultra sur vraie carte : Qualite.ssil_on)
+		env.ssil_enabled = Qualite.ssil_on()
+		if env.ssil_enabled:
+			env.ssil_radius = Qualite.SSIL_RADIUS
+			env.ssil_intensity = tune("ssil_k", Qualite.SSIL_INTENSITY)
+			env.ssil_sharpness = Qualite.SSIL_SHARPNESS
 		# (contraste porté par AgX : celui de l'environnement, appliqué après la courbe, mettait à 0 tout ce
 		# qui sortait sous 17/255 ; les nuits étaient noires à 35-50 % de pixels nuls)
 		env.adjustment_contrast = 1.0
-		env.adjustment_saturation = 0.9
+		# (vraie carte : la saturation passe dans la LUT d'étalonnage)
+		env.adjustment_saturation = 1.0 if lut_on() else 0.9
 		# (lumière ambiante plus basse qu'en rétro : les ombres viennent des lampes ; la nuit, de la
 		# lampe de poche et de la lune)
-		env.ambient_light_energy = NET_AMBIENT
-	# lampe de poche : point chaud, anneau du réflecteur et halo (rendu net seulement) ; son rebond dans
-	# la VoxelGI de la pièce (rendu net : la nuit, on lit les volumes autour du faisceau)
-	player.flashlight.light_projector = null if retro_on else FLASH_COOKIE
+		env.ambient_light_energy = tune("ambiant", NET_AMBIENT) if full else NET_AMBIENT
+	# lampe de poche : point chaud, anneau du réflecteur et halo (rendu net seulement ; vraie carte : le
+	# masque de l'étalonnage final) ; son rebond dans la VoxelGI de la pièce (rendu net : la nuit, on lit les
+	# volumes autour du faisceau)
+	var cookie: Texture2D = FLASH_COOKIE
+	if full and tune("cookie", 1.0) > 0.5:
+		cookie = flash_cookie_net()
+	player.flashlight.light_projector = null if retro_on else cookie
+	if _flash_spec0 < 0.0:
+		_flash_spec0 = player.flashlight.light_specular
+	player.flashlight.light_specular = player.FLASH_SPECULAR_NET if full and not retro_on else _flash_spec0
 	player.flashlight.light_indirect_energy = 1.0 if retro_on else (flash_gi_net() if full else FLASH_GI_SOFT)
+	# lune de la chambre de ta mère (vraie carte, hors rétro : MERE_MOON_*)
+	var mn := room.get("moon") as SpotLight3D
+	if mn:
+		mn.light_energy = tune("lune_mere", MERE_MOON_NET) if full and not retro_on else 3.0
+		mn.light_volumetric_fog_energy = tune("lune_mere_fog", MERE_MOON_FOG_NET) if full and not retro_on else 1.0
+	_apply_auto_exposure(full and not retro_on)
 	if room.has_method("set_screen_glow_style"):
 		room.set_screen_glow_style(retro_on)
 	var m := retro_mat()
@@ -289,6 +325,52 @@ func _apply_video() -> void:
 		m.set_shader_parameter("shoulder_knee", NET_SHOULDER_KNEE)
 		m.set_shader_parameter("toe", 0.0 if retro_on else c.y)
 		m.set_shader_parameter("grain_net", 0.0 if retro_on else 1.0)
+		# LUT d'étalonnage : rendu net sur vraie carte seulement (0 en rétro et en rendu logiciel)
+		if lut_on():
+			m.set_shader_parameter("lut", lut_texture())
+		m.set_shader_parameter("lut_mix", 1.0 if lut_on() else 0.0)
+
+
+## La LUT d'étalonnage s'applique : rendu net sur vraie carte (« -- --tune=lut:0 » la coupe).
+static func lut_on() -> bool:
+	return Qualite.extras_on() and tune("lut", 1.0) > 0.5
+
+
+## Exposition automatique bornée (voir AUTO_EXPO_*) : sur la caméra du joueur (pas sur l'environnement,
+## que partagent les caméras de flux), dès Moyenne, rendu net sur vraie carte, hors autotest (sauf
+## « -- --tune=expo_auto:1 »). Bornes : la luminance mesurée est ramenée dans [s, s × 2^-AUTO_EXPO_MIN_EV] ;
+## sous le seuil s, le facteur vaut 1 (jamais d'éclaircissement).
+func _apply_auto_exposure(net: bool) -> void:
+	var on := net and Qualite.at_least(Qualite.MOYENNE) and tune("expo_auto", 0.0 if Game.autotest else 1.0) > 0.5
+	if not on:
+		if player.camera.attributes == _cam_attr:
+			player.camera.attributes = null
+		return
+	if _cam_attr == null:
+		_cam_attr = CameraAttributesPractical.new()
+		_cam_attr.resource_name = "exposition_bornee"
+		var o: Node = room.get("outside")
+		if o and o.has_signal("lightning_struck"):
+			o.connect("lightning_struck", _on_lightning)
+	var s := tune("expo_seuil", AUTO_EXPO_SCALE)
+	_cam_attr.auto_exposure_enabled = true
+	_cam_attr.auto_exposure_scale = s
+	_cam_attr.auto_exposure_min_sensitivity = s / ISO_TO_LUM
+	_cam_attr.auto_exposure_max_sensitivity = s * pow(2.0, -AUTO_EXPO_MIN_EV) / ISO_TO_LUM
+	_cam_attr.auto_exposure_speed = AUTO_EXPO_SPEED
+	player.camera.attributes = _cam_attr
+
+
+## Un éclair : l'exposition s'adapte plus vite pendant AUTO_EXPO_BOOST_S (l'œil ébloui), puis revient.
+func _on_lightning() -> void:
+	if _cam_attr == null or player.camera.attributes != _cam_attr:
+		return
+	_cam_attr.auto_exposure_speed = AUTO_EXPO_SPEED_BOLT
+	var my := Time.get_ticks_msec() + int(AUTO_EXPO_BOOST_S * 1000.0)
+	_expo_boost_until = my
+	await get_tree().create_timer(AUTO_EXPO_BOOST_S + 0.4, false).timeout
+	if _expo_boost_until == my and _cam_attr:
+		_cam_attr.auto_exposure_speed = AUTO_EXPO_SPEED
 
 
 ## Courbe du rendu net (passe « triple A »), calée sur les aperçus des pièces (captures « --etalonnage »
@@ -334,8 +416,11 @@ const FLASH_COOKIE := preload("res://assets/textures/flashlight_cookie.png")
 ## VoxelGI de la pièce. À 1, tout ce qui sortait du faisceau restait à 0 (35 à 80 % de l'image la nuit) ;
 ## à 6 (étalonnage de la vague 1, gardé en rendu logiciel), la pièce entière se lisait autour du faisceau
 ## et la lampe ne révélait plus rien (médiane de nuit 13 à 33/255). Vraie carte (lot V2-NUIT) : le
-## faisceau découvre, le reste de la pièce se devine à peine.
-const FLASH_GI_NET := 3.0
+## faisceau découvre, le reste de la pièce se devine à peine. Étalonnage final (V3-ETALONNAGE) : à 3, le
+## rebond remplissait encore la pièce (couloir de 27 à 16 sans lui, salle de bain de 34 à 19) ; avec le
+## masque et le débordement resserrés, à 2 le rebond fait un halo autour du rond et les volumes de la pièce
+## se devinent (médianes de nuit 4 à 10/255 dans les chambres).
+const FLASH_GI_NET := 2.0
 const FLASH_GI_SOFT := 6.0
 ## Brouillard volumétrique, rendu net sur vraie carte : part de la VoxelGI qu'il diffuse (1 par défaut).
 ## Avec FLASH_GI_NET, il fait le fond de la nuit (le produit des deux : 6 avant, 3 ici). Le voile gris de
@@ -351,6 +436,183 @@ const FULL_GLOW_LEVELS := [0.0, 0.6, 0.45, 0.15, 0.0, 0.0, 0.0]
 ## Aberration chromatique du rendu net sur vraie carte : seulement au-dessus de cette corruption (la peur),
 ## en montée quadratique (retro_post.gdshader, corruption_floor).
 const FULL_ABERRATION_FLOOR := 0.2
+## Étalonnage final (lot V3-ETALONNAGE), rendu net sur vraie carte (le rendu logiciel et le rétro gardent
+## leur image, voir FLASH_GI_SOFT et FLASH_COOKIE) :
+##  - LUT 32³ calculée en code (lut_texture, _grade), appliquée par le filtre plein écran après la courbe :
+##    saturation d'avant (LUT_SATURATION, l'ancien adjustment_saturation), −30 % dans les ombres, ombres un
+##    peu froides et hautes lumières un peu ambrées (teintes multiplicatives : le noir reste noir), courbe
+##    en S de 12 % sur la luminance autour de LUT_PIVOT (les tons moyens du jour ne bougent presque pas,
+##    les nuits s'enfoncent) ;
+##  - masque de la lampe de poche (flash_cookie_net) : point chaud de ~9°, anneau sombre du réflecteur,
+##    couronne à −1,3 IL jusqu'à ~22°, bord net ; légères irrégularités du réflecteur ;
+##  - exposition automatique BORNÉE (camera_attributes) : elle n'éclaircit jamais (la nuit reste celle de
+##    l'étalonnage) ; elle assombrit jusqu'à AUTO_EXPO_MIN_EV quand l'image dépasse AUTO_EXPO_SCALE (éclair,
+##    lampe dans les yeux), puis revient lentement (l'œil ébloui par l'éclair : le noir est plus noir juste
+##    après). Dès Moyenne, jamais en rétro, en rendu logiciel ni dans les autotests (captures stables).
+const LUT_SIZE := 32
+const LUT_SATURATION := 0.9
+const LUT_SHADOW_DESAT := 0.3
+const LUT_SHADOW_TINT := Vector3(0.97, 0.995, 1.045)
+const LUT_HIGH_TINT := Vector3(1.035, 1.0, 0.93)
+const LUT_S := 0.12
+const LUT_PIVOT := 0.3
+const LUMA := Vector3(0.2126, 0.7152, 0.0722)
+## Masque de la lampe (rendu net, vraie carte) : taille (px) ; rayons relatifs au cône (tan θ / tan 27°).
+const COOKIE_NET_SIZE := 192
+const COOKIE_CORONA := 0.42
+## Exposition automatique : seuil (moyenne de max(r, g, b) du tampon HDR avant exposition, ce que mesure
+## Godot ; estimée sur les captures : pièces et nuits de 0,02 à 0,3, éclairs 0,6 à 1+), assombrissement
+## maximal (IL), vitesses (normale, après un éclair pendant AUTO_EXPO_BOOST_S).
+const AUTO_EXPO_SCALE := 0.4
+const AUTO_EXPO_MIN_EV := -1.5
+const AUTO_EXPO_SPEED := 0.5
+const AUTO_EXPO_SPEED_BOLT := 2.5
+const AUTO_EXPO_BOOST_S := 1.0
+## Sensibilité (ISO) -> luminance de l'exposition automatique de Godot (CameraAttributesPractical :
+## 12,5 / 100 / sensibilité d'exposition, 100 par défaut).
+const ISO_TO_LUM := 12.5 / 100.0 / 100.0
+## Lune de la chambre de ta mère (room.moon), rendu net sur vraie carte : moins forte et presque hors du
+## brouillard (la revue voyait une colonne de brume bleue sous la tringle) ; rétro et logiciel : 3 et 1.
+const MERE_MOON_NET := 2.4
+const MERE_MOON_FOG_NET := 0.25
+## Profondeur de champ contextuelle (même CameraAttributesPractical, donc dès Moyenne, vraie carte, hors rétro
+## et hors autotest) : assis face à l'écran (Game.phase « seated » et player.turned_away() < DOF_SEATED_TURN),
+## le fond de la pièce derrière l'écran se floute ; document ouvert (hud.paper_open), toute la pièce. Fondu
+## de DOF_FADE_S ; coupée dès qu'on se retourne. (La pause floutée est celle du menu, lot V3-INTERFACE.)
+const DOF_SEATED_TURN := 0.5
+const DOF_SEATED := Vector3(1.2, 1.2, 0.05)     # distance, transition (m), force
+const DOF_PAPER := Vector3(0.4, 0.8, 0.09)
+const DOF_FADE_S := 0.35
+var _cam_attr: CameraAttributesPractical
+var _expo_boost_until := 0
+var _dof_k := 0.0
+var _flash_spec0 := -1.0
+var _dof_kind := Vector3.ZERO
+static var _lut: ImageTexture3D
+static var _lut_identity := false
+static var _cookie_net: ImageTexture
+static var _cookie_corona := -1.0
+
+## Réglages d'étalonnage surchargés : « -- --tune=clé:valeur,clé:valeur » (lus une fois) et Main.tunes,
+## modifiable à chaud (autotest « --etal » : plusieurs variantes dans un même lancement, appliquées par
+## Game.settings_changed). Clés lues par Main.tune(clé, défaut) dans les scripts du lot V3-ETALONNAGE
+## (liste dans l'API du lot) ; sans surcharge, la constante.
+static var tunes := {}
+static var _tunes_cmd := {}
+static var _tunes_read := false
+
+
+static func tune(key: String, fallback: float) -> float:
+	if tunes.has(key):
+		return float(tunes[key])
+	if not _tunes_read:
+		_tunes_read = true
+		for a in OS.get_cmdline_user_args():
+			if a.begins_with("--tune="):
+				for kv in a.substr(7).split(",", false):
+					var p := kv.split(":")
+					if p.size() == 2:
+						_tunes_cmd[p[0].strip_edges()] = float(p[1])
+	return float(_tunes_cmd.get(key, fallback))
+
+
+## La LUT d'étalonnage (32³, RGBA8), calculée une fois ; « -- --tune=lut:2 » : la LUT identité (contrôle).
+static func lut_texture() -> ImageTexture3D:
+	var ident := tune("lut", 1.0) > 1.5
+	if _lut == null or _lut_identity != ident:
+		_lut_identity = ident
+		var n := LUT_SIZE
+		var imgs: Array[Image] = []
+		for b in n:
+			var data := PackedByteArray()
+			data.resize(n * n * 4)
+			var i := 0
+			for g in n:
+				for r in n:
+					var c := Vector3(r, g, b) / float(n - 1)
+					if not ident:
+						c = _grade(c)
+					data[i] = clampi(roundi(c.x * 255.0), 0, 255)
+					data[i + 1] = clampi(roundi(c.y * 255.0), 0, 255)
+					data[i + 2] = clampi(roundi(c.z * 255.0), 0, 255)
+					data[i + 3] = 255
+					i += 4
+			imgs.append(Image.create_from_data(n, n, false, Image.FORMAT_RGBA8, data))
+		_lut = ImageTexture3D.new()
+		_lut.create(Image.FORMAT_RGBA8, n, n, n, false, imgs)
+	return _lut
+
+
+## L'étalonnage d'une couleur affichée (0..1) : voir LUT_*.
+static func _grade(c: Vector3) -> Vector3:
+	var y := c.dot(LUMA)
+	var ws := 1.0 - smoothstep(0.02, 0.35, y)
+	var wh := smoothstep(0.55, 1.0, y)
+	var sat := LUT_SATURATION * (1.0 - LUT_SHADOW_DESAT * ws)
+	c = Vector3(y, y, y).lerp(c, sat)
+	c *= Vector3.ONE.lerp(LUT_SHADOW_TINT, ws)
+	c *= Vector3.ONE.lerp(LUT_HIGH_TINT, wh)
+	var y2 := c.dot(LUMA)
+	if y2 > 0.0001:
+		var s: float
+		if y2 < LUT_PIVOT:
+			s = LUT_PIVOT * pow(y2 / LUT_PIVOT, 1.5)
+		else:
+			s = 1.0 - (1.0 - LUT_PIVOT) * pow(maxf(1.0 - y2, 0.0) / (1.0 - LUT_PIVOT), 1.5)
+		c *= (y2 + LUT_S * (s - y2)) / y2
+	return c.clamp(Vector3.ZERO, Vector3.ONE)
+
+
+## Masque de la lampe de poche en rendu net sur vraie carte (le rendu logiciel garde FLASH_COOKIE) : profil
+## radial (r = tan θ / tan 27°) : point chaud plein jusqu'à 0,24 (~7°), épaule jusqu'à 0,34 (~10°), anneau
+## sombre du réflecteur vers 0,40, couronne de 0,42 à 0,34 (−1,3 à −1,6 IL) jusqu'à 0,80 (~22°), bord net en 0,05 ;
+## 6 facettes du réflecteur (±4 %) et un point chaud un peu décentré.
+static func flash_cookie_net() -> Texture2D:
+	var cor := tune("couronne", COOKIE_CORONA)
+	if _cookie_net == null or not is_equal_approx(cor, _cookie_corona):
+		_cookie_corona = cor
+		var n := COOKIE_NET_SIZE
+		var prof := PackedFloat32Array()
+		prof.resize(512)
+		for i in 512:
+			prof[i] = _cookie_profile(i / 511.0, cor)
+		var data := PackedByteArray()
+		data.resize(n * n * 4)
+		var k := 0
+		for y in n:
+			var dy := (y + 0.5) / n * 2.0 - 1.0
+			for x in n:
+				var dx := (x + 0.5) / n * 2.0 - 1.0
+				var r := sqrt(dx * dx + dy * dy)
+				var v := 0.0
+				if r < 1.0:
+					v = prof[mini(int(r * 511.0), 511)]
+					var a := atan2(dy, dx)
+					# facettes du réflecteur dans la couronne, point chaud décalé de 2 % vers le haut à gauche
+					v *= 1.0 + 0.04 * sin(6.0 * a + 9.0 * r) * smoothstep(0.3, 0.55, r)
+					var hx := dx + 0.02
+					var hy := dy + 0.015
+					v += 0.06 * exp(-(hx * hx + hy * hy) / 0.006)
+				var b := clampi(roundi(clampf(v, 0.0, 1.0) * 255.0), 0, 255)
+				data[k] = b
+				data[k + 1] = b
+				data[k + 2] = b
+				data[k + 3] = 255
+				k += 4
+		var img := Image.create_from_data(n, n, false, Image.FORMAT_RGBA8, data)
+		img.generate_mipmaps()
+		_cookie_net = ImageTexture.create_from_image(img)
+	return _cookie_net
+
+
+static func _cookie_profile(r: float, cor := COOKIE_CORONA) -> float:
+	var hot := 1.0 - 0.55 * smoothstep(0.24, 0.34, r)
+	var corona := lerpf(cor, cor * 0.8, smoothstep(0.45, 0.8, r))
+	var v := hot if r < 0.34 else lerpf(hot, corona, smoothstep(0.34, 0.45, r))
+	v *= 1.0 - 0.3 * exp(-pow((r - 0.40) / 0.035, 2.0))
+	return v * (1.0 - smoothstep(0.80, 0.85, r))
+
+
 ## « -- --expo=1.4 » : exposition d'AgX imposée (étalonnage ; rendu net seulement).
 static var _expo_arg := -2.0
 ## Réglages imposés pour l'étalonnage (rendu net, vraie carte) : « -- --flash-gi=2.5 » (énergie
@@ -369,7 +631,7 @@ static func agx_exposure() -> float:
 
 ## Énergie indirecte de la lampe de poche en rendu net sur vraie carte (FLASH_GI_NET, ou « --flash-gi= »).
 static func flash_gi_net() -> float:
-	return _cmd_float("--flash-gi=", FLASH_GI_NET)
+	return tune("flash_gi", _cmd_float("--flash-gi=", FLASH_GI_NET))
 
 
 ## Injection de la VoxelGI dans le brouillard, rendu net sur vraie carte (FULL_FOG_GI_INJECT, ou « --fog-gi= »).
@@ -643,9 +905,34 @@ func reflections_busy() -> bool:
 
 
 func _process(_delta: float) -> void:
+	_update_dof(_delta)
 	# intensité des reflets de chaque pièce : celle de ses lampes (clignotements, coupures, interrupteur)
 	if house:
 		for id in house.rooms:
 			var r: HouseRoom = house.rooms[id]
 			if r.probe:
 				r.update_reflection()
+
+
+## Profondeur de champ contextuelle (voir DOF_*) : seulement quand l'exposition bornée est sur la caméra.
+func _update_dof(delta: float) -> void:
+	if _cam_attr == null:
+		return
+	var want := 0.0
+	if player.camera.attributes == _cam_attr and Qualite.at_least(Qualite.MOYENNE):
+		if hud and bool(hud.get("paper_open")):
+			want = 1.0
+			_dof_kind = DOF_PAPER
+		elif Game.phase == "seated" and float(player.call("turned_away")) < DOF_SEATED_TURN:
+			want = 1.0
+			_dof_kind = DOF_SEATED
+	var was := _dof_k
+	# (on se retourne : la netteté revient tout de suite)
+	_dof_k = move_toward(_dof_k, want, delta / DOF_FADE_S) if want > 0.0 or Game.phase != "seated" else 0.0
+	if _dof_k == was and (was == 0.0 or was == 1.0):
+		return
+	_cam_attr.dof_blur_far_enabled = _dof_k > 0.001
+	if _cam_attr.dof_blur_far_enabled:
+		_cam_attr.dof_blur_far_distance = _dof_kind.x
+		_cam_attr.dof_blur_far_transition = _dof_kind.y
+		_cam_attr.dof_blur_amount = _dof_kind.z * _dof_k

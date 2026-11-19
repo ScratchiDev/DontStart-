@@ -51,6 +51,7 @@ func start() -> void:
 	player.can_move = true
 	player.can_look = true
 	hud.fade_to(0.0, 2.0)
+	hud.chapter_card("Acte I", "Lecteur A:")     # (carte de chapitre, lot V3-INTERFACE ; ne bloque rien)
 	Game.objective("Trouve la disquette")
 	await get_tree().create_timer(2.2).timeout
 	Game.hint("L'écran réclame une disquette. Cet après-midi, il y en avait une dans l'armoire. Tu n'avais pas osé y toucher.", 6.0)

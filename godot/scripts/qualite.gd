@@ -89,6 +89,20 @@ static func reflections_on() -> bool:
 	return extras_on() and at_least(ELEVEE)
 
 
+## Extras d'Ultra (lot V3-ETALONNAGE ; vraie carte, hors rétro) : éclairage indirect en espace écran
+## (SSIL, SSIL_*), VoxelGI en haute qualité. (« -- --tune=ssil:0 » coupe le SSIL, « ssil:2 » l'allume dès
+## Élevée, pour l'étalonnage.)
+const SSIL_RADIUS := 1.5
+## (0,5 : le SSIL compte une seconde fois une part du rebond de la VoxelGI ; plus fort, il relevait la nuit)
+const SSIL_INTENSITY := 0.5
+const SSIL_SHARPNESS := 0.98
+
+
+static func ssil_on() -> bool:
+	var t := Main.tune("ssil", 1.0)
+	return extras_on() and t > 0.5 and (effective() == ULTRA or (t > 1.5 and at_least(ELEVEE)))
+
+
 ## L'ancienne case « Qualité élevée » telle que le rendu la voit : en rétro, Moyenne compte comme
 ## l'ancien « haut » (brouillard, GI, SSAO, ombres de l'écran) ; en rendu net, c'est Élevée et plus.
 static func old_high() -> bool:
@@ -274,6 +288,11 @@ static func apply(main: Main) -> void:
 				float(_ps("rendering/environment/ssao/fadeout_to", 300.0)))
 	vp.positional_shadow_atlas_size = ATLAS[fq] if fq != BASSE else int(_ps("rendering/lights_and_shadows/positional_shadow/atlas_size", 4096))
 	RenderingServer.positional_soft_shadow_filter_set_quality(shadow_quality(q, retro, extras))
+	# Ultra : VoxelGI en haute qualité (plus de cônes), SSIL à demi-résolution (Main._apply_video l'allume)
+	RenderingServer.voxel_gi_set_quality(RenderingServer.VOXEL_GI_QUALITY_HIGH if extras and q == ULTRA
+		else RenderingServer.VOXEL_GI_QUALITY_LOW)
+	if extras and q >= ELEVEE:
+		RenderingServer.environment_set_ssil_quality(RenderingServer.ENV_SSIL_QUALITY_MEDIUM, true, 0.5, 2, 50.0, 300.0)
 	if env.ssr_enabled:
 		# (environment_set_ssr_roughness_quality ne fait plus rien en 4.7.2 et avertissait à chaque
 		# lancement : la rugosité des reflets est prise en compte d'office)

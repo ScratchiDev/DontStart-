@@ -50,10 +50,16 @@ const LATTE_RUG_DB := -4.0
 const LATTE_WAIT := 6.0
 ## Débordement de la lampe (rendu net, vraie carte seulement) : le halo large et faible autour du faisceau
 ## (une vraie lampe de poche éclaire aussi à côté de son rond) ; sans ombre, pas dans le brouillard.
-const SPILL_ANGLE := 65.0
-const SPILL_ENERGY := 0.04
+## Étalonnage final (lot V3-ETALONNAGE) : à 4 % sur 65°, il lavait des murs entiers (mère nuit_b : 22/255
+## de médiane avec lui, 9 sans) ; resserré et plus faible, il ne fait plus qu'un liseré autour du rond.
+const SPILL_ANGLE := 45.0
+const SPILL_ENERGY := 0.012
+const SPILL_ATTENUATION := 2.5
 const SPILL_RANGE := 6.0
 const SPILL_SPECULAR := 0.3
+## Puissance de la lampe en rendu net sur vraie carte (× l'énergie de la scène, 5) : le masque de
+## l'étalonnage final concentre la lumière dans le point chaud ; le reste du rond suit.
+const FLASH_NET_K := 1.0
 
 @onready var head: Node3D = $Head
 @onready var camera: Camera3D = $Head/Camera
@@ -79,10 +85,17 @@ var flash_base := 5.0
 var flash_near := 1.0     # baisse de la lampe quand une surface est tout près (sinon tout blanchit)
 const FLASH_NEAR_FULL := 2.4     # pleine puissance au-delà de 2,4 m ; plus près, l'éclairement reste
 const FLASH_NEAR_MIN := 0.08     # celui d'un mur à 2,4 m (compensation en d²), sans descendre sous 8 %
-const FLASH_NEAR_POW_NET := 1.3   # rendu net sur vraie carte : compensation plus douce, et plancher à 25 %
-const FLASH_NEAR_MIN_NET := 0.25
-## … et 45 % sur l'objet qu'on peut prendre ou utiliser (couche d'interaction) : on doit le voir.
-const FLASH_NEAR_MIN_ITEM_NET := 0.45
+const FLASH_NEAR_POW_NET := 1.3   # rendu net sur vraie carte : compensation plus douce, et plancher à 18 %
+const FLASH_NEAR_MIN_NET := 0.18
+## … et 35 % sur l'objet qu'on peut prendre ou utiliser (couche d'interaction) : on doit le voir. (Étalonnage
+## final : 25 % et 45 % avant ; un montant de croisée ou un appui de fenêtre peint, à 1 m, restaient écrêtés.)
+const FLASH_NEAR_MIN_ITEM_NET := 0.35
+## Reflet de la lampe en rendu net sur vraie carte (0,5 par défaut) : les vernis et les peintures laquées à
+## moins d'un mètre (appuis, montants, cadres) ne renvoient plus un reflet blanc ; appliqué par Main.
+const FLASH_SPECULAR_NET := 0.3
+## Rendu net sur vraie carte : rayons dans le rond (angle depuis l'axe) et part de la lumière du centre qu'y
+## porte le masque de la lampe (Main.flash_cookie_net : épaule du point chaud ≈ 0,6 vers 9°, couronne ≈ 0,42).
+const FLASH_NEAR_EDGE := [[9.0, 0.6], [18.0, 0.42]]
 var current: Interactable = null
 var _flash_before_sit := true
 var rug_rect := Rect2(-1.1, -0.25, 2.4, 1.5)   # x, z, largeur, profondeur : le tapis étouffe les pas (sans maison)
@@ -186,6 +199,8 @@ func _physics_process(delta: float) -> void:
 		elif randf() < 0.0025:
 			f = 0.15
 		flash_near = move_toward(flash_near, _flash_near_target(), delta * 4.0)
+		if Qualite.extras_on():
+			f *= Main.tune("flash_k", FLASH_NET_K)
 		flashlight.light_energy = flash_base * f * flash_near
 	_update_spill()
 	if seated:
@@ -229,7 +244,7 @@ func _build_spill() -> void:
 	_spill.name = "Debordement"
 	_spill.light_color = flashlight.light_color
 	_spill.spot_angle = SPILL_ANGLE
-	_spill.spot_angle_attenuation = 1.4
+	_spill.spot_angle_attenuation = SPILL_ATTENUATION
 	_spill.spot_range = SPILL_RANGE
 	_spill.spot_attenuation = flashlight.spot_attenuation
 	_spill.shadow_enabled = false
@@ -247,32 +262,58 @@ func _update_spill() -> void:
 	if _spill.visible != on:
 		_spill.visible = on
 	if on:
-		_spill.light_energy = flashlight.light_energy * SPILL_ENERGY
+		_spill.light_energy = flashlight.light_energy * Main.tune("spill", SPILL_ENERGY)
+		var sa := Main.tune("spill_angle", SPILL_ANGLE)
+		if _spill.spot_angle != sa:
+			_spill.spot_angle = sa
 		_spill.light_cull_mask = flashlight.light_cull_mask
 		_spill.layers = flashlight.layers
 
 
 ## Puissance de la lampe selon la distance de ce qu'elle éclaire (rayon partant de l'œil, dans l'axe de
 ## la lampe : son retard et son poids compris) : une porte, une faïence brillante à 50 cm ne doivent pas
-## virer au blanc (le reflet et le bloom).
+## virer au blanc (le reflet et le bloom). Rendu net sur vraie carte (lot V3-ETALONNAGE) : le rayon part de
+## la lampe elle-même, vers là où elle vise (mains visibles : la vue la place sous la caméra et la fait
+## converger sur la surface regardée) ; le rendu logiciel garde le rayon de l'œil.
 func _flash_near_target() -> float:
 	var space := get_world_3d().direct_space_state
 	if space == null:
 		return 1.0
 	var from := camera.global_position
+	if Qualite.extras_on():
+		from = flashlight.global_position
 	var to := from - flashlight.global_transform.basis.z.normalized() * FLASH_NEAR_FULL
 	# (les objets sans collision « monde », comme la télé sur son meuble, ont leur boîte d'interaction)
 	var q := PhysicsRayQueryParameters3D.create(from, to, Builder.LAYER_WORLD | Builder.LAYER_INTERACT, [get_rid()])
 	var hit := space.intersect_ray(q)
-	if hit.is_empty():
-		return 1.0
-	var d := from.distance_to(hit.position) / FLASH_NEAR_FULL
 	if not Qualite.extras_on():
-		return clampf(d * d, FLASH_NEAR_MIN, 1.0)
+		if hit.is_empty():
+			return 1.0
+		var d0 := from.distance_to(hit.position) / FLASH_NEAR_FULL
+		return clampf(d0 * d0, FLASH_NEAR_MIN, 1.0)
 	# rendu net sur vraie carte (AgX et son épaule absorbent le surplus) : l'objet qu'on regarde de près reste
 	# éclairé ; plus encore un objet qu'on peut prendre (revues « peur » : la disquette, l'antenne de la télé)
-	var low := FLASH_NEAR_MIN_ITEM_NET if hit.collider is Interactable else FLASH_NEAR_MIN_NET
-	return clampf(pow(d, FLASH_NEAR_POW_NET), low, 1.0)
+	var k := 1.0
+	if not hit.is_empty():
+		var d := from.distance_to(hit.position) / FLASH_NEAR_FULL
+		var low := FLASH_NEAR_MIN_ITEM_NET if hit.collider is Interactable else FLASH_NEAR_MIN_NET
+		k = clampf(pow(d, FLASH_NEAR_POW_NET), low, 1.0)
+	# (lot V3-ETALONNAGE) le reste du rond aussi : un appui de fenêtre, un montant de croisée à 50 cm dans la
+	# couronne brûlaient quand l'axe passait au loin (06b, 38 : les fenêtres). Quatre rayons par cercle de
+	# FLASH_NEAR_EDGE, chacun pondéré par la part de lumière que le masque y porte.
+	var b := flashlight.global_transform.basis
+	var ax := -b.z.normalized()
+	for ring: Array in FLASH_NEAR_EDGE:
+		for i in 4:
+			var side := (b.x if i < 2 else b.y).normalized() * (1.0 if i % 2 == 0 else -1.0)
+			var dir := ax.rotated(side.cross(ax).normalized(), deg_to_rad(float(ring[0])))
+			var qe := PhysicsRayQueryParameters3D.create(from, from + dir * FLASH_NEAR_FULL, Builder.LAYER_WORLD, [get_rid()])
+			var he := space.intersect_ray(qe)
+			if he.is_empty():
+				continue
+			var de := from.distance_to(he.position) / FLASH_NEAR_FULL
+			k = minf(k, clampf(pow(de, FLASH_NEAR_POW_NET) / float(ring[1]), FLASH_NEAR_MIN_NET, 1.0))
+	return k
 
 
 ## Le sol sous les pieds : demandé à la maison ; sans maison, le tapis de la chambre.

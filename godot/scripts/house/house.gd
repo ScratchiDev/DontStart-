@@ -58,10 +58,17 @@ const DOOR_CREAK := {"P3": 1.5, "P4": 1.3, "P6": 0.7, "P7": 0.8}
 ## Lunes (voir l'en-tête) : élévation et distance de la source, couleur (celle de room.gd), énergie par
 ## fenêtre (les stores ne laissent passer que leurs fentes : énergie plus haute), côté jardin plus faible
 ## (la lune est côté rue : là-bas, c'est le ciel).
+## Étalonnage final (lot V3-ETALONNAGE) : la source est loin (MOON_DIST), ses rayons sont presque
+## parallèles : la tache a la forme de la fenêtre projetée, croisée et lames lisibles (à 4,5 m, le cône
+## divergeait : une bande de 5 m sur le tapis du couloir) ; énergies baissées (la nuit était trop claire),
+## données pour l'éclairement qu'aurait la source à MOON_REF_DIST (compensation de spot_attenuation) ;
+## ombres un peu plus floues (MOON_SHADOW_BLUR, fenêtres claires).
 const MOON_ELEV_DEG := 32.0
-const MOON_DIST := 4.5
+const MOON_DIST := 14.0
+const MOON_REF_DIST := 4.5
+const MOON_SHADOW_BLUR := 2.0
 const MOON_COLOR := Color(0.55, 0.66, 0.92)
-const MOON_ENERGY := {"F2": 3.2, "F3": 1.1, "F4": 0.5, "F5": 2.4, "F7": 3.2, "F8": 1.0}
+const MOON_ENERGY := {"F2": 1.8, "F3": 0.8, "F4": 0.4, "F5": 1.6, "F7": 1.8, "F8": 0.6}
 const MOON_GARDEN_K := 0.55
 const MOON_TAILLE := 0.06          # (méta « taille » : PCSS en Ultra)
 ## Stores : pas des lames, largeur, inclinaison (depuis l'horizontale), et la lame tordue.
@@ -585,10 +592,12 @@ func _moon(d: Dictionary, holder: Node3D, fw: float, fh: float, fy: float, kind:
 	a += deg_to_rad(1.0)
 	l.spot_angle = rad_to_deg(a)
 	l.spot_angle_attenuation = 0.25
-	l.spot_range = MOON_DIST + maxf(r.rect.size.x, r.rect.size.y) + 1.0
+	# (portée double : la fenêtre de Godot, (1 - (d/r)⁴)², ne rogne plus la tache au fond de la pièce)
+	l.spot_range = 2.0 * (MOON_DIST + maxf(r.rect.size.x, r.rect.size.y) + 1.0)
 	l.spot_attenuation = 0.5
 	l.light_color = MOON_COLOR
 	var energy: float = MOON_ENERGY.get(d.id, 1.2) * (MOON_GARDEN_K if float(d.at) > 0.0 and d.axis == "x" else 1.0)
+	energy *= pow(MOON_DIST / MOON_REF_DIST, l.spot_attenuation)
 	l.set_meta("lune_energie", energy)
 	l.light_energy = energy if Qualite.extras_on() else 0.0
 	l.light_specular = 0.45
@@ -599,7 +608,7 @@ func _moon(d: Dictionary, holder: Node3D, fw: float, fh: float, fy: float, kind:
 	l.shadow_enabled = false
 	l.shadow_bias = 0.05
 	l.shadow_normal_bias = 1.2
-	l.shadow_blur = 3.0 if kind == "depoli" else 1.0
+	l.shadow_blur = 3.0 if kind == "depoli" else MOON_SHADOW_BLUR
 	l.set_meta("taille", MOON_TAILLE)
 	l.set_meta("energie_base", 0.0)
 	l.set_meta("lune", String(d.id))
@@ -622,7 +631,7 @@ func _update_moons() -> void:
 		if not is_instance_valid(l):
 			continue
 		var on := all_rooms or (mid and current != null and l.get_parent() == current)
-		var e := float(l.get_meta("lune_energie", 1.0)) if on else 0.0
+		var e := float(l.get_meta("lune_energie", 1.0)) * Main.tune("lune_k", 1.0) if on else 0.0
 		l.set_meta("lune_e", e)
 		l.light_energy = e
 		l.shadow_enabled = on

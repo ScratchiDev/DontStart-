@@ -109,6 +109,20 @@ const BAL_CONTRAST := 1.9
 ## Plancher de la luminance affichée du dos de la main, lampe allumée (× 0,4 éteinte), et plafond.
 const BAL_FLOOR := 0.11
 const BAL_CEIL := 0.55
+## Étalonnage final (lot V3-ETALONNAGE), rendu net sur vraie carte : la nuit, la main est à contre-jour
+## devant ce que la lampe éclaire. Plancher bas (BAL_FLOOR_NET : elle se devine, sculptée par le rebond),
+## jamais plus claire que la scène autour (BAL_HIGH_NET × la médiane des carrés de scène), appoint qui peut
+## descendre sous 1 (BAL_GAIN_MIN_NET) et plafonné à BAL_NIGHT_GAIN quand la scène est noire (médiane sous
+## BAL_NIGHT_SCENE), appoint de nuit désaturé (BAL_NIGHT_DESAT). La lampe vise la surface regardée (le
+## centre de l'image, à sa vraie distance entre AIM_MIN et AIM_DIST) : le rond tombe au centre et la règle
+## « lampe de près » du joueur voit la bonne distance. Le rendu logiciel garde les valeurs d'avant.
+const BAL_FLOOR_NET := 0.035
+const BAL_HIGH_NET := 1.0
+const BAL_GAIN_MIN_NET := 0.25
+const BAL_NIGHT_SCENE := 15.0 / 255.0
+const BAL_NIGHT_GAIN := 0.6
+const BAL_NIGHT_DESAT := 0.7
+const AIM_MIN := 0.4
 ## Gain appliqué lissé (constante de temps, s) ; pas d'une lecture hors pose figée (bornes) ; réglage
 ## rapide après un saut de la caméra (s) ; saut = la caméra bouge de plus de JUMP_DIST m en une image.
 const BAL_SMOOTH := 0.4
@@ -177,6 +191,7 @@ var _bal_gain := 1.0
 var _bal_cap := 1.0                       # facteur appliqué aux remplaçantes (borné par l'écart pouce / dos)
 var _fill_gain := 1.0                     # gain de l'appoint appliqué : _bal_gain lissé à chaque image
 var _cap_s := 1.0                         # _bal_cap lissé
+var _bal_night := false                   # dernière mesure : scène noire (rendu net, vraie carte)
 var _fast := 0.0                          # réglage rapide en cours (s), après un saut de la caméra
 var bal_stats := {}                       # dernière mesure (bancs) : scène, dos, pouce, gain
 var balance_on := true                    # (les bancs le coupent pendant leur passe de masque)
@@ -490,6 +505,9 @@ func _update_proxies(delta: float) -> void:
 	# borné, sinon la lune mêlée à une lampe chaude vire la main au rose-lilas)
 	var fc := _skin_safe(Color(col.r, col.g, col.b), 0.5, 0.15)
 	fc.b = minf(fc.b, 1.1 * fc.g)
+	# (vraie carte, la nuit : l'appoint n'est plus qu'un gris froid à peine teinté)
+	if _night_net():
+		fc = _soft_color(fc, BAL_NIGHT_DESAT)
 	if instant or _fill_col.r < 0.0:
 		_fill_col = fc
 	else:
@@ -937,6 +955,12 @@ func _update_light(on: bool, wall: float, delta: float) -> void:
 	# le faisceau suit le poids de la lampe (présence), comme mains cachées
 	var dir := (cam.basis * (_anim * Vector3.FORWARD)).normalized()
 	var aim_d := AIM_DIST
+	var net := Qualite.extras_on()
+	if net and _obst <= 0.001 and Main.tune("aim", 1.0) > 0.5:
+		# (vraie carte : le faisceau converge sur la surface regardée, à sa vraie distance)
+		var ch := _ray_hits(eye, eye + dir * AIM_DIST)
+		if not ch.is_empty():
+			aim_d = clampf(eye.distance_to(ch.position), AIM_MIN, AIM_DIST)
 	if _obst > 0.001:
 		# (lampe baissée devant un obstacle : la tête vise à côté du centre ; le rond va sur l'obstacle, là où
 		# la tête le montre à l'écran, un peu devant elle dans l'axe de la lampe)
@@ -961,7 +985,6 @@ func _update_light(on: bool, wall: float, delta: float) -> void:
 	flash_f = f
 	if bulb_mat:
 		bulb_mat.emission_energy_multiplier = 9.0 * clampf(f, 0.0, 1.5)
-	var net := Qualite.extras_on()
 	if rim:
 		rim.visible = net and f > 0.01
 		if rim.visible:
@@ -1160,6 +1183,7 @@ func reset_balance() -> void:
 	_bal_cap = 1.0
 	_fill_gain = 1.0
 	_cap_s = 1.0
+	_bal_night = false
 	_bal_result = []
 	bal_stats = {}
 
@@ -1305,13 +1329,18 @@ func _balance_apply(data: PackedByteArray, pts: Array, fmt: int, frozen: bool, d
 	var lo := back if thumb < 0.0 else minf(back, thumb)
 	var hi := back if thumb < 0.0 else maxf(back, thumb)
 	var contrast := hi / maxf(lo, 0.008)
-	# (plancher absolu : lampe allumée, la main se lit toujours, même devant un fond noir)
-	var floor_l := BAL_FLOOR if bool(player.get("flash_on")) else BAL_FLOOR * 0.4
+	# (plancher absolu : lampe allumée, la main se lit toujours, même devant un fond noir ; vraie carte : elle
+	# se devine à contre-jour, et n'est jamais plus claire que la scène)
+	var net := Qualite.extras_on()
+	var bal_floor := Main.tune("bal_floor", BAL_FLOOR_NET) if net else BAL_FLOOR
+	var bal_high := Main.tune("bal_high", BAL_HIGH_NET) if net else BAL_HIGH
+	var floor_l := bal_floor if bool(player.get("flash_on")) else bal_floor * 0.4
 	var low := maxf(BAL_LOW * sc, floor_l)
+	var top := maxf(bal_high * sc, floor_l * 1.5)
 	if back < low:
 		want = low / maxf(back, 0.01)
-	elif back > maxf(BAL_HIGH * sc, floor_l * 1.5) and back > 0.06:
-		want = maxf(BAL_HIGH * sc, floor_l * 1.5) / back
+	elif back > top and back > (0.02 if net else 0.06):
+		want = top / back
 	# (plafond absolu : une main trop claire, toute proche, fait un halo (glow) sur toute l'image)
 	if back > BAL_CEIL:
 		want = minf(want, BAL_CEIL / back)
@@ -1330,7 +1359,17 @@ func _balance_apply(data: PackedByteArray, pts: Array, fmt: int, frozen: bool, d
 	if frozen and want != 1.0:
 		step = clampf(want, 0.5, 2.0)      # (pose figée : réglage rapide, rien ne « pompe » à l'écran)
 	# (trop clair alors que l'appoint est déjà au plus bas : les remplaçantes et le rebond baissent)
-	if want < 1.0 and _bal_gain * step < 1.0:
+	var gmin := BAL_GAIN_MIN_NET if net else 1.0
+	if want < 1.0 and _bal_gain * step < gmin:
 		_bal_cap = clampf(_bal_cap * step, 0.3, 1.0)
-	_bal_gain = clampf(_bal_gain * step, 1.0, BAL_GAIN_MAX)
+	var gmax := BAL_GAIN_MAX
+	_bal_night = net and sc < BAL_NIGHT_SCENE
+	if _bal_night:
+		gmax = BAL_NIGHT_GAIN
+	_bal_gain = clampf(_bal_gain * step, gmin, gmax)
 	bal_stats = {"scene": sc, "dos": back, "pouce": thumb, "gain": _bal_gain, "cap": _bal_cap, "ecart": contrast}
+
+
+## La nuit, en rendu net sur vraie carte (dernière mesure de l'équilibre : scène sous BAL_NIGHT_SCENE).
+func _night_net() -> bool:
+	return _bal_night and Qualite.extras_on()

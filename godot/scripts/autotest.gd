@@ -176,11 +176,12 @@ func check_retro(tag: String) -> void:
 	var ok := env.tonemap_mode == Environment.TONE_MAPPER_ACES and is_equal_approx(env.tonemap_exposure, 1.05) and m != null \
 		and is_equal_approx(float(m.get_shader_parameter("levels")), 16.0) and is_equal_approx(float(m.get_shader_parameter("dither_strength")), 1.0) \
 		and get_tree().root.content_scale_mode == Window.CONTENT_SCALE_MODE_VIEWPORT and is_equal_approx(float(m.get_shader_parameter("aberration")), 0.0011) \
-		and is_zero_approx(float(m.get_shader_parameter("black_point"))) and is_zero_approx(float(m.get_shader_parameter("toe"))) and not env.ssr_enabled
-	check("Q4 style rétro inchangé (%s)" % tag, ok, "tonemap %d, exposition %.3f, levels %s, dither %s, échelle %d, aberration %s, point noir %s, pied %s, SSR %s" % [
+		and is_zero_approx(float(m.get_shader_parameter("black_point"))) and is_zero_approx(float(m.get_shader_parameter("toe"))) and not env.ssr_enabled \
+		and is_zero_approx(float(m.get_shader_parameter("lut_mix"))) and player.camera.attributes == null and not env.ssil_enabled
+	check("Q4 style rétro inchangé (%s)" % tag, ok, "tonemap %d, exposition %.3f, levels %s, dither %s, échelle %d, aberration %s, point noir %s, pied %s, SSR %s, LUT %s, expo auto %s, SSIL %s" % [
 		env.tonemap_mode, env.tonemap_exposure, m.get_shader_parameter("levels") if m else "-", m.get_shader_parameter("dither_strength") if m else "-",
 		get_tree().root.content_scale_mode, m.get_shader_parameter("aberration") if m else "-", m.get_shader_parameter("black_point") if m else "-",
-		m.get_shader_parameter("toe") if m else "-", env.ssr_enabled])
+		m.get_shader_parameter("toe") if m else "-", env.ssr_enabled, m.get_shader_parameter("lut_mix") if m else "-", player.camera.attributes != null, env.ssil_enabled])
 
 
 ## Q1, Q2, Q5 (écran des options) : aller-retour de chaque niveau par settings.cfg (un Game neuf le
@@ -371,6 +372,46 @@ func until(cond: Callable, timeout := 60.0) -> bool:
 	return true
 
 
+## Captures déterministes vis-à-vis des éclairs (lot V3-ETALONNAGE) : attend qu'aucun éclair ne soit en
+## cours ni ne doive tomber dans les CALM_MARGIN secondes (le prochain éclair au hasard n'est ni avancé ni
+## retardé : on attend qu'il soit passé). Sans tirage.
+const CALM_MARGIN := 4.0
+
+
+func calm_sky() -> void:
+	var o: Node = room.outside
+	if o == null:
+		return
+	var t0 := Time.get_ticks_msec()
+	while is_inside_tree() and Time.get_ticks_msec() - t0 < 90000:
+		var busy := bool(o.get("_striking"))
+		var soon := Game.phase != "title" and float(o.get("_next_bolt")) - float(o.get("_clock")) < CALM_MARGIN
+		if not busy and not soon:
+			return
+		await get_tree().process_frame
+	# (après l'éclair : une image pour que le ciel, l'ambiance et les lunes soient revenus à l'écran)
+	await RenderingServer.frame_post_draw
+
+
+## Lance l'éclair scripté et capture l'image de son palier le plus fort (signal flash_peak de outside.gd :
+## chaque palier reste affiché au moins deux images). Puis attend la fin de l'éclair.
+func strike_shot(shot_name: String) -> void:
+	var o: Node = room.outside
+	var seen := [false]
+	var cb := func() -> void: seen[0] = true
+	o.connect("flash_peak", cb, CONNECT_ONE_SHOT)
+	o.call("strike")
+	var t0 := Time.get_ticks_msec()
+	while not seen[0] and Time.get_ticks_msec() - t0 < 20000:
+		await get_tree().process_frame
+	if o.is_connected("flash_peak", cb):
+		o.disconnect("flash_peak", cb)
+	await shot(shot_name)
+	var t1 := Time.get_ticks_msec()
+	while bool(o.get("_striking")) and Time.get_ticks_msec() - t1 < 20000:
+		await get_tree().process_frame
+
+
 ## Place le joueur, vérifie que le rayon vise bien l'objet attendu, prend une capture, puis l'utilise.
 func use_at(pos: Vector3, yaw: float, pitch: float, expected: String, shot_name := "") -> void:
 	player.global_position = pos
@@ -514,14 +555,16 @@ func run_main() -> void:
 	await view(Vector3(-1.0, 0, 0.2), 0.45, -0.05, "04_armoire")
 	await view(Vector3(-0.5, 0, -0.6), -PI * 0.5, -0.05, "05_porte")
 	await view(Vector3(0.5, 0, -1.2), PI, -0.15, "06_vers_le_fond")
+	# (06b, 06e, 06f : hors éclair, captures déterministes ; 06g : au palier le plus fort de l'éclair scripté)
+	await calm_sky()
 	await view(Vector3(-2.2, 0, -0.45), PI / 2.0, -0.08, "06b_fenetre_dehors", 1.5)
 	await view(Vector3(1.7, 0, 1.45), PI / 2.0, -0.75, "06c_empreintes")
 	await view(Vector3(1.4, 0, -0.55), -0.35, 0.05, "06d_etagere_tableau")
+	await calm_sky()
 	await view(Vector3(-1.1, 0, 1.3), PI / 2.0, 0.55, "06e_plafond_lit")
+	await calm_sky()
 	await view(Vector3(0.3, 0, 0.9), PI * 0.62, 0.0, "06f_avant_eclair", 0.4)
-	room.outside.strike()
-	await wait(0.14)
-	await shot("06g_eclair")
+	await strike_shot("06g_eclair")
 	await check_feeds("chambre")
 	# A2 : le mot de Mamie (« mon grand » / « ma grande »)
 	var mamie := find_interactable(room.decor, "Lire le mot de Mamie")
@@ -1011,6 +1054,7 @@ func run_floor() -> void:
 	await wait(2.0)
 	var drop := p_ref - Game.peur
 	var want_drop := 0.2 * g_since(t_ref)
+	await calm_sky()
 	await shot("38_fenetre_clovis")
 	# Clovis (couche 12) est vu par le joueur : dans le champ de sa caméra, rien de solide entre les deux
 	var eye: Vector3 = player.camera.global_position
@@ -2136,6 +2180,11 @@ func run_previews(ids: String) -> void:
 	hud.fade.color.a = 0.0
 	menu.hide_all()
 	Game.phase = "room"
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--etal="):
+			await run_etal(ids, a.substr(7))
+			finish()
+			return
 	check_positions()
 	check_door_zones()
 	for id in ids.split(",", false):
@@ -2161,24 +2210,22 @@ func run_preview(id: String) -> void:
 	var lamp := OmniLight3D.new()
 	lamp.light_energy = 1.1
 	lamp.omni_range = r.rect.size.length() + 1.0
-	# (sans ombres, sous les suspensions : son ombre du fil des lustres sur le plafond passait pour un défaut)
+	# (sans ombres, sous les suspensions : son ombre du fil des lustres sur le plafond passait pour un défaut ;
+	# à 1,1 m sous le plafond, elle n'y fait plus de tache ronde)
 	lamp.shadow_enabled = false
 	main.add_child(lamp)
-	lamp.global_position = Vector3(c.x, r.y0 + r.h - 0.6, c.z)
-	var inset := 0.35
-	var corners := [
-		Vector2(r.rect.position.x + inset, r.rect.position.y + inset),
-		Vector2(r.rect.end.x - inset, r.rect.position.y + inset),
-		Vector2(r.rect.end.x - inset, r.rect.end.y - inset),
-		Vector2(r.rect.position.x + inset, r.rect.end.y - inset),
-	]
-	for i in corners.size():
-		var p: Vector2 = corners[i]
+	lamp.global_position = Vector3(c.x, r.y0 + r.h - PREVIEW_LAMP_DROP, c.z)
+	for i in 4:
+		var p := preview_corner(r, i)
 		var to := Vector2(c.x, c.z) - p
 		var yaw := atan2(-to.x, -to.y)
+		await calm_sky()
 		await view(Vector3(p.x, r.y0, p.y), yaw, -0.2, "%s_%d" % [id, i + 1], 1.2)
 	lamp.queue_free()
+	await lamp_gone()
+	await calm_sky()
 	await view(Vector3(c.x, r.y0, c.z), 0.0, -0.1, "%s_nuit_a" % id, 1.0)
+	await calm_sky()
 	await view(Vector3(c.x, r.y0, c.z), PI, -0.1, "%s_nuit_b" % id, 1.0)
 	var saved := 0
 	if Game.shots_dir != "":
@@ -2188,6 +2235,117 @@ func run_preview(id: String) -> void:
 	check("B1 aperçu %s : 6 captures" % id, shots_taken - shots0 == 6 and (Game.shots_dir == "" or saved == 6),
 		"%d captures, %d fichiers" % [shots_taken - shots0, saved])
 	print("APERÇU OK ", id)
+
+
+## Après la lampe de service : quelques images, le temps que le brouillard volumétrique (reprojection
+## temporelle de 0,9) et la VoxelGI l'oublient ; sinon, sur un rendu lent (une image par seconde), la vue de
+## nuit qui suit gardait sa lueur (nuit_a plus claire que nuit_b de 5 à 10/255 dans toutes les pièces).
+func lamp_gone() -> void:
+	for i in LAMP_GONE_FRAMES:
+		await RenderingServer.frame_post_draw
+
+
+const LAMP_GONE_FRAMES := 12
+
+
+## Aperçus (lot V3-ETALONNAGE, revue DA) : coins à PREVIEW_INSET du mur, et jamais dans un objet : de la
+## pièce vers le coin, à hauteur d'œil et de poitrine, la caméra s'arrête à PREVIEW_CLEAR du premier obstacle
+## (armoire, horloge, mannequin, rideau…). Lampe de service à PREVIEW_LAMP_DROP sous le plafond.
+const PREVIEW_INSET := 0.6
+const PREVIEW_CLEAR := 0.4
+const PREVIEW_LAMP_DROP := 1.1
+
+
+func preview_corner(r: HouseRoom, i: int) -> Vector2:
+	var c := r.center()
+	var k := [Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 1)][i] as Vector2
+	var p := Vector2(lerpf(r.rect.position.x + PREVIEW_INSET, r.rect.end.x - PREVIEW_INSET, k.x),
+		lerpf(r.rect.position.y + PREVIEW_INSET, r.rect.end.y - PREVIEW_INSET, k.y))
+	var space := player.get_world_3d().direct_space_state
+	var from2 := Vector2(c.x, c.z)
+	var dist := from2.distance_to(p)
+	var dir := (p - from2) / maxf(dist, 0.001)
+	var reach := dist
+	for hgt in [player.EYE, 1.0, 0.45]:
+		var a := Vector3(c.x, r.y0 + hgt, c.z)
+		var b := Vector3(p.x, r.y0 + hgt, p.y) + Vector3(dir.x, 0, dir.y) * PREVIEW_CLEAR
+		var q := PhysicsRayQueryParameters3D.create(a, b, Builder.LAYER_WORLD | Builder.LAYER_INTERACT, [player.get_rid()])
+		var hit := space.intersect_ray(q)
+		if not hit.is_empty():
+			reach = minf(reach, Vector2(hit.position.x, hit.position.z).distance_to(from2) - PREVIEW_CLEAR)
+	return from2 + dir * maxf(reach, 0.3)
+
+
+## --preview=<pièces> --etal=<v0>/<v1>/… (étalonnage, lot V3-ETALONNAGE) : pour chaque variante (« clé:valeur,
+## clé:valeur » de Main.tune ; « base » : aucune ; « mains:0 » cache les mains ; « …|mere,gp » : ces pièces
+## seulement), les vues de nuit de chaque pièce (nuit_a, nuit_b), et pour « mere » les vues du parcours 01,
+## 03, 06c, 06d, 06f, 06b, 06e ; avec « jour:1 », la vue éclairée _1 ; avec « eclair:1 », 06g (palier le plus fort de
+## l'éclair, depuis 06f) et 38 (la fenêtre de Clovis, au calme et au pic). Captures « e<i>_<vue>.png » ; pas
+## de vérification B1. Éclairs au hasard coupés pendant l'étalonnage.
+const ETAL_MERE := [["01_depart", Vector3(2.15, 0, 1.85), 0.32, -0.05], ["03_fenetre_lit", Vector3(0.6, 0, 0.6), PI * 0.62, -0.12],
+	["06c_empreintes", Vector3(1.7, 0, 1.45), PI / 2.0, -0.75], ["06d_etagere_tableau", Vector3(1.4, 0, -0.55), -0.35, 0.05],
+	["06f_avant_eclair", Vector3(0.3, 0, 0.9), PI * 0.62, 0.0], ["06b_fenetre_dehors", Vector3(-2.2, 0, -0.45), PI / 2.0, -0.08],
+	["06e_plafond_lit", Vector3(-1.1, 0, 1.3), PI / 2.0, 0.55]]
+
+
+func run_etal(ids: String, spec: String) -> void:
+	player.can_move = false
+	player.can_look = false
+	var o: Node = room.outside
+	if o:
+		o.set("_next_bolt", 1.0e9)
+	var variants := spec.split("/", false)
+	for vi in variants.size():
+		var desc: String = variants[vi]
+		var rooms_v := ids
+		if desc.contains("|"):
+			rooms_v = desc.get_slice("|", 1)
+			desc = desc.get_slice("|", 0)
+		var d := {}
+		if desc != "base":
+			for kv in desc.split(",", false):
+				var p := kv.split(":")
+				if p.size() == 2:
+					d[p[0].strip_edges()] = float(p[1])
+		var jour := float(d.get("jour", 0.0)) > 0.5
+		var eclair := float(d.get("eclair", 0.0)) > 0.5
+		Main.tunes = d
+		Game.mains_visibles = float(d.get("mains", 1.0)) > 0.5
+		Game.apply_settings()
+		print("ÉTAL e%d = %s (%s)" % [vi, desc, rooms_v])
+		await wait(0.5)
+		for id in rooms_v.split(",", false):
+			var r: HouseRoom = house.rooms.get(id.strip_edges())
+			if r == null:
+				continue
+			var c := r.center()
+			if jour:
+				# (« jour_ancien:1 » : le cadrage et la lampe de service des aperçus d'avant, pour comparer)
+				var old := float(d.get("jour_ancien", 0.0)) > 0.5
+				var lamp := OmniLight3D.new()
+				lamp.light_energy = 1.1
+				lamp.omni_range = r.rect.size.length() + 1.0
+				lamp.shadow_enabled = false
+				main.add_child(lamp)
+				lamp.global_position = Vector3(c.x, r.y0 + r.h - (0.6 if old else PREVIEW_LAMP_DROP), c.z)
+				var p1 := Vector2(r.rect.position.x + 0.35, r.rect.position.y + 0.35) if old else preview_corner(r, 0)
+				var to := Vector2(c.x, c.z) - p1
+				await view(Vector3(p1.x, r.y0, p1.y), atan2(-to.x, -to.y), -0.2, "e%d_%s_1" % [vi, r.room_id], 1.2)
+				lamp.queue_free()
+				await lamp_gone()
+			await view(Vector3(c.x, r.y0, c.z), 0.0, -0.1, "e%d_%s_nuit_a" % [vi, r.room_id], 1.0)
+			await view(Vector3(c.x, r.y0, c.z), PI, -0.1, "e%d_%s_nuit_b" % [vi, r.room_id], 1.0)
+			if r.room_id == "mere":
+				for v in ETAL_MERE:
+					await view(v[1], float(v[2]), float(v[3]), "e%d_%s" % [vi, v[0]], 1.0)
+				if eclair and o:
+					await view(Vector3(0.3, 0, 0.9), PI * 0.62, 0.0, "e%d_06f_avant_eclair" % vi, 0.6)
+					await strike_shot("e%d_06g_eclair" % vi)
+					look_from(Vector3(-2.9, 0, -0.45), (o.get("clovis") as Node3D).global_position + Vector3(0, 0.5, 0))
+					await wait(1.0)
+					await shot("e%d_38_calme" % vi)
+					await strike_shot("e%d_38_eclair" % vi)
+	Main.tunes = {}
 
 
 # ------------------------------------------------------------------ convocation, séance 2, fin (0.3.2)

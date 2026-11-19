@@ -9,6 +9,9 @@ signal item_added(id: String, label: String)
 signal peur_changed(v: float)      # PEUR MESURÉE (0..100) a changé
 signal absorbed                    # la jauge vient d'atteindre 100 (fin ABSORBÉ ; à l'écouteur de voir s'il est en séance)
 signal flag_changed(id: String, v: Variant)
+signal saved(id: String)                 # un point de passage vient d'être écrit (indice d'enregistrement du HUD)
+signal input_device_changed(pad: bool)   # dernier périphérique utilisé : manette (vrai) ou clavier et souris
+signal ui_settings_changed               # réglage d'interface, de son ou de commandes (sans réappliquer l'image)
 
 const SETTINGS_PATH := "user://settings.cfg"
 ## Sauvegarde à un emplacement, écrite aux points de passage (C1 « acte2 », C2 « miroir », C3 « convocation »).
@@ -61,6 +64,26 @@ var soft_flashes := false     # éclairs adoucis, pas de flash plein écran
 var whispers := false         # chuchotements par la synthèse vocale de Windows (désactivés par défaut, C7)
 var sound_captions := false   # sous-titres des sons importants (« [Coups dans le radiateur, en bas] »)
 var seen_warning := false     # avertissement de photosensibilité déjà montré (premier lancement)
+# --- réglages ajoutés par le lot V3-INTERFACE (écran Options à onglets)
+## Touches clavier et souris des actions remappables : { action: ["k<code physique>"|"m<bouton>"|"", …] }
+## (scripts/ui/controles.gd ; settings.cfg, section [touches]). La manette garde sa disposition.
+var bindings := Controles.defaults()
+var pad_sensitivity := 1.0     # regard au stick droit (0,3 à 2,5)
+var pad_invert_y := false
+var pad_deadzone := 0.15       # zone morte radiale du stick droit (0,05 à 0,35)
+var pad_active := false        # dernier périphérique utilisé : manette (écrit par Manette)
+## Respiration du personnage : 0 « Oui », 1 « Discrète » (−6 dB), 2 « Non » (Sfx.breath_on, breath_gain_db).
+var respiration := 0
+var vol_ambiance := 1.0        # musique et ambiance (bus Ambiance), 0 à 1
+var vol_voix := 1.0            # voix et entité (bus Voix), 0 à 1
+var aberration := true         # aberration chromatique (post : repos et peur) ; coupée = 0
+var subtitle_bg := true        # fond des sous-titres (cartouche noir translucide)
+var subtitle_size := 0         # 0 normale, 1 grande
+var crosshair_mode := 0        # point de visée : 0 contextuel (seulement sur un objet), 1 toujours
+var chapter_cards := true      # cartes de chapitre (« Acte I — Lecteur A: »)
+var objective_mode := 0        # objectif : 0 s'efface (revient au changement, à Tab, après 60 s), 1 toujours
+var transcript_always := false # transcription des documents : affichée d'office (sinon touche T / X)
+var manette: Manette
 
 # --- état de la partie ---
 var hero := "alexandre"   # « alexandre » ou « aurelia », choisi sur l'écran-titre
@@ -145,6 +168,7 @@ func _enter_tree() -> void:
 			if quality_arg < 0:
 				push_warning("--qualite : basse, moyenne, elevee ou ultra (reçu « %s »)" % a.substr(10))
 	_load_settings()
+	apply_bindings()
 	# --qualite=… : le niveau est imposé pour ce lancement, sans être enregistré
 	if quality_arg >= 0:
 		_quality_saved = quality
@@ -158,6 +182,11 @@ func _enter_tree() -> void:
 func _ready() -> void:
 	# Alt+F4 ou la croix de la fenêtre : la même sortie que « Quitter » (voir quit_game)
 	get_tree().auto_accept_quit = false
+	manette = Manette.new()
+	manette.name = "Manette"
+	add_child(manette)
+	# (les bus de Sfx, chargé après Game, existent à la fin de la première image)
+	apply_ui_settings.call_deferred()
 
 
 func _notification(what: int) -> void:
@@ -196,30 +225,17 @@ func quit_game(code := 0) -> void:
 	get_tree().quit(code)
 
 
+## Actions et touches par défaut (scripts/ui/controles.gd) : les mêmes qu'avant (touches physiques : « W »
+## est la touche en haut à gauche, donc Z sur un clavier AZERTY ; clic gauche pour agir), plus la manette et
+## « transcript » (T : transcription d'un document). Les touches remappées sont appliquées après la lecture
+## des réglages (apply_bindings).
 func _setup_input() -> void:
-	# Touches physiques : « W » ici est la touche en haut à gauche, donc Z sur un clavier AZERTY.
-	_keys("move_forward", [KEY_W, KEY_UP])
-	_keys("move_back", [KEY_S, KEY_DOWN])
-	_keys("move_left", [KEY_A, KEY_LEFT])
-	_keys("move_right", [KEY_D, KEY_RIGHT])
-	_keys("sprint", [KEY_SHIFT])
-	_keys("crouch", [KEY_C, KEY_CTRL])
-	_keys("interact", [KEY_E])
-	_keys("flashlight", [KEY_F])
-	_keys("pause", [KEY_ESCAPE])
-	_keys("inventory", [KEY_TAB, KEY_I])
-	var click := InputEventMouseButton.new()
-	click.button_index = MOUSE_BUTTON_LEFT
-	InputMap.action_add_event("interact", click)
+	Controles.setup()
 
 
-func _keys(action: StringName, keys: Array) -> void:
-	if not InputMap.has_action(action):
-		InputMap.add_action(action)
-	for k in keys:
-		var e := InputEventKey.new()
-		e.physical_keycode = k
-		InputMap.action_add_event(action, e)
+## Applique Game.bindings à l'InputMap (clavier et souris ; la manette ne change pas).
+func apply_bindings() -> void:
+	Controles.apply(bindings)
 
 
 func _load_fonts() -> void:
@@ -236,7 +252,6 @@ func _load_fonts() -> void:
 	small.antialiasing = TextServer.FONT_ANTIALIASING_GRAY
 	fonts.pixel_small = small
 	fonts.hand = load("res://assets/fonts/ReenieBeanie.ttf")
-	fonts.goth = load("res://assets/fonts/UnifrakturMaguntia-Book.ttf")
 	fonts.mono = load("res://assets/fonts/IBMPlexMono-Regular.ttf")
 
 
@@ -270,6 +285,25 @@ func _load_settings(path := SETTINGS_PATH) -> void:
 	whispers = cfg.get_value("audio", "chuchotements", whispers)
 	sound_captions = cfg.get_value("accessibilite", "sous_titres_sons", sound_captions)
 	seen_warning = cfg.get_value("accessibilite", "avertissement_vu", seen_warning)
+	# (V3-INTERFACE)
+	var raw := {}
+	if cfg.has_section("touches"):
+		for k in cfg.get_section_keys("touches"):
+			raw[k] = cfg.get_value("touches", k)
+	bindings = Controles.sanitize(raw)
+	pad_sensitivity = clampf(float(cfg.get_value("manette", "sensibilite", pad_sensitivity)), 0.3, 2.5)
+	pad_invert_y = bool(cfg.get_value("manette", "inverser_vertical", pad_invert_y))
+	pad_deadzone = clampf(float(cfg.get_value("manette", "zone_morte", pad_deadzone)), 0.05, 0.35)
+	respiration = clampi(int(cfg.get_value("audio", "respiration", respiration)), 0, 2)
+	vol_ambiance = clampf(float(cfg.get_value("audio", "volume_ambiance", vol_ambiance)), 0.0, 1.0)
+	vol_voix = clampf(float(cfg.get_value("audio", "volume_voix", vol_voix)), 0.0, 1.0)
+	aberration = bool(cfg.get_value("video", "aberration_chromatique", aberration))
+	subtitle_bg = bool(cfg.get_value("accessibilite", "fond_sous_titres", subtitle_bg))
+	subtitle_size = clampi(int(cfg.get_value("accessibilite", "taille_sous_titres", subtitle_size)), 0, 1)
+	crosshair_mode = clampi(int(cfg.get_value("jeu", "point_de_visee", crosshair_mode)), 0, 1)
+	chapter_cards = bool(cfg.get_value("jeu", "cartes_de_chapitre", chapter_cards))
+	objective_mode = clampi(int(cfg.get_value("jeu", "objectif", objective_mode)), 0, 1)
+	transcript_always = bool(cfg.get_value("jeu", "transcription", transcript_always))
 
 
 func save_settings() -> void:
@@ -291,6 +325,22 @@ func save_settings() -> void:
 	cfg.set_value("audio", "chuchotements", whispers)
 	cfg.set_value("accessibilite", "sous_titres_sons", sound_captions)
 	cfg.set_value("accessibilite", "avertissement_vu", seen_warning)
+	# (V3-INTERFACE)
+	for a in Controles.ACTIONS:
+		cfg.set_value("touches", a[0], bindings.get(a[0], Controles.DEFAULTS[a[0]]))
+	cfg.set_value("manette", "sensibilite", pad_sensitivity)
+	cfg.set_value("manette", "inverser_vertical", pad_invert_y)
+	cfg.set_value("manette", "zone_morte", pad_deadzone)
+	cfg.set_value("audio", "respiration", respiration)
+	cfg.set_value("audio", "volume_ambiance", vol_ambiance)
+	cfg.set_value("audio", "volume_voix", vol_voix)
+	cfg.set_value("video", "aberration_chromatique", aberration)
+	cfg.set_value("accessibilite", "fond_sous_titres", subtitle_bg)
+	cfg.set_value("accessibilite", "taille_sous_titres", subtitle_size)
+	cfg.set_value("jeu", "point_de_visee", crosshair_mode)
+	cfg.set_value("jeu", "cartes_de_chapitre", chapter_cards)
+	cfg.set_value("jeu", "objectif", objective_mode)
+	cfg.set_value("jeu", "transcription", transcript_always)
 	cfg.save(SETTINGS_PATH)
 
 
@@ -309,6 +359,59 @@ func apply_settings() -> void:
 		if DisplayServer.window_get_mode() != mode:
 			DisplayServer.window_set_mode(mode)
 	settings_changed.emit()
+	if is_inside_tree():
+		apply_ui_settings.call_deferred()
+
+
+## Réglages légers (V3-INTERFACE) : touches, respiration, volumes par bus, aberration chromatique ; puis
+## ui_settings_changed (HUD, menus). Sans réappliquer l'image (contrairement à apply_settings).
+func apply_ui_settings() -> void:
+	apply_bindings()
+	var sfx := get_node_or_null("/root/Sfx")
+	if sfx:
+		sfx.set("breath_on", respiration != 2)
+		sfx.set("breath_gain_db", -6.0 if respiration == 1 else 0.0)
+	_bus_gain("Ambiance", vol_ambiance)
+	_bus_gain("Voix", vol_voix)
+	_apply_aberration()
+	ui_settings_changed.emit()
+
+
+## Gain d'un bus par un AudioEffectAmplify ajouté en fin de chaîne (marqué « reglage_volume ») : le volume du
+## bus lui-même reste à Sfx (silence de l'entité, canard), les effets d'avant gardent leur rang.
+func _bus_gain(bus_name: String, lin: float) -> void:
+	var i := AudioServer.get_bus_index(bus_name)
+	if i < 0:
+		return
+	var amp: AudioEffectAmplify = null
+	for k in AudioServer.get_bus_effect_count(i):
+		var e := AudioServer.get_bus_effect(i, k)
+		if e is AudioEffectAmplify and e.has_meta("reglage_volume"):
+			amp = e
+	if amp == null:
+		if is_equal_approx(lin, 1.0):
+			return
+		amp = AudioEffectAmplify.new()
+		amp.set_meta("reglage_volume", true)
+		AudioServer.add_bus_effect(i, amp)
+	amp.volume_db = linear_to_db(maxf(lin, 0.0001))
+
+
+## « Aberration chromatique » coupée : le filtre plein écran (groupe « retro ») n'en met plus, ni au repos ni
+## avec la peur. Appliqué après main._apply_video (appel différé), qui remet la valeur du style à chaque
+## changement de réglage d'image.
+func _apply_aberration() -> void:
+	if not is_inside_tree():
+		return
+	var retro := get_tree().get_first_node_in_group("retro") as CanvasItem
+	if retro == null or not retro.material is ShaderMaterial:
+		return
+	var sm := retro.material as ShaderMaterial
+	if not aberration:
+		sm.set_shader_parameter("aberration", 0.0)
+		sm.set_shader_parameter("corruption_aberration", 0.0)
+	else:
+		sm.set_shader_parameter("corruption_aberration", 0.0044)
 
 
 var objective_text := ""     # objectif affiché (première ligne)
@@ -529,6 +632,7 @@ func save_checkpoint(id: String, pos: Vector3, yaw: float, peur_max := 100.0) ->
 		return false
 	f.store_string(JSON.stringify(d, "\t"))
 	f.close()
+	saved.emit(id)
 	if autotest:
 		print("SAUVEGARDE %s · peur %.1f · %d objets · %d drapeaux" % [id, float(d.peur), items.size(), flags.size()])
 	return true

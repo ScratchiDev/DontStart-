@@ -184,6 +184,7 @@ func begin() -> void:
 	_couloir_dark()
 	_set_step("sortir")
 	_refresh_objective()
+	hud.chapter_card("Acte II", "Essais réels")     # (carte de chapitre, lot V3-INTERFACE ; ne bloque rien)
 
 
 func _couloir_dark() -> void:

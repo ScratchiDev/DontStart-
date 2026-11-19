@@ -24,7 +24,7 @@ extends HouseRoom
 ##    éclairage indirect), la lampe de poche comprise ; la sonde de la pièce (miroir, émail) × SDB_PROBE_GAIN ;
 ##  - rideau : curtain.gdshader (plis irréguliers avec leurs normales, plastique translucide, froissures,
 ##    moisissure du bas) ; anneaux décalés ;
-##  - applique plus douce (APPLIQUE_*_NET), à 50 % après l'épisode du miroir (APPLIQUE_APRES_P4) ;
+##  - applique plus douce (APPLIQUE_*_NET), à 25 % après l'épisode du miroir (APPLIQUE_APRES_P4) ;
 ##  - matières locales : peinture cloquée (PaintedPlaster012) et damier désaturé, sans toucher à « mats » ;
 ##  - dress_details : lunettes, canard, boîte à pharmacie, flacon, et l'usure (Wear) de la pièce.
 
@@ -60,10 +60,13 @@ const LAYER_EAU := 15
 const SDB_PROBE_GAIN := 1.5
 ## Eau noire, vraie carte : albédo d'encre, rugosité, spéculaire (≈ 10 % de face : une encre qui luit,
 ## un peu plus que l'eau claire), ondulation (pente de la normale) et sa vitesse (m/s).
-const WATER_ALBEDO := Color(0.006, 0.008, 0.007)
-const WATER_ROUGH := 0.03
-const WATER_SPEC := 0.7
-const WATER_RIPPLE := 0.07
+## Étalonnage final (lot V3-ETALONNAGE) : plus lisse, moins de reflet diffus (le reflet de la VoxelGI, flou,
+## faisait une eau grise, médiane 41/255) et une ondulation plus fine : l'eau est noire, les lumières y
+## font des reflets nets (applique, lampe de poche).
+const WATER_ALBEDO := Color(0.004, 0.005, 0.005)
+const WATER_ROUGH := 0.018
+const WATER_SPEC := 0.5
+const WATER_RIPPLE := 0.04
 const WATER_SPEED := 0.006
 ## Émail vert d'eau (vraie carte) et tablier de la baignoire (plus mat : il brûlait sous le rideau).
 const ENAMEL_NET := Color(0.62, 0.69, 0.64)
@@ -1022,9 +1025,10 @@ const APPLIQUE_GLOW_NET := 0.12
 const APPLIQUE_ATTEN_NET := 0.9
 const APPLIQUE_LIGHT_Z_NET := -0.15
 const APPLIQUE_SPECULAR_NET := 0.6
-## Après l'épisode du miroir (vraie carte, hors rétro) : l'applique reste à 50 %, la baignoire derrière
+## Après l'épisode du miroir (vraie carte, hors rétro) : l'applique reste à 25 %, la baignoire derrière
 ## son rideau garde son noir.
-const APPLIQUE_APRES_P4 := 0.5
+## (étalonnage final : 0,25 au lieu de 0,5 ; derrière le rideau, la baignoire retrouve son noir)
+const APPLIQUE_APRES_P4 := 0.25
 
 
 func _applique() -> void:

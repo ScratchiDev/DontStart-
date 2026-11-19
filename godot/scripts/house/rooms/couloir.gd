@@ -43,7 +43,8 @@ const BULB_GLOW := 2.6
 ## les valeurs de la 0.3.3.
 const LIGHT_NET_K := 0.7
 const SHADE_GLOW := 0.35
-const SHADE_GLOW_NET := 1.15
+## (étalonnage final : 0,6 au lieu de 1,15 ; la tulipe reste un point chaud, pas une source qui remplit)
+const SHADE_GLOW_NET := 0.6
 ## Couleur de l'émission des tulipes : rétro et logiciel, celle de la 0.3.3 ; rendu net, un ambre plus
 ## franc (à 1,4 et dans l'orange d'avant, AgX blanchissait la cloche entière).
 const SHADE_COLOR := Color(1.0, 0.6, 0.3)
@@ -53,7 +54,9 @@ const SHADE_COLOR_NET := Color(1.0, 0.5, 0.2)
 ## L3, au sud, est grillée : des îlots de lumière séparés par du noir que la lampe traverse. Quand elle
 ## passe (flicker, Haunt) ou pendant chain_lights, les trois ampoules répondent. Rétro et rendu logiciel :
 ## les trois à 1, comme dans la 0.3.3.
-const NIGHT_REST := [0.3, 0.45, 0.0]
+## Étalonnage final (lot V3-ETALONNAGE) : à 0,3 et 0,45, le couloir restait éclairé comme un couloir
+## d'hôtel (médiane 26/255) et le portrait du fond, à 2,3 m de L1, brûlait ; L1 n'est plus qu'une lueur.
+const NIGHT_REST := [0.08, 0.18, 0.0]
 ## Câbles neufs : PVC blanc cassé (sous une ampoule à incandescence, un câble blanc est gris clair, pas un
 ## trait de lumière), tubes ronds de 4 mm (le câble réseau : 6 mm, § 5.2), coudes arrondis ; au mur et au
 ## plafond, un cavalier tous les CLIP_STEP et le câble pend de CABLE_SAG entre deux.
@@ -1209,14 +1212,14 @@ func _light_k() -> float:
 
 
 func _shade_glow() -> float:
-	return SHADE_GLOW_NET if Qualite.extras_on() else SHADE_GLOW
+	return Main.tune("tulipe", SHADE_GLOW_NET) if Qualite.extras_on() else SHADE_GLOW
 
 
 ## Facteur au repos de l'ampoule i (voir NIGHT_REST).
 func _rest(i: int) -> float:
 	if not Qualite.extras_on() or Time.get_ticks_msec() < _all_bulbs_until_ms:
 		return 1.0
-	return float(NIGHT_REST[i])
+	return Main.tune("couloir_l%d" % (i + 1), float(NIGHT_REST[i]))
 
 
 func _shade_color() -> Color:

@@ -287,9 +287,14 @@ const FULL_CROWN_TINT := Color(0.66, 0.645, 0.6)
 const CROWN_ROUGHNESS := 0.92
 const CROWN_SPECULAR := 0.25
 ## Chemins d'usure sur la moquette : poils tassés, plus clairs et plus gris que le velours (teinte
-## multipliée par le masque du décalque, mélange de l'albédo).
-const MOQUETTE_PATH_TINT := Color(0.52, 0.38, 0.32)
-const MOQUETTE_PATH_MIX := 0.85
+## multipliée par le masque du décalque, mélange de l'albédo). Étalonnage final (lot V3-ETALONNAGE) : à
+## (0,52 ; 0,38 ; 0,32), la teinte était celle de la moquette elle-même (0,55 ; 0,35 ; 0,305) : les chemins ne
+## se voyaient pas ; ils sont maintenant nettement plus gris et plus clairs.
+const MOQUETTE_PATH_TINT := Color(0.66, 0.53, 0.47)
+const MOQUETTE_PATH_MIX := 0.9
+## Parquet ciré (vraie carte) : reflet spéculaire (0,4 avant l'étalonnage final : le parquet de la chambre
+## de ta mère faisait encore sol mouillé, reflet net de la chaise et du tapis, 99e centile de 140 à 172).
+const PARQUET_SPECULAR := 0.28
 ## Lambris par pièce : clé de « mats » -> [texture sous Lambris/ (ou chemin complet avec « / »), mètres par
 ## répétition, teinte, facteur de rugosité, masque de crasse HD (0 : sans crasse)]. Builder.LAMBRIS dit quelle
 ## pièce prend quoi. Couleurs moyennes visées (sRGB) : miel (0,36 ; 0,22 ; 0,12), chêne foncé ciré (0,24 ;
@@ -345,7 +350,7 @@ static func build(mats: Dictionary) -> void:
 		fl.roughness = 1.0
 		fl.roughness_texture = orm2
 		fl.roughness_texture_channel = BaseMaterial3D.TEXTURE_CHANNEL_GREEN
-		fl.metallic_specular = 0.4
+		fl.metallic_specular = PARQUET_SPECULAR
 	# bois des meubles, appuis de fenêtre, cimaises et plinthes (Wood027, éclairci)
 	mats.wood = grime(pbr("Wood027/Wood027", 1.2, Color(1, 1, 1), 1.0, false), 0.5, 2)
 	mats.wood_dark = grime(pbr("Wood027/Wood027", 1.2, Color(0.72, 0.7, 0.7), 1.0, false), 0.5, 2)

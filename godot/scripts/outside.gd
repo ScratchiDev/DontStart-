@@ -24,11 +24,29 @@ signal lightning_struck
 signal flash_peak                      # le palier le plus fort de l'éclair est posé (affiché à l'image suivante)
 
 const BOLT_NET_ANGLE := 13.0
-const BOLT_NET_K := 0.8                # crêtes 42 / 60 -> 34 / 48
-const BOLT_AMBIENT := 2.2              # éclairage ambiant + 2,2 × e / 60 pendant le flash
-const MOON_FLASH_K := 12.0             # lunes des fenêtres × (1 + 12 × e / 60)
-const SKY_NET_K := 0.6
+## Étalonnage final (lot V3-ETALONNAGE), rendu net hors « Éclairs adoucis » : l'éclair saisit sans brûler
+## (38_fenetre_clovis avait 30 % de pixels écrêtés et un sous-titre illisible, 06e 14 %). Crêtes × BOLT_NET_K
+## (42 / 60 -> 23 / 33), et le même facteur sur tout ce qui flashe avec lui : ciel, poussée de l'ambiance
+## (BOLT_AMBIENT), lunes des fenêtres (MOON_FLASH_K), reflet de la vitre (GLASS_FLASH_NET). Mêmes paliers,
+## mêmes tirages ; « Éclairs adoucis » inchangé.
+const BOLT_NET_K := 0.55
+const BOLT_AMBIENT := 0.8              # éclairage ambiant + 0,8 × k × e / 60 pendant le flash
+const MOON_FLASH_K := 3.0              # lunes des fenêtres × (1 + 3 × k × e / 60)
+const GLASS_FLASH_NET := 0.6
+const BOLT_AMBIENT_ADOUCI := 2.2
+const MOON_FLASH_ADOUCI := 12.0
+## Rendu net hors « Éclairs adoucis » : pendant le flash, l'image se protège comme un œil ou une caméra
+## (exposition d'AgX ÷ (1 + FLASH_EXPO_K × e / 60), épaule du filtre relevée vers FLASH_WHITE_POINT) :
+## l'appui de la fenêtre et le lit, en plein dans l'éclair, gardent leur matière au lieu de virer au blanc.
+## Reflet du projecteur de l'éclair (0,5 par défaut : l'appui ciré renvoyait l'éclair en plein).
+const FLASH_EXPO_K := 1.0
+const FLASH_WHITE_POINT := 0.9
+const BOLT_SPECULAR_NET := 0.15
+## Ciel derrière les vitres, rendu net (0,6 avant l'étalonnage final : la vitre de nuit restait laiteuse).
+const SKY_NET_K := 0.4
 const THUNDER_DB_PER_S := -3.2         # tonnerre : -3,2 dB par seconde de délai au-delà de 0,7 s
+const THUNDER_SHAKE_DELAY := 1.2       # tonnerre proche (délai < 1,2 s) : petite secousse de la vue
+const THUNDER_SHAKE := 0.05
 const GLASS_NET := "res://shaders/rain_glass_net.gdshader"
 const GLASS_OLD := "res://shaders/rain_glass.gdshader"
 const BARK := "res://assets/textures/bark_brown_02/bark_brown_02_%s.jpg"
@@ -879,23 +897,38 @@ func strike() -> void:
 	var pattern := [[42.0, 0.05], [0.0, 0.07], [60.0, 0.09], [10.0, 0.18], [0.0, 0.0]]
 	if Game.soft_flashes:
 		pattern = [[6.0, 0.12], [12.0, 0.25], [6.0, 0.25], [0.0, 0.0]]
-	var k := BOLT_NET_K if net and not Game.soft_flashes else 1.0
+	var hard := net and not Game.soft_flashes
+	var k := Main.tune("bolt_k", BOLT_NET_K) if hard else 1.0
+	var kg := GLASS_FLASH_NET if hard else 1.0
+	# (« Éclairs adoucis » : les valeurs d'avant, inchangées)
+	var amb_k := Main.tune("bolt_amb", BOLT_AMBIENT) * k if hard else BOLT_AMBIENT_ADOUCI
+	var moon_k := Main.tune("moon_flash", MOON_FLASH_K) * k if hard else MOON_FLASH_ADOUCI
+	bolt.light_specular = BOLT_SPECULAR_NET if hard else 0.5
+	var expo_k := Main.tune("flash_expo", FLASH_EXPO_K) if hard and env else 0.0
+	var post: ShaderMaterial = null
+	if hard:
+		var rp := get_tree().get_first_node_in_group("retro") as CanvasItem
+		post = rp.material as ShaderMaterial if rp else null
 	var peak := 0.0
 	for e in pattern:
 		peak = maxf(peak, float(e[0]))
 	for e in pattern:
 		var x: float = e[0]
 		bolt.light_energy = x * k
+		if expo_k > 0.0:
+			env.tonemap_exposure = Main.agx_exposure() / (1.0 + expo_k * x / 60.0)
+		if post:
+			post.set_shader_parameter("white_point", lerpf(Main.NET_WHITE_POINT, FLASH_WHITE_POINT, clampf(x / 60.0, 0.0, 1.0)))
 		if sky:
 			sky.energy_multiplier = sky_base + x * 0.06 * k
 		if glass_mat:
-			glass_mat.set_shader_parameter("flash", x / 60.0)
+			glass_mat.set_shader_parameter("flash", x / 60.0 * kg)
 		if env:
-			env.ambient_light_energy = amb_base + BOLT_AMBIENT * x / 60.0
+			env.ambient_light_energy = amb_base + amb_k * x / 60.0
 		for m in moons:
 			var l := m as Light3D
 			if l and Qualite.extras_on():
-				l.light_energy = float(l.get_meta("lune_e", l.get_meta("lune_energie", 1.0))) * (1.0 + MOON_FLASH_K * x / 60.0)
+				l.light_energy = float(l.get_meta("lune_e", l.get_meta("lune_energie", 1.0))) * (1.0 + moon_k * x / 60.0)
 		if x > 0.0 and x >= peak:
 			flash_peak.emit()
 		if e[1] > 0.0:
@@ -909,8 +942,13 @@ func strike() -> void:
 				await RenderingServer.frame_post_draw
 	if sky:
 		sky.energy_multiplier = sky_base
-	if env and is_equal_approx(env.ambient_light_energy, amb_base + BOLT_AMBIENT * float(pattern[pattern.size() - 1][0]) / 60.0):
+	if env and is_equal_approx(env.ambient_light_energy, amb_base + amb_k * float(pattern[pattern.size() - 1][0]) / 60.0):
 		env.ambient_light_energy = amb_base
+	# (rendu net : l'exposition et l'épaule d'avant le flash, sauf si le style a changé entre-temps)
+	if expo_k > 0.0 and Qualite.extras_on():
+		env.tonemap_exposure = Main.agx_exposure()
+	if post and Qualite.extras_on():
+		post.set_shader_parameter("white_point", Main.NET_WHITE_POINT)
 	for m in moons:
 		var l := m as Light3D
 		if l:
@@ -926,6 +964,10 @@ func strike() -> void:
 	await get_tree().create_timer(delay).timeout
 	var kd := clampf((delay - 0.7) / 1.9, 0.0, 1.0)
 	Sfx.play("thunder", -3.0 + THUNDER_DB_PER_S * (delay - 0.7), rng.randf_range(0.8, 1.1) * lerpf(1.05, 0.92, kd))
+	# (revue « peur » de la vague 2 : un coup de tonnerre tout proche fait trembler la vue ; la couche « présence »
+	# applique « Mouvements de la caméra » ; rien avec « Éclairs adoucis » ; aucun tirage)
+	if delay < THUNDER_SHAKE_DELAY and not Game.soft_flashes:
+		get_tree().call_group("presence", "add_trauma", THUNDER_SHAKE, false)
 
 
 ## Un éclair peut-il éclater maintenant ? Pas pendant un silence de l'entité (ni juste après).

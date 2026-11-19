@@ -1458,14 +1458,17 @@ func _build_floor_lamp(at: Vector3) -> void:
 ## creux, translucide (backlight 0,4 : la lumière passe à travers la toile), doublure intérieure plus claire,
 ## galons tressés en haut et en bas, cercle bas de l'armature. ys : bas de l'abat-jour, hs : hauteur,
 ## rt / rb : rayons du haut et du bas.
+## Étalonnage final (lot V3-ETALONNAGE) : la lampe est éteinte ; parchemin vieilli plus sombre et presque
+## plus de contre-jour (à 0,98 et 0,4, l'abat-jour montait à 199/255 la nuit, sur un mur à 17 : on le
+## croyait allumé).
 func _lamp_shade(root: Node3D, ys: float, hs: float, rt: float, rb: float) -> void:
-	var cloth := Surfaces.pbr_acg("Fabric045/Fabric045", 0.12, Color(0.98, 0.86, 0.64), 0.5)
+	var cloth := Surfaces.pbr_acg("Fabric045/Fabric045", 0.12, Color(0.62, 0.54, 0.4), 0.5)
 	cloth.backlight_enabled = true
-	cloth.backlight = Color(0.4, 0.33, 0.22)
+	cloth.backlight = Color(0.12, 0.1, 0.066)
 	cloth.resource_name = "AbatJour"
-	var liner := Surfaces.pbr_acg("Fabric045/Fabric045", 0.12, Color(1.0, 0.95, 0.82), 0.3)
+	var liner := Surfaces.pbr_acg("Fabric045/Fabric045", 0.12, Color(0.7, 0.66, 0.58), 0.3)
 	liner.backlight_enabled = true
-	liner.backlight = Color(0.32, 0.27, 0.18)
+	liner.backlight = Color(0.1, 0.085, 0.056)
 	var outer := []
 	var inner := []
 	var ysl := PackedFloat32Array()

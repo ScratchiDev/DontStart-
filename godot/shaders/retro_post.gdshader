@@ -3,7 +3,8 @@
 //    vignettage doux, aberration chromatique nulle au repos (vraie carte ; presque nulle en rendu
 //    logiciel) ; levels = 0 (pas de palette réduite) ;
 //    point noir, épaule étirée jusqu'au blanc (les hautes lumières d'AgX plafonnent vers 0,8 : au-delà
-//    du genou, elles montent au blanc ; les tons moyens ne bougent pas), pied de courbe ;
+//    du genou, elles montent au blanc ; les tons moyens ne bougent pas), pied de courbe, puis (vraie
+//    carte) la LUT d'étalonnage ;
 //  - style rétro : image 640×360 agrandie sans lissage, palette réduite (levels = 16) + tramage
 //    ordonné (Bayer 4×4), grain, vignettage, aberration chromatique : l'aspect des versions 0.1 à 0.3.
 // La peur (corruption, main.gd _on_fear) déchire l'image et écarte les couleurs dans les deux modes ;
@@ -31,6 +32,12 @@ uniform float white_point = 1.0;      // valeur qui devient le blanc (1 : rien n
 uniform float shoulder_knee = 0.4;    // l'épaule s'étire au-dessus de ce genou (raccord sans cassure)
 uniform float toe = 0.0;              // pied de courbe : les basses lumières s'enfoncent (0..1)
 uniform float grain_net = 0.0;        // grain de pellicule : taille suivant la résolution, plus fort dans le noir
+// étalonnage final (lot V3-ETALONNAGE, main.gd lut_texture) : LUT 3D appliquée après la courbe, lue au
+// centre des texels ; rendu net sur vraie carte seulement (lut_mix = 0 en rétro et en rendu logiciel :
+// l'image d'avant, à l'identique)
+uniform sampler3D lut : filter_linear, repeat_disable;
+uniform float lut_size = 32.0;
+uniform float lut_mix = 0.0;
 
 const float BAYER[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0,
                                   3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
@@ -65,6 +72,12 @@ void fragment() {
 	float lum = dot(c, vec3(0.299, 0.587, 0.114));
 	if (toe > 0.0) {
 		c *= 1.0 - toe * (1.0 - clamp(lum / 0.25, 0.0, 1.0));
+	}
+	if (lut_mix > 0.0) {
+		vec3 lc = clamp(c, 0.0, 1.0);
+		vec3 g = texture(lut, lc * ((lut_size - 1.0) / lut_size) + 0.5 / lut_size).rgb;
+		c = mix(c, g, lut_mix);
+		lum = dot(c, vec3(0.299, 0.587, 0.114));
 	}
 	if (grain_net > 0.0) {
 		// un grain de 2 px en 1080p (1 px en 540p), plus présent dans les ombres que dans les lumières,
