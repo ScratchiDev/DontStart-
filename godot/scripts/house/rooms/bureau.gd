@@ -20,8 +20,43 @@ extends HouseRoom
 ## Événements Haunt.story_event : « tiroir_ouvert », « tournevis_pris », « box_debranchee »,
 ## « portable_verrouille », « portable_lu », « cameras_regardees », « lumiere » {room, on}.
 ## (L'imprimante émet elle-même « page_imprimee » et « page_prise » {id}.)
+##
+## Passe « triple A » (lot V2-BUREAU). En rendu logiciel, la pièce reste celle de la 0.3.3 (étiquettes en
+## police 3 × 5, boîtes, mêmes tirages). Sur vraie carte :
+##  - furnish : images HD de tools/gen_bureau.py (assets/images/bureau : calendrier de la pharmacie, diplôme,
+##    étiquettes « NE PAS DÉBRANCHER » et « A. »), papiers plafonnés (PAPER_K_HD, Builder.paper_albedo) ;
+##    biseaux des meubles fondus (_bp : Builder.bevel_box_mesh) ; bibliothèques en Wood008, radiateur
+##    refait en PaintedMetal010, sous-mains en Leather014 ; dos des classeurs toilés ;
+##    fils en tubes ronds (_cable) ; table de l'imprimante = ClassicNightstand_01 (ramette et notice à côté) ;
+##    lampe d'architecte allumée (« LampeBureau », SpotLight, ombre dès Élevée, éteinte en rétro) ;
+##    plafonnier à CEILING_NET_K hors rétro ;
+##  - dress_details : étiquettes manuscrites des classeurs (atlas binder_labels de V1-IMAGES) et œillets,
+##    matériel d'électronicien (Builder.detail : multimètre, circuit imprimé, loupe, agrafeuse, crayons,
+##    blocs-notes, cahier, porte-bloc, encyclopédie), tournevis Poly Haven dans le nœud « Tournevis »,
+##    commande du store connecté, usure (Wear : ronds de tasse, poussière, pied des murs, passage, suie).
 
 const COULOIR := preload("res://scripts/house/rooms/couloir.gd")   # _tube_mesh, _round_corners (câble réseau)
+## Images HD du bureau (tools/gen_bureau.py) et leur facteur d'albédo papier (mesuré par le script comme
+## Builder.PAPER_K ; diplôme 0,70 × 0,6 : sous son verre, dans le faisceau, il brûlait encore — revue3_peur,
+## mesuré sur bureau_nuit_a).
+const IMG_DIR := "res://assets/images/bureau/"
+const PAPER_K_HD := {"calendrier_2040.png": 0.64, "diplome_medaille.png": 0.42, "etiquette_box.png": 0.58, "etiquette_A.png": 0.66}
+## Étiquettes manuscrites des classeurs (lot V1-IMAGES) : atlas et cases (« uv » : [u0, v0, u1, v1] par
+## occurrence de la chaîne, dans l'ordre de _bookcases) ; facteur d'albédo des fiches.
+const BINDER_ATLAS := "res://assets/images/binder_labels.png"
+const BINDER_JSON := "res://assets/images/binder_labels.json"
+const BINDER_PAPER_K := 0.7
+const BINDER_CLOTH := "res://assets/textures/Fabric045/Fabric045_NormalGL.jpg"   # toile des dos de classeurs
+## Plafonnier : −30 % en rendu net hors rétro (la lampe d'architecte prend le relais sur le bureau).
+const CEILING_ENERGY := 0.55
+const CEILING_NET_K := 0.7
+## Lampe d'architecte allumée (vraie carte, hors rétro) : tungstène 2700 K, cône sur le sous-main.
+const DESK_LAMP_ENERGY := 1.4
+const DESK_LAMP_RANGE := 1.9
+const DESK_LAMP_COLOR := Color(1.0, 0.71, 0.42)
+const DESK_LAMP_GLOW := 3.0
+const DESK_LAMP_AIM := Vector3(7.42, 0.76, 5.86)    # le sous-main, devant le clavier
+const LAYER_LAMP_SELF := 16                         # la lampe elle-même (comme room.gd LAYER_SCREEN_GLASS)
 const XW := 4.812         # faces du papier peint
 const XE := 9.188
 const ZN := 2.012
@@ -190,12 +225,21 @@ var _walnut: StandardMaterial3D
 var _brass_m: StandardMaterial3D
 var _ubox: BoxMesh
 var _tri_cache := {}
+# passe « triple A » (vraie carte)
+var _binder_rows: Array = []              # [x_front, y0, hh, depth, [[z centre, largeur, couleur, étiquette], …]]
+var _binder_mats := {}                    # couleur -> matière des dos (toile)
+var _shelf_wood_m: StandardMaterial3D
+var desk_lamp: SpotLight3D                # « LampeBureau » (null en rendu logiciel)
+var _desk_lamp_bulb: StandardMaterial3D
+var _desk_bits: Array[Node3D] = []        # pot à crayons et loupe d'origine (cachés par dress_details)
+var _sd_label: MeshInstance3D             # l'étiquette « A. » du tournevis
 
 
 func furnish(h: House) -> void:
 	house = h
 	rng.seed = 4402
-	_cable_mat = _plain(Color(0.9, 0.9, 0.88), 0.4)
+	# (vraie carte : le blanc des fils neufs un peu baissé, il brillait comme un néon dans le faisceau)
+	_cable_mat = _plain(Color(0.9, 0.9, 0.88) if Builder.soft_render() else Color(0.78, 0.78, 0.76), 0.4)
 	_tape_mat = _plain(Color(0.66, 0.66, 0.64), 0.35, 0.3)
 	_new_white = _plain(Color(0.74, 0.74, 0.72), 0.4)
 	_rug()
@@ -213,6 +257,10 @@ func furnish(h: House) -> void:
 	_filing_cabinet()
 	_wall_things()
 	connect_feeds()
+	if not Builder.soft_render():
+		# (style rétro basculé en cours de partie : plafonnier et lampe d'architecte)
+		Game.settings_changed.connect(_on_settings_changed)
+		_on_settings_changed()
 
 
 # ------------------------------------------------------------------ outils
@@ -290,6 +338,109 @@ func _tex_mat(tex: Texture2D, rough := 0.9) -> StandardMaterial3D:
 	m.roughness = rough
 	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	return m
+
+
+## Image HD du bureau (vraie carte) : papier mat, albédo plafonné (PAPER_K_HD), filtrage anisotrope (vue
+## de biais sur un mur ou un bureau).
+func _hd_mat(file: String, rough := 0.9) -> StandardMaterial3D:
+	var m := _tex_mat(load(IMG_DIR + file), rough)
+	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+	return _paper_net(m, float(PAPER_K_HD.get(file, 1.0)))
+
+
+## Bois des bibliothèques : acajou ciré (Wood008) sur vraie carte, le noyer d'avant en rendu logiciel.
+func _shelf_wood() -> StandardMaterial3D:
+	if Builder.soft_render():
+		return _wood()
+	if _shelf_wood_m == null:
+		_shelf_wood_m = _grimy(Surfaces.pbr("Wood008/Wood008", 0.5, Color(0.8, 0.84, 0.66), 1.0, true, false, 0.42), 1.4)
+	return _shelf_wood_m
+
+
+## Cuir (Leather014) d'un sous-main, teint (vraie carte).
+func _leather(tint: Color) -> StandardMaterial3D:
+	return Surfaces.pbr("Leather014/Leather014", 0.35, tint, 0.8, true, false, 0.55) as StandardMaterial3D
+
+
+## Fonte peinte (PaintedMetal010 : le relief des couches de peinture et des écailles, sa rugosité), teinte
+## unie : ses éclats noirs, à l'échelle d'un radiateur, en faisaient un dalmatien. Crasse par-dessus.
+func _painted_metal(tint: Color, rough := 0.5, meters := 0.3) -> StandardMaterial3D:
+	var m := Surfaces.pbr("PaintedMetal010/PaintedMetal010", meters, tint, 1.2, true, false, rough, false)
+	m.albedo_texture = null
+	return Surfaces.grime(m, 0.5, 3) as StandardMaterial3D
+
+
+## Dos d'un classeur : la couleur d'avant ; sur vraie carte, toile (Fabric045 en relief, coordonnées du
+## monde : les boîtes restent biseautées) et satin.
+func _binder_mat(col: Color) -> StandardMaterial3D:
+	var m := _m(col, 0.5)
+	if not Builder.soft_render() and ResourceLoader.exists(BINDER_CLOTH):
+		m.roughness = 0.66
+		m.normal_enabled = true
+		m.normal_texture = load(BINDER_CLOTH)
+		m.normal_scale = 0.55
+		Surfaces.world_uv(m, 0.09)
+	return m
+
+
+## Feuille punaisée qui gondole (vraie carte) : maillage de « size » dans le plan x, y (face +z, comme un
+## QuadMesh), le bas décollé du mur de « curl » m (courbe en t², t = 0 en haut), une légère ondulation en
+## travers. UV : l'image entière, à l'endroit.
+static func _sheet_mesh(size: Vector2, curl: float, rows := 10, cols := 4) -> ArrayMesh:
+	var verts := PackedVector3Array()
+	var norms := PackedVector3Array()
+	var uvs := PackedVector2Array()
+	var idx := PackedInt32Array()
+	for j in rows + 1:
+		var t := float(j) / rows                      # 0 en haut, 1 en bas
+		var y := size.y * (0.5 - t)
+		for i in cols + 1:
+			var s := float(i) / cols
+			var x := size.x * (s - 0.5)
+			var wave := 0.0012 * sin(s * PI) * t
+			var z := curl * t * t + wave
+			var dzdy := -2.0 * curl * t / size.y - 0.0012 * sin(s * PI) / size.y
+			verts.append(Vector3(x, y, z))
+			norms.append(Vector3(0.0, -dzdy, 1.0).normalized())
+			uvs.append(Vector2(s, t))
+	for j in rows:
+		for i in cols:
+			var a := j * (cols + 1) + i
+			var b := a + 1
+			var c := a + cols + 1
+			var d := c + 1
+			# (sens horaire vu de +z : face avant)
+			idx.append_array(PackedInt32Array([a, b, d, a, d, c]))
+	var arr := []
+	arr.resize(Mesh.ARRAY_MAX)
+	arr[Mesh.ARRAY_VERTEX] = verts
+	arr[Mesh.ARRAY_NORMAL] = norms
+	arr[Mesh.ARRAY_TEX_UV] = uvs
+	arr[Mesh.ARRAY_INDEX] = idx
+	var am := ArrayMesh.new()
+	am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	return am
+
+
+## Objet de détail fait d'un jeu de pièces (blocs-notes, encyclopédie…) : ne garde que les maillages dont
+## le nom est dans « keep », puis recentre ce qui reste sur le support (pied au sol, centré en x, z).
+## Rend la taille gardée (zéro si rien).
+func _keep_parts(holder: Node3D, keep: Array) -> Vector3:
+	if holder == null or not holder.get_meta("ready", false):
+		return Vector3.ZERO
+	var mdl := holder.get_node_or_null("Modele") as Node3D
+	if mdl == null:
+		return Vector3.ZERO
+	for n in mdl.find_children("*", "MeshInstance3D", true, false):
+		if not keep.has(String(n.name)):
+			n.get_parent().remove_child(n)
+			n.queue_free()
+	var box := _aabb_of(mdl, holder)
+	if box.size == Vector3.ZERO:
+		return Vector3.ZERO
+	mdl.position -= Vector3(box.get_center().x, box.position.y, box.get_center().z)
+	holder.set_meta("size", box.size)
+	return box.size
 
 
 ## Noyer ciré des meubles d'Albert (Wood027 assombri) : bureau, table de l'imprimante, bibliothèques.
@@ -382,8 +533,14 @@ func _tri_arrays(m: Mesh) -> Array:
 
 
 ## Pièces pour _merged : une boîte (cube unité mis à l'échelle), ou un maillage, posés en « pos »,
-## tournés de « rot ».
+## tournés de « rot ». Sur vraie carte, une boîte d'au moins Builder.BEVEL_SKIP d'épaisseur est biseautée
+## (Builder.bevel_box_mesh, rayon automatique comme Builder.box_mesh, maillage en cache par taille) : les
+## arêtes des meubles accrochent la lumière.
 func _bp(size: Vector3, pos: Vector3, rot := Vector3.ZERO) -> Array:
+	var m := minf(size.x, minf(size.y, size.z))
+	if m >= Builder.BEVEL_SKIP and not Builder.soft_render():
+		var r := clampf(m * 0.2, Builder.BEVEL_MIN, Builder.BEVEL_MAX)
+		return [Builder.bevel_box_mesh(size, r), Transform3D(Basis.from_euler(rot), pos)]
 	if _ubox == null:
 		_ubox = BoxMesh.new()
 	return [_ubox, Transform3D(Basis.from_euler(rot) * Basis.from_scale(size), pos)]
@@ -403,11 +560,20 @@ func _story(ev: String, data := {}) -> void:
 		hn.story_event(ev, data)
 
 
-## Câble blanc neuf en segments droits ; « normal » : la surface où il court (vers la pièce).
+## Câble blanc neuf ; « normal » : la surface où il court (vers la pièce).
 ## tape : scotch gris tous les 40 cm ; ou une liste de points où poser le scotch.
+## Rendu logiciel : segments droits en boîtes (0.3.3). Vraie carte : un tube rond aux coudes arrondis
+## (couloir._tube_mesh, comme le câble réseau), un seul nœud « Fil ». Le scotch (et ses tirages) ne change pas.
 func _cable(points: Array, normal: Vector3, tape: Variant = true, radius := 0.0028, mat: Material = null) -> void:
 	if mat == null:
 		mat = _cable_mat
+	var soft := Builder.soft_render()
+	if not soft:
+		var tube := MeshInstance3D.new()
+		tube.name = "Fil"
+		tube.mesh = COULOIR._tube_mesh(COULOIR._round_corners(PackedVector3Array(points)), radius)
+		tube.material_override = mat
+		add_child(tube, true)
 	for i in points.size() - 1:
 		var a: Vector3 = points[i]
 		var b: Vector3 = points[i + 1]
@@ -416,14 +582,15 @@ func _cable(points: Array, normal: Vector3, tape: Variant = true, radius := 0.00
 		if l < 0.001:
 			continue
 		var dir := d / l
-		var up := normal if absf(dir.dot(normal)) < 0.9 else (Vector3.UP if absf(dir.y) < 0.9 else Vector3.RIGHT)
-		var mi := MeshInstance3D.new()
-		var bm := BoxMesh.new()
-		bm.size = Vector3(radius * 2.0, radius * 2.0, l + radius * 2.0)
-		mi.mesh = bm
-		mi.material_override = mat
-		mi.transform = Transform3D(Basis.looking_at(dir, up), (a + b) / 2.0)
-		add_child(mi)
+		if soft:
+			var up := normal if absf(dir.dot(normal)) < 0.9 else (Vector3.UP if absf(dir.y) < 0.9 else Vector3.RIGHT)
+			var mi := MeshInstance3D.new()
+			var bm := BoxMesh.new()
+			bm.size = Vector3(radius * 2.0, radius * 2.0, l + radius * 2.0)
+			mi.mesh = bm
+			mi.material_override = mat
+			mi.transform = Transform3D(Basis.looking_at(dir, up), (a + b) / 2.0)
+			add_child(mi)
 		if not (tape is bool and tape) or absf(dir.dot(normal)) > 0.1 or l < 0.25:
 			continue
 		var n := maxi(1, int(l / 0.4))
@@ -521,7 +688,7 @@ func _ceiling_light() -> void:
 	bulb.name = "AmpouleBureau"
 	bulb.device_id = "ampoule_bureau"
 	bulb.room_id = "bureau"
-	bulb.energy = 0.55
+	bulb.energy = CEILING_ENERGY       # (× CEILING_NET_K en rendu net hors rétro : _on_settings_changed)
 	bulb.light_range = 5.0
 	bulb.show_bulb = false
 	add_child(bulb)
@@ -590,15 +757,18 @@ func _desk() -> void:
 			open_drawer()
 		elif screwdriver and screwdriver.visible:
 			take_screwdriver())
-	# sous-main en cuir, pot à crayons, vieille calculatrice, papiers, loupe
-	_box(Vector3(0.62, 0.004, 0.4), Vector3(7.12, top + 0.002, 5.86), _m(Color(0.12, 0.2, 0.14), 0.7))
+	# sous-main en cuir (Leather014 vert bouteille sur vraie carte), pot à crayons, vieille calculatrice,
+	# papiers, loupe
+	_box(Vector3(0.62, 0.004, 0.4), Vector3(7.12, top + 0.002, 5.86),
+		_m(Color(0.12, 0.2, 0.14), 0.7) if Builder.soft_render() else _leather(Color(0.36, 0.7, 0.5)))
 	var pot := Vector3(6.62, top, 6.12)
-	_mesh(_cyl(0.035, 0.032, 0.1, 14), pot + Vector3(0, 0.05, 0), _m(Color(0.42, 0.3, 0.18), 0.5))
+	_desk_bits.append(_mesh(_cyl(0.035, 0.032, 0.1, 14), pot + Vector3(0, 0.05, 0), _m(Color(0.42, 0.3, 0.18), 0.5)))
 	for k in 4:
 		var pc := _mesh(_cyl(0.004, 0.004, 0.16, 6), pot + Vector3(rng.randf_range(-0.015, 0.015), 0.12, rng.randf_range(-0.015, 0.015)),
 			_m([Color(0.1, 0.15, 0.45), Color(0.65, 0.1, 0.1), Color(0.1, 0.1, 0.1), Color(0.8, 0.65, 0.1)][k], 0.5),
 			Vector3(rng.randf_range(-0.25, 0.25), 0, rng.randf_range(-0.25, 0.25)))
 		pc.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		_desk_bits.append(pc)
 	var calc := Node3D.new()
 	add_child(calc)
 	calc.position = Vector3(7.74, top, 5.84)
@@ -612,6 +782,7 @@ func _desk() -> void:
 		_box_rot(Vector3(0.21, 0.002, 0.297), Vector3(6.66, top + 0.001 + k * 0.0022, 5.78), _paper_net(_m(Color(0.86, 0.84, 0.78), 0.9), 0.7), rng.randf_range(-0.2, 0.2))
 	var loupe := Node3D.new()
 	add_child(loupe)
+	_desk_bits.append(loupe)
 	loupe.position = Vector3(6.72, top + 0.006, 5.76)
 	loupe.rotation.y = 0.7
 	var ring := TorusMesh.new()
@@ -635,7 +806,66 @@ func _desk() -> void:
 				var dm := lm.duplicate() as StandardMaterial3D
 				dm.albedo_color = lm.albedo_color * Color(0.6, 0.62, 0.6)
 				mi.set_surface_override_material(i, dm)
+	if not Builder.soft_render():
+		_desk_lamp_on(lamp)
 	_waste_bin(Vector3(6.3, 0, 5.93))
+
+
+## La lampe d'architecte de Papi, restée allumée (vraie carte) : une SpotLight « LampeBureau » au centre de
+## l'ampoule du modèle (surface « …_light »), tournée vers le sous-main (DESK_LAMP_AIM) ; l'ampoule devient
+## émissive ; la lampe passe sur la couche LAYER_LAMP_SELF, que sa lumière exclut. Ombre dès Élevée (PCSS
+## de 4 cm en Ultra) ; éteinte en style rétro (_on_settings_changed).
+func _desk_lamp_on(lamp: Node3D) -> void:
+	var inv := global_transform.affine_inverse()
+	var sum := Vector3.ZERO
+	var cnt := 0
+	for n in lamp.find_children("*", "MeshInstance3D", true, false):
+		var mi := n as MeshInstance3D
+		var xf: Transform3D = inv * mi.global_transform
+		for i in mi.mesh.get_surface_count():
+			var own := mi.mesh.surface_get_material(i)
+			if own == null or not String(own.resource_name).to_lower().ends_with("_light"):
+				continue
+			var vs: PackedVector3Array = mi.mesh.surface_get_arrays(i)[Mesh.ARRAY_VERTEX]
+			for v in vs:
+				sum += xf * v
+			cnt += vs.size()
+			# l'ampoule : verre dépoli qui brille
+			var src := mi.get_surface_override_material(i)
+			if src == null:
+				src = own
+			var bm := (src as StandardMaterial3D).duplicate() as StandardMaterial3D if src is StandardMaterial3D else StandardMaterial3D.new()
+			bm.emission_enabled = true
+			bm.emission = DESK_LAMP_COLOR
+			bm.emission_energy_multiplier = DESK_LAMP_GLOW
+			mi.set_surface_override_material(i, bm)
+			_desk_lamp_bulb = bm
+	var at := sum / cnt if cnt > 0 else lamp.position + Vector3(-0.12, 0.42, -0.1)
+	var dir := (DESK_LAMP_AIM - at).normalized()
+	# (la lampe sur sa propre couche, que sa lumière n'éclaire pas : l'abat-jour ne fait pas d'ombre à son
+	# ampoule ; le plafonnier et la lampe de poche l'éclairent toujours)
+	for n in lamp.find_children("*", "MeshInstance3D", true, false):
+		(n as MeshInstance3D).layers = Builder.layer_bit(LAYER_LAMP_SELF)
+	desk_lamp = SpotLight3D.new()
+	desk_lamp.name = "LampeBureau"
+	desk_lamp.light_color = DESK_LAMP_COLOR
+	desk_lamp.light_energy = DESK_LAMP_ENERGY
+	desk_lamp.spot_range = DESK_LAMP_RANGE
+	desk_lamp.spot_angle = 42.0
+	desk_lamp.spot_angle_attenuation = 0.6
+	desk_lamp.spot_attenuation = 1.1
+	desk_lamp.light_volumetric_fog_energy = 0.3
+	desk_lamp.light_indirect_energy = 0.6     # (son rebond dans la pièce reste discret : la nuit reste noire)
+	desk_lamp.shadow_bias = 0.03
+	desk_lamp.shadow_normal_bias = 1.0
+	desk_lamp.set_meta("taille", 0.04)
+	desk_lamp.set_meta("energie_base", DESK_LAMP_ENERGY)
+	desk_lamp.light_cull_mask = 0xFFFFF & ~Builder.layer_bit(LAYER_LAMP_SELF)
+	add_child(desk_lamp)
+	# (un peu sous l'ampoule, dans l'abat-jour : le cône part de la bouche de la lampe)
+	desk_lamp.transform = Transform3D(Basis.looking_at(dir, Vector3.UP if absf(dir.y) < 0.99 else Vector3.BACK), at + dir * 0.03)
+	if Game.autotest:
+		print("LAMPE BUREAU ampoule %s axe %s" % [_fmt(at), _fmt(dir)])
 
 
 ## Corbeille à papier en tôle peinte (vert bouteille), bord roulé, quelques boulettes de papier.
@@ -694,12 +924,17 @@ func _hollow_drawer(b: AABB) -> Node3D:
 	_mesh(_cyl(0.014, 0.013, 0.1, 10), Vector3(-0.05, 0, 0), _plain(Color(0.62, 0.08, 0.06), 0.35), Vector3(0, 0, PI / 2.0), screwdriver)
 	_mesh(_cyl(0.0035, 0.0035, 0.11, 8), Vector3(0.055, 0, 0), _plain(Color(0.7, 0.7, 0.72), 0.3, 0.9), Vector3(0, 0, PI / 2.0), screwdriver)
 	_box(Vector3(0.008, 0.0015, 0.007), Vector3(0.112, 0, 0), _plain(Color(0.6, 0.6, 0.62), 0.3, 0.9), false, screwdriver)
-	var lbl := Image.create_empty(24, 12, false, Image.FORMAT_RGB8)
-	lbl.fill(Color(0.88, 0.86, 0.78))
-	px_text(lbl, "A.", Vector2i(7, 3), 1, Color(0.1, 0.1, 0.35))
-	var lm := _tex_mat(ImageTexture.create_from_image(lbl))
+	var lm: StandardMaterial3D
+	if Builder.soft_render():
+		var lbl := Image.create_empty(24, 12, false, Image.FORMAT_RGB8)
+		lbl.fill(Color(0.88, 0.86, 0.78))
+		px_text(lbl, "A.", Vector2i(7, 3), 1, Color(0.1, 0.1, 0.35))
+		lm = _tex_mat(ImageTexture.create_from_image(lbl))
+	else:
+		lm = _hd_mat("etiquette_A.png", 0.6)      # (ruban de masquage, écrit au feutre)
 	var q := _quad(Vector2(0.034, 0.016), Vector3(-0.05, 0.0145, 0), lm, 0.0, screwdriver)
 	q.rotation.x = -PI / 2.0
+	_sd_label = q
 	# crayons, élastiques, mètre ruban
 	_mesh(_cyl(0.004, 0.004, 0.15, 6), Vector3(0.08, 0.02, depth * 0.25), _m(Color(0.8, 0.65, 0.1), 0.5), Vector3(0, 0.3, PI / 2.0), d)
 	_mesh(_cyl(0.004, 0.004, 0.12, 6), Vector3(0.06, 0.02, depth * 0.72), _m(Color(0.15, 0.3, 0.6), 0.5), Vector3(0, -0.2, PI / 2.0), d)
@@ -949,8 +1184,13 @@ func _tower() -> void:
 # ------------------------------------------------------------------ l'imprimante
 
 func _printer() -> void:
-	var table := prop("sideTable", Vector3(PRINTER_C.x, 0, PRINTER_TABLE_Z), 180.0, Vector3(0.6, 0.72, 0.44))
-	_retint(table)
+	# (vraie carte : un chevet Louis XV, ClassicNightstand_01, déjà chargé pour gp ; la ramette et la notice
+	# passent à côté, il n'y a plus de place dessous)
+	var soft := Builder.soft_render()
+	var table := prop("sideTable", Vector3(PRINTER_C.x, 0, PRINTER_TABLE_Z), 180.0, Vector3(0.6, 0.72, 0.44), true, {}, "",
+		"" if soft else "ClassicNightstand_01")
+	if soft or not table.has_meta("ph_id"):
+		_retint(table)
 	var top := (table.get_meta("size") as Vector3).y
 	printer = Printer.new()
 	printer.name = "Imprimante"
@@ -962,16 +1202,19 @@ func _printer() -> void:
 	printer.build()
 	# (sous le bac de sortie : un collisionneur jusqu'en haut arrêterait le rayon avant les feuilles)
 	_collider(Vector3(0.42, 0.15, 0.35), Vector3(PRINTER_C.x, top + 0.075, PRINTER_C.z))
-	# sous la table : une ramette de papier, la notice de la domotique encore sous plastique
-	_box_rot(Vector3(0.21, 0.05, 0.297), Vector3(8.2, 0.025, 6.02), _paper_net(_plain(Color(0.86, 0.85, 0.82), 0.9), 0.7), 0.1)
-	var notice := _box_rot(Vector3(0.2, 0.012, 0.28), Vector3(8.42, 0.006, 6.0), _m(Color(0.25, 0.45, 0.62), 0.5), -0.25)
+	# sous la table (à côté du chevet, sur vraie carte) : une ramette de papier, la notice de la domotique
+	# encore sous plastique
+	var ram := Vector3(8.2, 0.025, 6.02) if soft else Vector3(8.84, 0.025, 6.07)
+	var nt := Vector3(8.42, 0.006, 6.0) if soft else Vector3(8.86, 0.056, 6.06)
+	_box_rot(Vector3(0.21, 0.05, 0.297), ram, _paper_net(_plain(Color(0.86, 0.85, 0.82), 0.9), 0.7), 0.1)
+	var notice := _box_rot(Vector3(0.2, 0.012, 0.28), nt, _m(Color(0.25, 0.45, 0.62), 0.5), -0.25 if soft else 0.18)
 	notice.name = "Notice"
 	var wrap := StandardMaterial3D.new()
 	wrap.albedo_color = Color(0.9, 0.92, 0.95, 0.18)
 	wrap.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	wrap.roughness = 0.1
 	wrap.metallic_specular = 0.8
-	_box_rot(Vector3(0.205, 0.014, 0.285), Vector3(8.42, 0.0072, 6.0), wrap, -0.25)
+	_box_rot(Vector3(0.205, 0.014, 0.285), nt + Vector3(0, 0.0012, 0), wrap, -0.25 if soft else 0.18)
 	_cable([Vector3(PRINTER_C.x + 0.12, top + 0.05, PRINTER_C.z + 0.17), Vector3(PRINTER_C.x + 0.12, top - 0.02, 6.25),
 		Vector3(PRINTER_C.x + 0.12, 0.3, 6.25), Vector3(7.75, 0.012, 6.24), Vector3(7.25, 0.012, 6.24)], Vector3.FORWARD, false, 0.003)
 
@@ -993,11 +1236,16 @@ func _internet_box() -> void:
 	dongle.position = Vector3(-0.15, 0.02, -0.03)
 	_box(Vector3(0.05, 0.014, 0.022), Vector3.ZERO, _new_white, false, dongle)
 	_no_gi(_box(Vector3(0.004, 0.003, 0.004), Vector3(-0.015, 0.008, 0), _glow(Color(0.25, 0.55, 1.0), 2.5), false, dongle))
-	var img := Image.create_empty(96, 24, false, Image.FORMAT_RGB8)
-	img.fill(Color(0.86, 0.8, 0.6))
-	px_text(img, "NE PAS", Vector2i(26, 3), 2, Color(0.12, 0.14, 0.4))
-	px_text(img, "DÉBRANCHER", Vector2i(9, 14), 1, Color(0.12, 0.14, 0.4))
-	var q := _quad(Vector2(0.11, 0.03), Vector3(0.02, InternetBox.SIZE.y + 0.0012, 0.03), _tex_mat(ImageTexture.create_from_image(img)), 0.0, box)
+	var lmat: StandardMaterial3D
+	if Builder.soft_render():
+		var img := Image.create_empty(96, 24, false, Image.FORMAT_RGB8)
+		img.fill(Color(0.86, 0.8, 0.6))
+		px_text(img, "NE PAS", Vector2i(26, 3), 2, Color(0.12, 0.14, 0.4))
+		px_text(img, "DÉBRANCHER", Vector2i(9, 14), 1, Color(0.12, 0.14, 0.4))
+		lmat = _tex_mat(ImageTexture.create_from_image(img))
+	else:
+		lmat = _hd_mat("etiquette_box.png", 0.55)     # (étiquette autocollante, stylo bille d'Henriette)
+	var q := _quad(Vector2(0.11, 0.03), Vector3(0.02, InternetBox.SIZE.y + 0.0012, 0.03), lmat, 0.0, box)
 	q.rotation = Vector3(-PI / 2.0, 0.0, 0.05)
 	# alimentation : bloc secteur blanc jusqu'à la prise du mur sud
 	_cable([BOX_C + Vector3(0.1, 0.02, 0.09), Vector3(BOX_C.x + 0.1, 0.008, 6.235), Vector3(5.95, 0.008, 6.235), Vector3(5.95, 0.24, 6.26)], Vector3.FORWARD, false)
@@ -1042,13 +1290,32 @@ func _network_cable() -> void:
 	var xw := XW + 0.059      # devant la plinthe
 	var pts := [Vector3(4.81, 0.015, CABLE_Z), Vector3(4.83, y, CABLE_Z), Vector3(xw, y, CABLE_Z), Vector3(xw, y, 6.2),
 		Vector3(5.38, y, 6.2), Vector3(5.41, 0.016, 6.17)]
+	# Le tracé posé (revue : « trait raide qui flotte ») : même départ, mêmes coudes, même arrivée, mais le câble
+	# s'enfonce un peu dans la moquette (centre à 0,8 r), passe exactement sous chaque scotch et prend du mou
+	# entre deux scotchs (un arc de 8 à 12 mm vers la pièce) ; la descente du seuil et la montée vers la box
+	# s'étalent sur 3 cm. Aucun tirage : le scotch garde ses quatre tirages, dans le même ordre.
+	var yl := r * 0.8
+	var path := [Vector3(4.81, 0.015, CABLE_Z), Vector3(4.821, 0.0115, CABLE_Z), Vector3(4.832, 0.0075, CABLE_Z), Vector3(4.845, yl, CABLE_Z)]
+	var west := [CABLE_Z, 4.7, 5.4, 6.0]          # le long du mur ouest : du coude aux scotchs
+	var bow := [0.009, 0.012, 0.008]
+	for k in west.size() - 1:
+		for t in [0.0, 0.25, 0.5, 0.75]:
+			var zz: float = lerpf(west[k], west[k + 1], t)
+			path.append(Vector3(xw + bow[k] * sin(PI * t), yl, zz))
+	path.append(Vector3(xw, yl, 6.0))
+	path.append(Vector3(xw, yl, 6.2))
+	for t in [0.25, 0.5, 0.75]:                      # mur sud : du coude au scotch de 5,1
+		path.append(Vector3(lerpf(xw, 5.1, t), yl, 6.2 - 0.006 * sin(PI * t)))
+	for t in [0.0, 0.33, 0.66]:                      # du scotch à la box
+		path.append(Vector3(lerpf(5.1, 5.37, t), yl, 6.2 - 0.009 * sin(PI * t / 0.99)))
+	path.append_array([Vector3(5.37, yl, 6.199), Vector3(5.385, 0.006, 6.192), Vector3(5.398, 0.011, 6.182), Vector3(5.41, 0.016, 6.17)])
 	var cable := MeshInstance3D.new()
 	cable.name = "Cable"
-	cable.mesh = COULOIR._tube_mesh(COULOIR._round_corners(PackedVector3Array(pts)), r, 6 if Builder.soft_render() else 8)
+	cable.mesh = COULOIR._tube_mesh(COULOIR._round_corners(PackedVector3Array(path)), r, 6 if Builder.soft_render() else 8)
 	cable.material_override = _plain(Color(0.62, 0.62, 0.59), 0.5)
 	add_child(cable, true)
 	# scotch gris aux mêmes endroits (un tirage chacun, dans le même ordre qu'avant)
-	for p in [Vector3(xw, y, 4.7), Vector3(xw, y, 5.4), Vector3(xw, y, 6.0), Vector3(5.1, y, 6.2)]:
+	for p in [Vector3(xw, yl, 4.7), Vector3(xw, yl, 5.4), Vector3(xw, yl, 6.0), Vector3(5.1, yl, 6.2)]:
 		var best := 0
 		var best_d := INF
 		for i in pts.size() - 1:
@@ -1124,7 +1391,7 @@ func _bookcase(zc: float) -> void:
 	parts.append(_bp(Vector3(0.024, 0.06, wi), Vector3(xf + 0.014, hh - 0.058, zc)))                        # bandeau
 	parts.append(_bp(Vector3(d + 0.02, 0.022, w + 0.03), Vector3(xm - 0.01, hh + 0.011, zc)))               # corniche
 	parts.append(_bp(Vector3(d + 0.036, 0.024, w + 0.06), Vector3(xm - 0.018, hh + 0.034, zc)))
-	var mi := _merged(parts, _wood(), self, true)
+	var mi := _merged(parts, _shelf_wood(), self, true)
 	mi.name = "Bibliotheque"
 	_collider(Vector3(d * 0.96, hh, w * 0.96), Vector3(xm, hh / 2.0, zc))
 
@@ -1132,6 +1399,9 @@ func _bookcase(zc: float) -> void:
 ## Une rangée de classeurs sur une étagère : dos colorés, étiquettes écrites, trou pour le doigt.
 ## x_front : face avant (les dos regardent −x) ; y0 : dessus de l'étagère ; de z0 à z1. Renvoie le
 ## nombre d'étiquettes utilisées.
+## Rendu logiciel : les dos sont une image de la rangée (étiquettes en police 3 × 5), comme en 0.3.3. Vraie
+## carte : dos toilés et biseautés (_binder_mat), la rangée est notée dans _binder_rows et dress_details y
+## pose les étiquettes manuscrites (_binder_labels_hd). Mêmes tirages, dans le même ordre, dans les deux cas.
 func _binder_row(x_front: float, y0: float, z0: float, z1: float, labels: Array, seed_: int) -> int:
 	var r := RandomNumberGenerator.new()
 	r.seed = seed_
@@ -1151,50 +1421,68 @@ func _binder_row(x_front: float, y0: float, z0: float, z1: float, labels: Array,
 		n += 1
 	if n == 0:
 		return 0
-	var img := Image.create_empty(int(total * ppm) + 1, int(hh * ppm), false, Image.FORMAT_RGB8)
-	img.fill(Color(0.05, 0.05, 0.05))
+	var hd := not Builder.soft_render()
+	var img: Image = null
+	if not hd:
+		img = Image.create_empty(int(total * ppm) + 1, int(hh * ppm), false, Image.FORMAT_RGB8)
+		img.fill(Color(0.05, 0.05, 0.05))
 	var z := z0 + 0.01
 	var px := 0
 	var cols: Array = []
+	var row := []
 	for i in n:
 		var w := widths[i]
 		var col: Color = palette[r.randi_range(0, palette.size() - 1)].darkened([0.0, 0.12, 0.24][r.randi_range(0, 2)])
 		cols.append(col)
 		var bw := int(w * ppm)
-		img.fill_rect(Rect2i(px, 0, bw, img.get_height()), col)
-		img.fill_rect(Rect2i(px, 0, 1, img.get_height()), col.darkened(0.4))
+		if img:
+			img.fill_rect(Rect2i(px, 0, bw, img.get_height()), col)
+			img.fill_rect(Rect2i(px, 0, 1, img.get_height()), col.darkened(0.4))
 		# fenêtre d'étiquette (en haut), trou pour le doigt (en bas)
 		var lw := bw - 6
-		var lh := int(img.get_height() * 0.55)
+		var lh := int(hh * ppm * 0.55)
 		var label: String = labels[i]
 		if label != "":
 			var paper := Color(0.86, 0.84, 0.76).darkened(r.randf_range(0.0, 0.15))
-			img.fill_rect(Rect2i(px + 3, 8, lw, lh), paper)
-			var sc := 2 if px_text_width(label, 2) <= lh - 6 else 1
-			var tw := px_text_width(label, sc)
-			var tmp := Image.create_empty(tw + 2, 5 * sc + 2, false, Image.FORMAT_RGB8)
-			tmp.fill(paper)
-			px_text(tmp, label, Vector2i(1, 1), sc, Color(0.1, 0.1, 0.25) if r.randf() < 0.6 else Color(0.05, 0.05, 0.05))
-			tmp.rotate_90(COUNTERCLOCKWISE)
-			var ox := px + 3 + (lw - tmp.get_width()) / 2
-			var oy := 8 + (lh - tmp.get_height()) / 2
-			img.blit_rect(tmp, Rect2i(0, 0, tmp.get_width(), mini(tmp.get_height(), lh)), Vector2i(ox, maxi(8, oy)))
-		var hy := int(img.get_height() * 0.8)
-		var cx := px + bw / 2
-		for yy in range(hy - 6, hy + 7):
-			for xx in range(cx - 6, cx + 7):
-				if Vector2(xx - cx, yy - hy).length() <= 6.0 and xx >= 0 and xx < img.get_width():
-					img.set_pixel(xx, yy, Color(0.02, 0.02, 0.02))
+			var ink := Color(0.1, 0.1, 0.25) if r.randf() < 0.6 else Color(0.05, 0.05, 0.05)
+			if img:
+				img.fill_rect(Rect2i(px + 3, 8, lw, lh), paper)
+				var sc := 2 if px_text_width(label, 2) <= lh - 6 else 1
+				var tw := px_text_width(label, sc)
+				var tmp := Image.create_empty(tw + 2, 5 * sc + 2, false, Image.FORMAT_RGB8)
+				tmp.fill(paper)
+				px_text(tmp, label, Vector2i(1, 1), sc, ink)
+				tmp.rotate_90(COUNTERCLOCKWISE)
+				var ox := px + 3 + (lw - tmp.get_width()) / 2
+				var oy := 8 + (lh - tmp.get_height()) / 2
+				img.blit_rect(tmp, Rect2i(0, 0, tmp.get_width(), mini(tmp.get_height(), lh)), Vector2i(ox, maxi(8, oy)))
+		if img:
+			var hy := int(img.get_height() * 0.8)
+			var cx := px + bw / 2
+			for yy in range(hy - 6, hy + 7):
+				for xx in range(cx - 6, cx + 7):
+					if Vector2(xx - cx, yy - hy).length() <= 6.0 and xx >= 0 and xx < img.get_width():
+						img.set_pixel(xx, yy, Color(0.02, 0.02, 0.02))
 		# le classeur lui-même
-		if not mat_cache.has(col):
-			mat_cache[col] = _m(col, 0.5)
-		var bm: Material = mat_cache[col]
+		var bm: Material
+		if hd:
+			if not _binder_mats.has(col):
+				_binder_mats[col] = _binder_mat(col)
+			bm = _binder_mats[col]
+		else:
+			if not mat_cache.has(col):
+				mat_cache[col] = _m(col, 0.5)
+			bm = mat_cache[col]
 		_box(Vector3(depth, hh, w - 0.002), Vector3(x_front + depth / 2.0 + 0.002, y0 + hh / 2.0, z + w / 2.0), bm)
+		row.append([z + w / 2.0, w - 0.002, col, label])
 		z += w + 0.002
 		px += int((w + 0.002) * ppm)
-	img.generate_mipmaps()
-	var q := _quad(Vector2(total, hh), Vector3(x_front + 0.0005, y0 + hh / 2.0, z0 + 0.01 + total / 2.0), _tex_mat(ImageTexture.create_from_image(img), 0.6), -PI / 2.0)
-	q.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	if img:
+		img.generate_mipmaps()
+		var q := _quad(Vector2(total, hh), Vector3(x_front + 0.0005, y0 + hh / 2.0, z0 + 0.01 + total / 2.0), _tex_mat(ImageTexture.create_from_image(img), 0.6), -PI / 2.0)
+		q.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	else:
+		_binder_rows.append([x_front, y0, hh, depth, row])
 	return n
 
 
@@ -1432,26 +1720,33 @@ func _filing_cabinet() -> void:
 
 func _wall_things() -> void:
 	# calendrier de la pharmacie, octobre 2040, les jours barrés par Papi
-	var img := Image.create_empty(60, 84, false, Image.FORMAT_RGB8)
-	img.fill(Color(0.9, 0.88, 0.82))
-	for y in 36:
-		img.fill_rect(Rect2i(3, 3 + y, 54, 1), Color(0.45, 0.6, 0.75).lerp(Color(0.35, 0.5, 0.3), float(y) / 36.0))
-	img.fill_rect(Rect2i(3, 26, 54, 13), Color(0.3, 0.45, 0.25))
-	img.fill_rect(Rect2i(36, 14, 9, 14), Color(0.55, 0.45, 0.4))
-	px_text(img, "OCTOBRE 2040", Vector2i(7, 42), 1, Color(0.6, 0.12, 0.1))
-	for d in 31:
-		var col := (d + 2) % 7
-		var row := (d + 2) / 7
-		var x := 4 + col * 7 + 2
-		var y := 50 + row * 6
-		img.fill_rect(Rect2i(x, y, 4, 3), Color(0.35, 0.35, 0.38))
-		if d < 30:
-			for k in 5:
-				img.set_pixel(clampi(x - 1 + k, 0, 59), clampi(y + 3 - k, 0, 83), Color(0.7, 0.12, 0.1))
-	img.generate_mipmaps()
-	var cm := _paper_net(_tex_mat(ImageTexture.create_from_image(img)), 0.63)
-	var cal := _quad(Vector2(0.3, 0.42), Vector3(6.2, 1.55, ZS - 0.002), cm, PI)
-	cal.name = "Calendrier"
+	if Builder.soft_render():
+		var img := Image.create_empty(60, 84, false, Image.FORMAT_RGB8)
+		img.fill(Color(0.9, 0.88, 0.82))
+		for y in 36:
+			img.fill_rect(Rect2i(3, 3 + y, 54, 1), Color(0.45, 0.6, 0.75).lerp(Color(0.35, 0.5, 0.3), float(y) / 36.0))
+		img.fill_rect(Rect2i(3, 26, 54, 13), Color(0.3, 0.45, 0.25))
+		img.fill_rect(Rect2i(36, 14, 9, 14), Color(0.55, 0.45, 0.4))
+		px_text(img, "OCTOBRE 2040", Vector2i(7, 42), 1, Color(0.6, 0.12, 0.1))
+		for d in 31:
+			var col := (d + 2) % 7
+			var row := (d + 2) / 7
+			var x := 4 + col * 7 + 2
+			var y := 50 + row * 6
+			img.fill_rect(Rect2i(x, y, 4, 3), Color(0.35, 0.35, 0.38))
+			if d < 30:
+				for k in 5:
+					img.set_pixel(clampi(x - 1 + k, 0, 59), clampi(y + 3 - k, 0, 83), Color(0.7, 0.12, 0.1))
+		img.generate_mipmaps()
+		var cm := _paper_net(_tex_mat(ImageTexture.create_from_image(img)), 0.63)
+		var cal := _quad(Vector2(0.3, 0.42), Vector3(6.2, 1.55, ZS - 0.002), cm, PI)
+		cal.name = "Calendrier"
+	else:
+		# (vraie carte : l'image HD de gen_bureau.py, sur une feuille dont le bas gondole et décolle du mur)
+		var hm := _hd_mat("calendrier_2040.png", 0.82)
+		hm.cull_mode = BaseMaterial3D.CULL_DISABLED
+		var cal := _mesh(_sheet_mesh(Vector2(0.3, 0.42), 0.011), Vector3(6.2, 1.55, ZS - 0.002), hm, Vector3(0, PI, 0))
+		cal.name = "Calendrier"
 	_mesh(_cyl(0.003, 0.003, 0.02, 6), Vector3(6.2, 1.78, ZS - 0.01), mats.metal, Vector3(PI / 2.0, 0, 0))
 	_radiator()
 	_wall_clock()
@@ -1477,17 +1772,44 @@ func _radiator() -> void:
 	hub.cap_top = false
 	hub.cap_bottom = false
 	var parts := []
-	for i in n:
-		var zz := z0 + i * step
-		for sx in [-0.03, 0.03]:
-			parts.append(_mp(col, Vector3(x + sx, (y0 + y1) / 2.0, zz)))
-		parts.append(_bp(Vector3(0.05, y1 - y0 - 0.06, 0.008), Vector3(x, (y0 + y1) / 2.0, zz)))       # voile entre les colonnes
-		# moyeux haut et bas (ils se touchent d'un élément à l'autre)
-		for yy in [y0, y1]:
-			parts.append(_mp(hub, Vector3(x, yy, zz), Vector3(PI / 2.0, 0, 0)))
-	for zz in [z0 + step, z1 - step]:
-		parts.append(_bp(Vector3(0.11, y0, 0.045), Vector3(x, y0 / 2.0, zz)))                          # pieds
-	_merged(parts, _grimy(_plain(Color(0.64, 0.6, 0.51), 0.42, 0.2), 1.6))
+	if Builder.soft_render():
+		for i in n:
+			var zz := z0 + i * step
+			for sx in [-0.03, 0.03]:
+				parts.append(_mp(col, Vector3(x + sx, (y0 + y1) / 2.0, zz)))
+			parts.append(_bp(Vector3(0.05, y1 - y0 - 0.06, 0.008), Vector3(x, (y0 + y1) / 2.0, zz)))       # voile entre les colonnes
+			# moyeux haut et bas (ils se touchent d'un élément à l'autre)
+			for yy in [y0, y1]:
+				parts.append(_mp(hub, Vector3(x, yy, zz), Vector3(PI / 2.0, 0, 0)))
+		for zz in [z0 + step, z1 - step]:
+			parts.append(_bp(Vector3(0.11, y0, 0.045), Vector3(x, y0 / 2.0, zz)))                          # pieds
+		_merged(parts, _grimy(_plain(Color(0.64, 0.6, 0.51), 0.42, 0.2), 1.6))
+	else:
+		# vraie carte (comme celui de la chambre, lot V2-MERE-FIN) : colonnes plus fines, moyeux chanfreinés et
+		# raccords entre les éléments, crête arrondie, pieds tournés ; peinture crème écaillée (PaintedMetal010)
+		col.radius = 0.0175
+		col.radial_segments = 10
+		col.rings = 2
+		var hub2 := Builder.cylinder_mesh(0.025, 0.025, step - 0.006, 12, 0.004)
+		var nipple := Builder.cylinder_mesh(0.017, 0.017, step, 10, 0.0)
+		var web := Builder.bevel_box_mesh(Vector3(0.044, y1 - y0 - 0.06, 0.007), 0.0025)
+		var crown := Builder.bevel_box_mesh(Vector3(0.082, 0.022, step - 0.012), 0.008)
+		var foot := Builder.cylinder_mesh(0.012, 0.016, y0 - 0.02, 10)
+		for i in n:
+			var zz := z0 + i * step
+			for sx in [-0.03, 0.03]:
+				parts.append(_mp(col, Vector3(x + sx, (y0 + y1) / 2.0, zz)))
+			parts.append(_mp(web, Vector3(x, (y0 + y1) / 2.0, zz)))
+			parts.append(_mp(crown, Vector3(x, y1 + 0.004, zz)))
+			for yy in [y0, y1]:
+				parts.append(_mp(hub2, Vector3(x, yy, zz), Vector3(PI / 2.0, 0, 0)))
+				if i < n - 1:
+					parts.append(_mp(nipple, Vector3(x, yy, zz + step / 2.0), Vector3(PI / 2.0, 0, 0)))
+		for zz in [z0 + step, z1 - step]:
+			for sx in [-0.03, 0.03]:
+				parts.append(_mp(foot, Vector3(x + sx, (y0 - 0.02) / 2.0, zz)))
+		var rad := _merged(parts, _painted_metal(Color(0.93, 0.87, 0.74), 0.6, 0.3))
+		rad.name = "Radiateur"
 	# tuyaux de cuivre : retour en bas (côté nord), arrivée et robinet en haut (côté sud)
 	var copper := _plain(Color(0.5, 0.32, 0.22), 0.4, 0.85)
 	var pipe := [
@@ -1528,33 +1850,38 @@ func _wall_clock() -> void:
 ## Diplôme de la médaille d'honneur du travail d'Albert, encadré (baguette de noyer, passe-partout,
 ## verre) au-dessus de la table.
 func _diploma() -> void:
-	var iw := 120
-	var ih := 90
-	var img := Image.create_empty(iw, ih, false, Image.FORMAT_RGB8)
-	img.fill(Color(0.86, 0.82, 0.7))
-	var gold := Color(0.6, 0.47, 0.22)
-	for k in [3, 6]:
-		img.fill_rect(Rect2i(k, k, iw - 2 * k, 1), gold)
-		img.fill_rect(Rect2i(k, ih - k - 1, iw - 2 * k, 1), gold)
-		img.fill_rect(Rect2i(k, k, 1, ih - 2 * k), gold)
-		img.fill_rect(Rect2i(iw - k - 1, k, 1, ih - 2 * k), gold)
-	img.fill_rect(Rect2i(57, 10, 2, 7), Color(0.15, 0.2, 0.5))
-	img.fill_rect(Rect2i(59, 10, 2, 7), Color(0.92, 0.9, 0.85))
-	img.fill_rect(Rect2i(61, 10, 2, 7), Color(0.7, 0.12, 0.1))
-	var title := "MÉDAILLE D'HONNEUR"
-	px_text(img, title, Vector2i((iw - px_text_width(title)) / 2, 21), 1, Color(0.25, 0.18, 0.1))
-	px_text(img, "DU TRAVAIL", Vector2i((iw - px_text_width("DU TRAVAIL")) / 2, 28), 1, Color(0.25, 0.18, 0.1))
-	px_text(img, "VERMEIL", Vector2i((iw - px_text_width("VERMEIL")) / 2, 38), 1, Color(0.55, 0.12, 0.1))
-	for k in 5:
-		var lw: int = [80, 92, 70, 86, 40][k]
-		img.fill_rect(Rect2i((iw - lw) / 2, 50 + k * 5, lw, 1), Color(0.45, 0.42, 0.38))
-	for yy in range(70, 82):
-		for xx in range(14, 26):
-			if Vector2(xx - 20, yy - 76).length() <= 5.5:
-				img.set_pixel(xx, yy, Color(0.62, 0.14, 0.1))
-	for k in 14:
-		img.set_pixel(84 + k, 78 - int(abs(sin(k * 0.9)) * 3.0), Color(0.12, 0.12, 0.3))
-	img.generate_mipmaps()
+	var img_mat: StandardMaterial3D
+	if Builder.soft_render():
+		var iw := 120
+		var ih := 90
+		var img := Image.create_empty(iw, ih, false, Image.FORMAT_RGB8)
+		img.fill(Color(0.86, 0.82, 0.7))
+		var gold := Color(0.6, 0.47, 0.22)
+		for k in [3, 6]:
+			img.fill_rect(Rect2i(k, k, iw - 2 * k, 1), gold)
+			img.fill_rect(Rect2i(k, ih - k - 1, iw - 2 * k, 1), gold)
+			img.fill_rect(Rect2i(k, k, 1, ih - 2 * k), gold)
+			img.fill_rect(Rect2i(iw - k - 1, k, 1, ih - 2 * k), gold)
+		img.fill_rect(Rect2i(57, 10, 2, 7), Color(0.15, 0.2, 0.5))
+		img.fill_rect(Rect2i(59, 10, 2, 7), Color(0.92, 0.9, 0.85))
+		img.fill_rect(Rect2i(61, 10, 2, 7), Color(0.7, 0.12, 0.1))
+		var title := "MÉDAILLE D'HONNEUR"
+		px_text(img, title, Vector2i((iw - px_text_width(title)) / 2, 21), 1, Color(0.25, 0.18, 0.1))
+		px_text(img, "DU TRAVAIL", Vector2i((iw - px_text_width("DU TRAVAIL")) / 2, 28), 1, Color(0.25, 0.18, 0.1))
+		px_text(img, "VERMEIL", Vector2i((iw - px_text_width("VERMEIL")) / 2, 38), 1, Color(0.55, 0.12, 0.1))
+		for k in 5:
+			var lw: int = [80, 92, 70, 86, 40][k]
+			img.fill_rect(Rect2i((iw - lw) / 2, 50 + k * 5, lw, 1), Color(0.45, 0.42, 0.38))
+		for yy in range(70, 82):
+			for xx in range(14, 26):
+				if Vector2(xx - 20, yy - 76).length() <= 5.5:
+					img.set_pixel(xx, yy, Color(0.62, 0.14, 0.1))
+		for k in 14:
+			img.set_pixel(84 + k, 78 - int(abs(sin(k * 0.9)) * 3.0), Color(0.12, 0.12, 0.3))
+		img.generate_mipmaps()
+		img_mat = _paper_net(_tex_mat(ImageTexture.create_from_image(img), 0.85), 0.72)
+	else:
+		img_mat = _hd_mat("diplome_medaille.png", 0.85)      # (gen_bureau.py : vélin, filets dorés, cachet)
 	var c := Vector3(7.0, 1.6, ZN)
 	var fw := 0.44
 	var fh := 0.34
@@ -1566,8 +1893,16 @@ func _diploma() -> void:
 	]
 	_merged(frame, _wood())
 	_quad(Vector2(fw - 2.0 * b, fh - 2.0 * b), c + Vector3(0, 0, 0.0065), _paper_net(_m(Color(0.8, 0.76, 0.66), 0.9), 0.83))
-	_quad(Vector2(fw - 2.0 * b - 0.05, fh - 2.0 * b - 0.05), c + Vector3(0, 0, 0.0075), _paper_net(_tex_mat(ImageTexture.create_from_image(img), 0.85), 0.72))
-	var g := _quad(Vector2(fw - 2.0 * b, fh - 2.0 * b), c + Vector3(0, 0, 0.016), mats.glass)
+	_quad(Vector2(fw - 2.0 * b - 0.05, fh - 2.0 * b - 0.05), c + Vector3(0, 0, 0.0075), img_mat)
+	var glass: Material = mats.glass
+	if not Builder.soft_render():
+		# (vraie carte : verre ordinaire, reflet net mais moins fort que le verre de la maison : le reflet de
+		# la lampe de poche ne brûle plus le milieu du diplôme ; un verre plus rugueux étalait le point chaud)
+		var gm := (mats.glass as StandardMaterial3D).duplicate() as StandardMaterial3D
+		gm.roughness = 0.06
+		gm.metallic_specular = 0.35
+		glass = gm
+	var g := _quad(Vector2(fw - 2.0 * b, fh - 2.0 * b), c + Vector3(0, 0, 0.016), glass)
 	g.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_mesh(_cyl(0.002, 0.002, 0.02, 6), c + Vector3(0, fh / 2.0 + 0.02, 0.006), mats.metal, Vector3(PI / 2.0, 0, 0))
 
@@ -1632,6 +1967,245 @@ func _process(delta: float) -> void:
 	if _fan_speed > 0.01:
 		for f in fans:
 			f.rotation.z += _fan_speed * delta
+
+
+# ------------------------------------------------------------------ habillage (vraie carte, après B16)
+
+## Habillage du bureau (passe « triple A », lot V2-BUREAU) : appelé par Main après la mesure de B16, sur
+## vraie carte seulement (Qualite.details_on(), R3). Les étiquettes manuscrites des classeurs, le matériel
+## d'Albert (Builder.detail), le tournevis Poly Haven, la commande du store connecté, l'usure.
+func dress_details() -> void:
+	_binder_labels_hd()
+	_detail_objects()
+	_screwdriver_model()
+	_blind_control()
+	_wear_room()
+
+
+## Le style rétro basculé en cours de partie (vraie carte) : en rétro, le bureau d'avant (plafonnier à
+## plein, lampe d'architecte éteinte) ; en rendu net, plafonnier à CEILING_NET_K et lampe allumée, avec
+## son ombre dès Élevée.
+func _on_settings_changed() -> void:
+	var net := Qualite.extras_on()
+	if bulb:
+		bulb.energy = CEILING_ENERGY * (CEILING_NET_K if net else 1.0)
+		bulb.set_powered(bulb.powered)
+	if desk_lamp:
+		desk_lamp.light_energy = DESK_LAMP_ENERGY if net else 0.0
+		desk_lamp.shadow_enabled = net and Qualite.at_least(Qualite.ELEVEE)
+		desk_lamp.light_size = Qualite.pcss_size(0.04)
+	if _desk_lamp_bulb:
+		_desk_lamp_bulb.emission_energy_multiplier = DESK_LAMP_GLOW if net else 0.0
+
+
+## Cases de l'atlas des étiquettes : chaîne -> [[u0, v0, u1, v1], …] (binder_labels.json) ; vide si le
+## fichier manque (on prend alors les cases dans l'ordre, comme make_assets.py les a remplies).
+static func _binder_uv() -> Dictionary:
+	if not FileAccess.file_exists(BINDER_JSON):
+		return {}
+	var doc: Variant = JSON.parse_string(FileAccess.get_file_as_string(BINDER_JSON))
+	if doc is Dictionary and (doc as Dictionary).get("uv") is Dictionary:
+		return doc.uv
+	return {}
+
+
+## Étiquettes des classeurs, écrites à la main (atlas binder_labels de V1-IMAGES : Reenie Beanie, stylo
+## bille ou feutre, fiche cartonnée) : une fiche par dos dans la fenêtre du haut, le texte qui monte ; la
+## n-ième fois qu'une étiquette revient, la n-ième case. Un maillage par pièce (un appel de rendu), plus
+## les œillets chromés et les trous des doigts (fondus). Sans ombre portée (collées sur le dos).
+func _binder_labels_hd() -> void:
+	if _binder_rows.is_empty() or not ResourceLoader.exists(BINDER_ATLAS):
+		return
+	var uv := _binder_uv()
+	var seen := {}
+	var order := 0
+	var verts := PackedVector3Array()
+	var norms := PackedVector3Array()
+	var uvs := PackedVector2Array()
+	var idx := PackedInt32Array()
+	var ring := TorusMesh.new()
+	ring.inner_radius = 0.0105
+	ring.outer_radius = 0.0136
+	ring.rings = 18
+	ring.ring_segments = 6
+	var hole := _cyl(0.0109, 0.0109, 0.002, 16)
+	var rings := []
+	var holes := []
+	for rowd in _binder_rows:
+		var xf: float = float(rowd[0]) + 0.002          # face des dos (les boîtes commencent là)
+		var y0: float = rowd[1]
+		var hh: float = rowd[2]
+		for bd in rowd[4]:
+			var zc: float = bd[0]
+			var w: float = bd[1]
+			var label: String = bd[3]
+			var hp := Vector3(xf - 0.0012, y0 + hh * 0.2, zc)
+			rings.append(_mp(ring, hp, Vector3(0, 0, PI / 2.0)))
+			holes.append(_mp(hole, hp + Vector3(0.0006, 0, 0), Vector3(0, 0, PI / 2.0)))
+			if label == "":
+				continue
+			var k: int = seen.get(label, 0)
+			seen[label] = k + 1
+			var c: Array
+			var cells: Array = uv.get(label, [])
+			if not cells.is_empty():
+				c = cells[mini(k, cells.size() - 1)]
+			else:
+				var cw := 78.0 / 1024.0
+				var ch := 256.0 / 1024.0
+				var rw := floori(order / 13.0)
+				c = [(order % 13) * cw, rw * ch, (order % 13 + 1) * cw, (rw + 1) * ch]
+			order += 1
+			var lw := w - 0.012
+			var top := y0 + hh - 0.026
+			var lh := hh * 0.55
+			var x := xf - 0.0007
+			var z0 := zc - lw / 2.0
+			var z1 := zc + lw / 2.0
+			var base := verts.size()
+			# (vu de −x : la droite de l'image est vers +z ; sens horaire = face avant)
+			verts.append_array(PackedVector3Array([Vector3(x, top, z0), Vector3(x, top, z1), Vector3(x, top - lh, z1), Vector3(x, top - lh, z0)]))
+			for q in 4:
+				norms.append(Vector3.LEFT)
+			uvs.append_array(PackedVector2Array([Vector2(c[0], c[1]), Vector2(c[2], c[1]), Vector2(c[2], c[3]), Vector2(c[0], c[3])]))
+			idx.append_array(PackedInt32Array([base, base + 1, base + 2, base, base + 2, base + 3]))
+	if not verts.is_empty():
+		var arr := []
+		arr.resize(Mesh.ARRAY_MAX)
+		arr[Mesh.ARRAY_VERTEX] = verts
+		arr[Mesh.ARRAY_NORMAL] = norms
+		arr[Mesh.ARRAY_TEX_UV] = uvs
+		arr[Mesh.ARRAY_INDEX] = idx
+		var am := ArrayMesh.new()
+		am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+		var lab := StandardMaterial3D.new()
+		lab.albedo_texture = load(BINDER_ATLAS)
+		lab.roughness = 0.82
+		lab.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+		Builder.paper_albedo(lab, BINDER_PAPER_K)
+		var mi := MeshInstance3D.new()
+		mi.name = "EtiquettesClasseurs"
+		mi.mesh = am
+		mi.material_override = lab
+		_no_gi(mi)
+		add_child(mi)
+	_no_gi(_merged(rings, _plain(Color(0.7, 0.7, 0.72), 0.3, 1.0))).name = "Oeillets"
+	_no_gi(_merged(holes, _plain(Color(0.015, 0.015, 0.015), 0.9))).name = "TrousClasseurs"
+
+
+## Le matériel d'Albert (Poly Haven, CC0), posé avec Builder.detail (sans collision, hors props) :
+##  - bureau : pot à crayons en métal (à la place du pot d'origine), cahier à anneaux fermé et agrafeuse
+##    dessus, la loupe sur les feuilles (à la place de l'ancienne), bloc de feuillets ;
+##  - table : le multimètre à aiguille et un circuit imprimé sur un sous-main de cuir (Leather014) ;
+##  - mur sud : le porte-bloc pendu au mur, une feuille sous la pince ;
+##  - dessus de la bibliothèque nord : huit tomes d'encyclopédie.
+func _detail_objects() -> void:
+	var desk: Node3D = props.get("desk")
+	var dtop := float(desk.get_meta("top", DESK_SIZE.y)) if desk else DESK_SIZE.y
+	var table: Node3D = props.get("table")
+	var ttop := (table.get_meta("size") as Vector3).y if table else 0.74
+	# bureau, au fond à gauche : le pot à crayons en métal (à la place du pot d'origine ; ses crayons restent)
+	var cup := detail("stationery_supplies", Vector3(6.62, dtop, 6.12), 20.0, Vector3.ZERO, {"sync": true})
+	if _keep_parts(cup, ["stationery_supplies_pencilcup"]) != Vector3.ZERO:
+		_desk_bits[0].visible = false
+	var nb := detail("binder_notebook", Vector3(6.86, dtop, 6.15), 92.0, Vector3.ZERO, {"sync": true})
+	var nb_h := _keep_parts(nb, ["binder_notebook_closed"]).y
+	detail("vintage_stapler", Vector3(6.87, dtop + nb_h, 6.14), 104.0, Vector3(0.17, 0.0, 0.0), {"sync": true})
+	# la loupe, posée sur les feuilles de gauche (à la place de l'ancienne)
+	var paper_top := dtop + 0.001 + 4.0 * 0.0022 + 0.001
+	var lens := detail("magnifying_glass_01", Vector3.ZERO, 0.0, Vector3(0.0, 0.2, 0.0), {"sync": true})
+	if lens and lens.get_meta("ready", false):
+		lens.rotation = Vector3(-PI / 2.0, 0.7, 0.0)
+		var ls: Vector3 = lens.get_meta("size")
+		var c := Vector3(6.71, paper_top + ls.z / 2.0, 5.79)
+		lens.position = c - lens.basis * Vector3(0.0, ls.y / 2.0, 0.0)
+		_desk_bits[5].visible = false
+	# (un bloc de feuillets au coin du sous-main, hors du cône de la lampe : le cube de post-it jaune, dedans,
+	# brillait comme une veilleuse)
+	var notes := detail("office_notepads", Vector3(6.98, dtop + 0.004, 5.99), -10.0, Vector3.ZERO, {"sync": true, "tint": Color(0.82, 0.81, 0.77)})
+	_keep_parts(notes, ["office_notepads_note_stack"])
+	# la table : multimètre à aiguille, circuit imprimé sur un sous-main de cuir
+	detail("retro_multimeter", Vector3(6.6, ttop, 2.22), 18.0, Vector3(0.0, 0.2, 0.0), {"sync": true, "shadow": true})
+	var mat_pad := _box(Vector3(0.26, 0.004, 0.22), Vector3(6.63, ttop + 0.002, 2.53), _leather(Color(0.95, 0.9, 0.85)))
+	mat_pad.name = "SousMainCuir"
+	mat_pad.rotation.y = 0.05
+	detail("circuit_board", Vector3(6.635, ttop + 0.004, 2.53), 6.0, Vector3(0.18, 0.0, 0.0), {"sync": true})
+	# le porte-bloc pendu au mur sud, à gauche du calendrier (pince en haut), une feuille sous la pince
+	var clip := detail("clipboard", Vector3.ZERO, 0.0, Vector3(0.0, 0.0, 0.3), {"sync": true, "shadow": true})
+	if clip and clip.get_meta("ready", false):
+		clip.rotation = Vector3(PI / 2.0, PI, 0.0)
+		clip.position = Vector3(5.8, 1.43, ZS - 0.003)
+		var cs: Vector3 = clip.get_meta("size")
+		var sheet := _quad(Vector2(cs.x * 0.86, cs.z * 0.8), Vector3(5.8, 1.43 - cs.z * 0.06, ZS - 0.003 - 0.006), _paper_net(_m(Color(0.86, 0.85, 0.8), 0.9), 0.7), PI)
+		sheet.name = "FeuillePorteBloc"
+	# l'encyclopédie, sur la bibliothèque nord, à côté du carton d'archives (dos vers la pièce)
+	var enc := detail("book_encyclopedia_set_01", Vector3(XE - 0.058 - 0.175, 1.946, 2.905), -90.0, Vector3.ZERO, {"sync": true, "shadow": true})
+	_keep_parts(enc, ["book_encyclopedia_set_01_book01", "book_encyclopedia_set_01_book02", "book_encyclopedia_set_01_book03",
+		"book_encyclopedia_set_01_book04", "book_encyclopedia_set_01_book05", "book_encyclopedia_set_01_book06",
+		"book_encyclopedia_set_01_book07", "book_encyclopedia_set_01_book08"])
+
+
+## Le tournevis de Papi (Poly Haven « screwdriver ») dans le nœud « Tournevis » : seul son aspect change
+## (nœud, interaction, tiroir, open_drawer et take_screwdriver restent ceux d'avant). Le modèle est couché
+## le long de x, manche du côté −x comme l'ancien ; l'étiquette « A. » reste sur le manche.
+func _screwdriver_model() -> void:
+	if screwdriver == null:
+		return
+	var sd := detail("screwdriver", Vector3(-0.1, 0.0, 0.0), 0.0, Vector3(0.0, 0.215, 0.0), {"sync": true, "parent": screwdriver, "range": 4.0})
+	if sd == null or not sd.get_meta("ready", false):
+		return
+	sd.rotation = Vector3(0.0, 0.0, -PI / 2.0)
+	for ch in screwdriver.get_children():
+		if ch is MeshInstance3D and ch != _sd_label:
+			(ch as MeshInstance3D).visible = false
+
+
+## La commande du store connecté (F7), à côté de la fenêtre : plaque blanche, deux touches (monter,
+## descendre), sa diode verte. Décor seulement (le store reste baissé : house.gd).
+func _blind_control() -> void:
+	var h0 := Node3D.new()
+	h0.name = "CommandeStore"
+	add_child(h0)
+	h0.position = Vector3(XE, 1.12, 3.24)
+	h0.rotation.y = -PI / 2.0              # face −x, vers la pièce
+	var white := _plain(Color(0.84, 0.84, 0.82), 0.35)
+	_box(Vector3(0.082, 0.082, 0.011), Vector3(0, 0, 0.0055), white, false, h0)
+	var key := _plain(Color(0.9, 0.9, 0.88), 0.3)
+	var arrow := _plain(Color(0.35, 0.36, 0.38), 0.5)
+	for k in 2:
+		var yy := 0.017 if k == 0 else -0.017
+		_box(Vector3(0.052, 0.03, 0.005), Vector3(0, yy, 0.0135), key, false, h0)
+		# la flèche (un chevron de deux traits)
+		for sx in [-1.0, 1.0]:
+			var b := _box(Vector3(0.011, 0.0022, 0.0008), Vector3(sx * 0.0042, yy, 0.0164), arrow, false, h0)
+			b.rotation.z = sx * (0.6 if k == 0 else -0.6)
+	_no_gi(_box(Vector3(0.003, 0.003, 0.001), Vector3(0.031, 0.031, 0.0115), _glow(Color(0.25, 1.0, 0.35), 2.0), false, h0))
+
+
+## Usure du bureau (Wear, décalques ; rien en Basse) : ronds de tasse, poussière sur les bibliothèques,
+## crasse au pied des murs, passage de la porte au bureau et de la chaise sur la moquette, chocs de
+## chaussures au bas du tiroir, doigts autour de l'interrupteur, suie au-dessus du plafonnier.
+func _wear_room() -> void:
+	if not Wear.deco_on():
+		return
+	var desk: Node3D = props.get("desk")
+	var dtop := float(desk.get_meta("top", DESK_SIZE.y)) if desk else DESK_SIZE.y
+	var table: Node3D = props.get("table")
+	var ttop := (table.get_meta("size") as Vector3).y if table else 0.74
+	Wear.decal(self, "rond_tasse", Vector3(7.62, dtop, 5.97), Vector3.UP, Vector3.FORWARD, 0.13, 0.13,
+		{"color": Wear.RING_LIGHT, "alpha": 0.55, "name": "RondTasse_bureau"})
+	Wear.decal(self, "rond_tasse", Vector3(7.25, ttop, 2.44), Vector3.UP, Vector3.FORWARD, 0.12, 0.12, {"alpha": 0.7, "name": "RondTasse_table"})
+	for zc in [2.6, 5.4]:
+		Wear.decal(self, "poussiere", Vector3(XE - 0.058 - 0.175, 1.946, zc), Vector3.UP, Vector3.LEFT, 0.4, 0.95, {"name": "Poussiere_dessus"})
+		Wear.decal(self, "poussiere", Vector3(XE - 0.058 - 0.33, 0.83, zc), Vector3.UP, Vector3.LEFT, 0.06, 0.86,
+			{"alpha": 0.7, "depth": 0.03, "name": "Poussiere_tablette"})
+	Wear.wall_base(self, 0.22, {"gaps": [Rect2(8.76, 2.13, 0.45, 0.94), Rect2(8.76, 4.93, 0.45, 0.94), Rect2(8.9, 3.62, 0.3, 1.08),
+		Rect2(4.8, 2.05, 0.62, 0.55), Rect2(6.45, 5.6, 1.5, 0.7), Rect2(7.95, 5.75, 0.7, 0.55), Rect2(6.4, 2.0, 1.2, 0.75)]})
+	Wear.path(self, [Vector2(5.0, 4.4), Vector2(6.1, 4.95), Vector2(6.95, 5.25)], 0.5)
+	Wear.path(self, [Vector2(7.2, 5.6), Vector2(7.2, 5.0)], 0.7, {"alpha": 0.8})
+	Wear.decal(self, "eraflure", Vector3(6.75, 0.16, 5.645), Vector3.FORWARD, Vector3.UP, 0.4, 0.18, {"alpha": 0.6, "name": "Eraflures_tiroir"})
+	Wear.decal(self, "traces_doigts", Vector3(XW + 0.011, SWITCH_POS.y, SWITCH_POS.z), Vector3.RIGHT, Vector3.UP, 0.16, 0.16, {"alpha": 0.5})
+	Wear.decal(self, "suie", Vector3(LIGHT_POS.x, h, LIGHT_POS.z), Vector3.DOWN, Vector3.FORWARD, 0.8, 0.8, {"variant": 0, "alpha": 0.45})
 
 
 # ------------------------------------------------------------------ sauvegarde

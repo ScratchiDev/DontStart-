@@ -12,10 +12,10 @@ extends Builder
 ##  - stores à lames (aluminium laqué crème de 25 mm, légèrement entrouverts, une lame tordue, échelles de
 ##    cordon, barre de charge, coulisses, tirette ; le coffre et la LED du moteur restent) ;
 ##  - une lune par fenêtre (F2 à F8 ; F1 a la sienne dans room.gd) : SpotLight « Lune » parentée à la pièce
-##    (set_active la coupe hors des pièces actives), avec un masque calculé par projection exacte de la
-##    fenêtre (croisée, lames du store : rayures au sol) : rien ne passe à travers les murs ; ombre (meubles)
-##    en Élevée et Ultra, dans la pièce courante seulement ; groupe « lune_fenetre » (l'éclair d'outside.gd
-##    les pousse) ; coupées en style rétro (énergie 0) ;
+##    (set_active la coupe hors des pièces actives), avec ombres : les murs, la croisée, les rideaux et
+##    l'ombre des lames du store (plan « OmbreStore ») dessinent la fenêtre au sol ; Élevée et Ultra :
+##    toutes, Moyenne : pièce courante, Basse : aucune (voir _update_moons) ; groupe « lune_fenetre »
+##    (l'éclair d'outside.gd les pousse) ; coupées en style rétro (énergie 0) ;
 ##  - liseré de lumière sous les portes (Door.set_seam), d'après la lumière des pièces de part et d'autre ;
 ##  - vitres des fenêtres claires : rain_glass_net.gdshader hors rétro ;
 ##  - portes : style et grincement par porte (Door.style, Door.creak_k, DOOR_CREAK).
@@ -61,15 +61,13 @@ const DOOR_CREAK := {"P3": 1.5, "P4": 1.3, "P6": 0.7, "P7": 0.8}
 const MOON_ELEV_DEG := 32.0
 const MOON_DIST := 4.5
 const MOON_COLOR := Color(0.55, 0.66, 0.92)
-const MOON_ENERGY := {"F2": 3.2, "F3": 1.1, "F4": 0.5, "F5": 2.4, "F7": 3.2, "F8": 0.75}
+const MOON_ENERGY := {"F2": 3.2, "F3": 1.1, "F4": 0.5, "F5": 2.4, "F7": 3.2, "F8": 1.0}
 const MOON_GARDEN_K := 0.55
 const MOON_TAILLE := 0.06          # (méta « taille » : PCSS en Ultra)
-## Stores : pas des lames, largeur, inclinaison (depuis l'horizontale), demi-largeur des fentes de lumière
-## dans le masque de la lune, et la lame tordue.
+## Stores : pas des lames, largeur, inclinaison (depuis l'horizontale), et la lame tordue.
 const SLAT_PITCH := 0.025
 const SLAT_W := 0.025
 const SLAT_TILT_DEG := 70.0
-const SLAT_GAP := 0.0022
 const SLAT_COLOR := Color(0.74, 0.72, 0.66)
 ## Liseré sous les portes : énergie de référence d'une pièce (Σ énergies des lampes dans la pièce).
 const SEAM_REF := 0.3
@@ -376,7 +374,9 @@ func _make_window(d: Dictionary, y0: float) -> void:
 		_box(Vector3(fw + 0.06, 0.1, 0.12), Vector3(0, d.y1 - 0.05, 0.04), _plain(Color(0.85, 0.85, 0.83), 0.5), false, holder)
 	elif d.get("frosted", false):
 		kind = "depoli"
-		_box(Vector3(fw, fh, 0.01), Vector3(0, fy, -0.02), mats.frosted, false, holder)
+		var pane := _box(Vector3(fw, fh, 0.01), Vector3(0, fy, -0.02), mats.frosted, false, holder)
+		if not Builder.soft_render():
+			pane.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF   # (la lune la traverse)
 		# petits bois de la croisée (une vitre unie faisait panneau vide)
 		_box(Vector3(0.035, fh, 0.045), Vector3(0, fy, -0.005), p, false, holder)
 		_box(Vector3(fw, 0.035, 0.045), Vector3(0, fy + fh * 0.12, -0.005), p, false, holder)
@@ -397,7 +397,7 @@ func _make_window(d: Dictionary, y0: float) -> void:
 ## Store vénitien baissé, lames presque fermées : un plan texturé (lames bombées de 25 mm en albédo et en
 ## carte de normales, fentes sombres ; les mipmaps les fondent au loin : des lames en géométrie faisaient un
 ## moiré) et une lame tordue en vrai relief au tiers haut. Échelles de cordon, barre de charge, coulisses,
-## tirette. Rien ne projette d'ombre : les fentes de lumière viennent du masque de la lune.
+## tirette. Les fentes de lumière de la lune viennent du plan « OmbreStore » (ombre seule).
 func _blind(holder: Node3D, d: Dictionary, fw: float, fh: float) -> void:
 	var mat := _slat_mat()
 	var hh := fh - 0.11
@@ -412,6 +412,17 @@ func _blind(holder: Node3D, d: Dictionary, fw: float, fh: float) -> void:
 	plane.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	plane.position = Vector3(0, d.y0 + 0.01 + hh / 2.0, 0.026)
 	holder.add_child(plane)
+	# ombre des lames (lunes en Élevée et Ultra) : plan invisible, tourné vers la lune, qui ne fait que
+	# projeter une ombre, découpé en lames par l'alpha (fentes de 3 mm, en phase avec la texture du store)
+	var shade := MeshInstance3D.new()
+	shade.name = "OmbreStore"
+	shade.mesh = q
+	shade.material_override = _slat_shadow_mat(q.size)
+	shade.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY
+	shade.gi_mode = GeometryInstance3D.GI_MODE_DISABLED
+	shade.position = plane.position + Vector3(0, 0, 0.002)
+	shade.rotation.y = PI
+	holder.add_child(shade)
 	# la lame tordue (vrai relief, 50 cm)
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
@@ -517,6 +528,26 @@ static func _slat_mat() -> StandardMaterial3D:
 	return m
 
 
+## Ombre des lames : une lame par répétition (16 pixels, les 2 derniers transparents : fente de 3 mm sur 25),
+## en coupe alpha, filtrage au plus proche. Texture partagée, matière par taille de store.
+static var _slat_shadow_tex: ImageTexture
+
+
+static func _slat_shadow_mat(size: Vector2) -> StandardMaterial3D:
+	if _slat_shadow_tex == null:
+		var img := Image.create_empty(1, 16, false, Image.FORMAT_LA8)
+		for r in 16:
+			img.set_pixel(0, r, Color(1, 1, 1, 0.0 if r >= 14 else 1.0))
+		_slat_shadow_tex = ImageTexture.create_from_image(img)
+	var m := StandardMaterial3D.new()
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+	m.alpha_scissor_threshold = 0.5
+	m.albedo_texture = _slat_shadow_tex
+	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	m.uv1_scale = Vector3(1.0, size.y / SLAT_PITCH, 1.0)
+	return m
+
+
 ## Quadrilatère dans un SurfaceTool, montré du côté de « facing » (face avant : sens horaire vue de devant).
 static func _emit_quad(st: SurfaceTool, v: Array, nv: Array, facing: Vector3) -> void:
 	var flip: bool = ((v[1] - v[0]) as Vector3).cross(v[2] - v[0]).dot(facing) > 0.0
@@ -528,8 +559,8 @@ static func _emit_quad(st: SurfaceTool, v: Array, nv: Array, facing: Vector3) ->
 # ------------------------------------------------------------------ lunes (vraie carte, hors rétro)
 
 ## La lune d'une fenêtre : SpotLight posée dehors, à MOON_ELEV_DEG au-dessus de l'horizon, dans le plan
-## perpendiculaire à la fenêtre (le masque se calcule alors rangée par rangée), visée sur son centre ; masque
-## (light_projector) calculé pour cette fenêtre-là. Parentée à la pièce de la fenêtre.
+## perpendiculaire à la fenêtre, visée sur son centre, cône juste assez large pour elle ; la fenêtre se dessine
+## par les ombres. Parentée à la pièce de la fenêtre.
 func _moon(d: Dictionary, holder: Node3D, fw: float, fh: float, fy: float, kind: String) -> void:
 	var r: HouseRoom = rooms.get(d.get("room", ""))
 	if r == null:
@@ -561,154 +592,40 @@ func _moon(d: Dictionary, holder: Node3D, fw: float, fh: float, fy: float, kind:
 	l.set_meta("lune_energie", energy)
 	l.light_energy = energy if Qualite.extras_on() else 0.0
 	l.light_specular = 0.45
-	# (ni éclairage indirect ni brouillard : la VoxelGI et le brouillard ignorent le masque, toute la pièce
+	# (ni éclairage indirect ni brouillard : la VoxelGI et le brouillard ignorent les ombres, toute la pièce
 	# s'éclairait par le cône entier)
 	l.light_indirect_energy = 0.0
 	l.light_volumetric_fog_energy = 0.0
 	l.shadow_enabled = false
 	l.shadow_bias = 0.05
 	l.shadow_normal_bias = 1.2
-	l.shadow_blur = 1.0
+	l.shadow_blur = 3.0 if kind == "depoli" else 1.0
 	l.set_meta("taille", MOON_TAILLE)
 	l.set_meta("energie_base", 0.0)
 	l.set_meta("lune", String(d.id))
 	Qualite.hide_from_probes(l)
-	# (posé après Main._ready : changer le filtre des masques (Qualite.apply) pendant que leurs textures
-	# arrivent donnait parfois « Invalid Task ID » dans le journal)
-	l.set_deferred("light_projector", _moon_cookie(l, c, nrm, xw, fw, fh, kind, tan(a)))
 	l.add_to_group("lune_fenetre")
 	moons.append(l)
 
 
-## Masque de la lune : pour chaque rangée de pixels, le plan de la lumière qui la porte coupe la fenêtre sur
-## une ligne horizontale (la lune est dans le plan perpendiculaire à la fenêtre) : couverture verticale
-## intégrée sur la rangée (huit sous-rangées : ouverture, traverses, fentes du store), puis l'ouverture en
-## largeur moins les montants, convertie en colonnes avec des bords antialiasés. Rangée 0 = bas du cône.
-static func _moon_cookie(l: SpotLight3D, c: Vector3, nrm: Vector3, xw: Vector3, fw: float, fh: float, kind: String, tan_a: float) -> ImageTexture:
-	var wpx := 128 if kind == "store" else 192
-	var hpx := 512 if kind == "store" else 192
-	if kind == "depoli":
-		wpx = 64
-		hpx = 64
-	var img := Image.create_empty(wpx, hpx, false, Image.FORMAT_RGB8)
-	img.fill(Color.BLACK)
-	var b := l.global_transform.basis
-	var zl := b.z.normalized()
-	var yl := b.y.normalized()
-	var xl := b.x.normalized()
-	var lpos := l.global_position
-	var cl := (c - lpos).dot(nrm)
-	var sx := signf(xl.dot(xw))
-	var sub := 8
-	var spans: Array
-	match kind:
-		"store":
-			spans = [[-fw / 2.0 + 0.012, fw / 2.0 - 0.012]]
-		"depoli":
-			spans = [[-fw / 2.0, -0.0175], [0.0175, fw / 2.0]]
-		_:
-			spans = [[-fw / 2.0, -0.02], [0.02, fw / 2.0]]
-	for j in hpx:
-		var cov := 0.0
-		var lam_sum := 0.0
-		var nlam := 0
-		for k in sub:
-			var t := ((j + (k + 0.5) / sub) / hpx) * 2.0 - 1.0
-			var ray := -zl + yl * (t * tan_a)
-			var rn := ray.dot(nrm)
-			if rn <= 0.0001:
-				continue
-			var lam := cl / rn
-			var yw := (lpos + ray * lam - c).y
-			cov += _window_v(yw, fh, kind)
-			lam_sum += lam
-			nlam += 1
-		cov /= sub
-		if cov <= 0.003 or nlam == 0:
-			continue
-		var lam_c := lam_sum / nlam
-		for sp in spans:
-			var s0: float = float(sp[0]) * sx / (lam_c * tan_a)
-			var s1: float = float(sp[1]) * sx / (lam_c * tan_a)
-			_fill_span(img, j, (minf(s0, s1) + 1.0) * 0.5 * wpx, (maxf(s0, s1) + 1.0) * 0.5 * wpx, cov)
-	if kind == "depoli":
-		# verre dépoli : la lumière diffuse en une tache sans croisée
-		img.resize(10, 10, Image.INTERPOLATE_BILINEAR)
-		img.resize(64, 64, Image.INTERPOLATE_BILINEAR)
-	elif kind == "clair":
-		# vitre sous la pluie : la lumière arrive marbrée (gouttes, coulures), pas en aplat ; voile noir
-		# calculé en 48 × 48 puis agrandi, posé par blend_rect (rapide)
-		var fn := FastNoiseLite.new()
-		fn.seed = int(absf(c.x * 13.0 + c.z * 7.0))
-		fn.frequency = 0.36
-		var streak := FastNoiseLite.new()
-		streak.seed = fn.seed + 1
-		streak.frequency = 0.2
-		var veil := Image.create_empty(48, 48, false, Image.FORMAT_RGBA8)
-		for y in 48:
-			for x in 48:
-				var k := clampf(0.74 + 0.2 * fn.get_noise_2d(x, y) + 0.12 * streak.get_noise_2d(x * 5.0, y * 0.25), 0.0, 1.0)
-				veil.set_pixel(x, y, Color(0, 0, 0, 1.0 - k))
-		veil.resize(wpx, hpx, Image.INTERPOLATE_BILINEAR)
-		img.convert(Image.FORMAT_RGBA8)
-		img.blend_rect(veil, Rect2i(0, 0, wpx, hpx), Vector2i.ZERO)
-		img.convert(Image.FORMAT_RGB8)
-	img.generate_mipmaps()
-	return ImageTexture.create_from_image(img)
-
-
-## Transmission de la fenêtre à la hauteur yw (m, depuis son centre) : 0 hors de l'ouverture et sur les
-## traverses ; store : les fentes entre les lames (SLAT_GAP de demi-largeur, bords doux).
-static func _window_v(yw: float, fh: float, kind: String) -> float:
-	if yw < -fh / 2.0 or yw > fh / 2.0:
-		return 0.0
-	match kind:
-		"store":
-			var ph := fposmod(yw + fh / 2.0 - 0.022 - SLAT_PITCH / 2.0, SLAT_PITCH)
-			var dist := absf(ph - SLAT_PITCH / 2.0)
-			return 1.0 - smoothstep(SLAT_GAP * 0.4, SLAT_GAP * 1.6, dist)
-		"depoli":
-			if absf(yw - fh * 0.12) < 0.0175:
-				return 0.0
-			return 1.0
-	return 1.0
-
-
-## Ajoute la couverture v sur la rangée « row », des colonnes c0 à c1 (réelles), bords partiels.
-static func _fill_span(img: Image, row: int, c0: float, c1: float, v: float) -> void:
-	var w := img.get_width()
-	c0 = clampf(c0, 0.0, float(w))
-	c1 = clampf(c1, 0.0, float(w))
-	if c1 <= c0:
-		return
-	var i0 := int(floor(c0))
-	var i1 := int(floor(c1))
-	if i0 == i1:
-		_add_px(img, i0, row, (c1 - c0) * v)
-		return
-	_add_px(img, i0, row, (float(i0 + 1) - c0) * v)
-	if i1 - i0 - 1 > 0:
-		img.fill_rect(Rect2i(i0 + 1, row, i1 - i0 - 1, 1), Color(v, v, v))
-	if i1 < w:
-		_add_px(img, i1, row, (c1 - float(i1)) * v)
-
-
-static func _add_px(img: Image, x: int, y: int, v: float) -> void:
-	if x < 0 or x >= img.get_width():
-		return
-	var k := minf(1.0, img.get_pixel(x, y).r + v)
-	img.set_pixel(x, y, Color(k, k, k))
-
-
-## Lunes de la pièce courante : ombres (meubles) en Élevée et Ultra seulement ; énergie 0 en style rétro.
+## Lunes : la lumière passe par la fenêtre parce que les murs, la croisée, les rideaux, les meubles et le
+## plan « OmbreStore » des stores font OMBRE (rayures des lames, croisée au sol). Élevée et Ultra : toutes les
+## lunes (les pièces inactives ont leurs lampes cachées) ; Moyenne : celles de la pièce courante ; Basse et
+## style rétro : éteintes. (Un masque calculé, light_projector, a été essayé : Godot 4.7.2 le lisait
+## transposé, et il restait noir une fois sur deux, l'atlas des masques étant refait par Qualite.apply :
+## « Invalid Task ID ».) Méta « lune_e » : énergie de repos effective (l'éclair d'outside.gd y revient).
 func _update_moons() -> void:
 	var extras := Qualite.extras_on()
-	var shadows := extras and Qualite.at_least(Qualite.ELEVEE)
+	var all_rooms := extras and Qualite.at_least(Qualite.ELEVEE)
+	var mid := extras and Qualite.at_least(Qualite.MOYENNE)
 	for l in moons:
 		if not is_instance_valid(l):
 			continue
-		l.light_energy = float(l.get_meta("lune_energie", 1.0)) if extras else 0.0
-		l.shadow_enabled = shadows and current != null and l.get_parent() == current
+		var on := all_rooms or (mid and current != null and l.get_parent() == current)
+		var e := float(l.get_meta("lune_energie", 1.0)) if on else 0.0
+		l.set_meta("lune_e", e)
+		l.light_energy = e
+		l.shadow_enabled = on
 
 
 ## Un réglage a changé (style rétro, qualité) : lunes, vitres.
@@ -772,6 +689,8 @@ func finish(p: Node3D) -> void:
 		r.collect_lights()
 		n_lights += r._lights.size()
 	print("LUMIÈRES %d (lunes %d)" % [n_lights, moons.size()])
+	# (ombres et énergies des lunes dès maintenant : sans ombre, une lune traverse les murs)
+	_update_moons()
 	if "floor_provider" in p:
 		p.set("floor_provider", self)
 

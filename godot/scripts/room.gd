@@ -2415,6 +2415,7 @@ func dress_details() -> void:
 	_wear_room()
 	if decor and decor.has_method("dress"):
 		decor.dress()
+	_warm_face()
 
 
 func _detail_objects() -> void:
@@ -2818,41 +2819,9 @@ func face_scare(p: Node) -> void:
 			await ceiling_burst()
 		return
 	var cam: Camera3D = p.camera
-	var face: Node3D = (load("res://assets/models/face/LeePerrySmith.glb") as PackedScene).instantiate()
 	var soft := Builder.soft_render()
-	var mat: Material
-	if soft:
-		# (rendu logiciel : la matière d'avant, aucune variante de shader neuve pendant le sursaut)
-		var sm0 := StandardMaterial3D.new()
-		sm0.albedo_texture = load("res://assets/models/face/Map-COL.jpg")
-		sm0.albedo_color = Color(0.55, 0.53, 0.5)
-		sm0.roughness = 0.7
-		mat = sm0
-	else:
-		mat = _face_material()
-	for mi in face.find_children("*", "MeshInstance3D", true, false):
-		(mi as MeshInstance3D).material_override = mat
-	# orbites vides (repère du modèle scanné) ; vraie carte : plus profondes (le pourtour s'assombrit dans
-	# FACE_SHADER), et un fond humide qui accroche la lumière d'en dessous
-	var black := _plain(Color(0.0, 0.0, 0.0), 1.0)
-	if not soft:
-		black = _plain(Color(0.006, 0.004, 0.004), 0.07)
-		black.metallic_specular = 0.9
-	for ex in [-0.70, 0.52]:
-		var eye := MeshInstance3D.new()
-		var sm := SphereMesh.new()
-		sm.radius = 0.34
-		sm.height = 0.42
-		eye.mesh = sm
-		eye.material_override = black
-		eye.position = Vector3(ex, 1.68, 1.98 if soft else 1.9)
-		face.add_child(eye)
-	var under := OmniLight3D.new()
-	under.light_color = Color(1.0, 0.82, 0.75)
-	under.omni_range = 12.0
-	under.light_energy = 0.0
-	face.add_child(under)
-	under.position = Vector3(0, -7.0, 7.0)
+	var face := _build_face(soft)
+	var under: OmniLight3D = face.get_node("Dessous")
 	add_child(face)
 	face.scale = Vector3.ONE * 0.034
 	face.visible = false
@@ -2926,17 +2895,103 @@ func face_scare(p: Node) -> void:
 	back.tween_method(func(k: float) -> void: p.set_look(lerpf(y2, p.seat_yaw, k), lerpf(0.02, -0.05, k)), 0.0, 1.0, 1.4)
 	await back.finished
 
+## Le visage préparé d'avance (vraie carte, lot V2-MERE-FIN) : la scène du scan et sa matière sont chargées
+## avec la chambre (dress_details), et un double du visage, réduit à 0,1 mm, est porté trois images devant la
+## caméra (invisible, puis libéré) : ses matières et ses formats de sommets sont compilés au chargement, plus
+## d'à-coup au moment du sursaut. La matière est refaite si le style a changé depuis (transluminescence
+## seulement hors rétro).
+var _face_packed: PackedScene = null
+var _face_mat: ShaderMaterial = null
+var _face_mat_sss := false
+
+
+func _face_scene() -> PackedScene:
+	if _face_packed == null:
+		_face_packed = load("res://assets/models/face/LeePerrySmith.glb") as PackedScene
+	return _face_packed
+
+
+static func _face_sss() -> bool:
+	return Qualite.extras_on() and Qualite.at_least(Qualite.ELEVEE)
+
+
+func _face_mat_now() -> ShaderMaterial:
+	if _face_mat == null or _face_mat_sss != _face_sss():
+		_face_mat = _face_material()
+		_face_mat_sss = _face_sss()
+	return _face_mat
+
+
+func _warm_face() -> void:
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	var face := _build_face(false)
+	face.name = "VisagePrepare"
+	(face.get_node("Dessous") as Node).free()
+	cam.add_child(face)
+	face.position = Vector3(0, 0, -0.3)
+	face.scale = Vector3.ONE * 0.00001
+	for i in 3:
+		await get_tree().process_frame
+	if is_instance_valid(face):
+		face.queue_free()
+
+
+## Le visage, hors de l'arbre : le scan et sa matière (vraie carte : FACE_SHADER ; rendu logiciel : la
+## matière d'avant, aucune variante de shader neuve pendant le sursaut), les orbites vides et la lumière
+## d'en dessous, éteinte (nœud « Dessous »). Repère du modèle scanné, non mis à l'échelle.
+func _build_face(soft: bool) -> Node3D:
+	var face: Node3D = _face_scene().instantiate()
+	var mat: Material
+	if soft:
+		var sm0 := StandardMaterial3D.new()
+		sm0.albedo_texture = load("res://assets/models/face/Map-COL.jpg")
+		sm0.albedo_color = Color(0.55, 0.53, 0.5)
+		sm0.roughness = 0.7
+		mat = sm0
+	else:
+		mat = _face_mat_now()
+	for mi in face.find_children("*", "MeshInstance3D", true, false):
+		(mi as MeshInstance3D).material_override = mat
+	# orbites vides ; vraie carte : plus profondes (le pourtour s'assombrit dans FACE_SHADER), et un fond
+	# humide qui accroche la lumière d'en dessous
+	var black := _plain(Color(0.0, 0.0, 0.0), 1.0)
+	if not soft:
+		black = _plain(Color(0.006, 0.004, 0.004), 0.07)
+		black.metallic_specular = 0.9
+	for ex in [-0.70, 0.52]:
+		var eye := MeshInstance3D.new()
+		var sm := SphereMesh.new()
+		sm.radius = 0.34
+		sm.height = 0.42
+		eye.mesh = sm
+		eye.material_override = black
+		eye.position = Vector3(ex, 1.68, 1.98 if soft else 1.9)
+		face.add_child(eye)
+	var under := OmniLight3D.new()
+	under.name = "Dessous"
+	under.light_color = Color(1.0, 0.82, 0.75)
+	under.omni_range = 12.0
+	under.light_energy = 0.0
+	face.add_child(under)
+	under.position = Vector3(0, -7.0, 7.0)
+	return face
+
+
 ## La peau du visage, vraie carte (lots V2-MERE et V2-MERE-FIN) : la carte de normales du scan (déjà
 ## livrée) ; rugosité de peau mate (crâne 0,55, front 0,42, joues et lèvres 0,45 ; SPECULAR 0,35 : plus de
 ## crâne chromé sous le plafonnier) ; orbites creusées (le pourtour des yeux s'assombrit). Sous le cou, le
-## buste ne noircit plus : il se DISSOUT (alpha haché, ALPHA_HASH_SCALE : la matière reste opaque, avec sa
-## profondeur et ses ombres ; FSR 2 et le TAA lissent la trame), le long d'une limite déchiquetée par deux
-## octaves de bruit dans le repère du modèle : la pièce se voit à travers, plus de masse noire découpée.
+## buste ne noircit plus : il se DISSOUT en lambeaux (découpe alpha dont le seuil suit un bruit fin : la
+## matière reste opaque, avec sa profondeur et ses ombres, et il n'y a pas de trame de pixels qui scintille
+## sans anticrénelage temporel), le long d'une limite déchiquetée par deux octaves de bruit dans le repère
+## du modèle ; le bord des trous s'assombrit et la bande s'éteint vers le bas : la pièce se voit à travers,
+## plus de masse noire découpée.
 ## Transluminescence de la peau (passe plein écran) seulement à partir d'Élevée, ni en rendu logiciel, ni en
 ## rétro. Repère du modèle scanné (non mis à l'échelle) : yeux en (-0,70 ; 1,68) et (0,52 ; 1,68), haut du
 ## crâne à y = 4, menton vers -1, épaules à -4.
 func _face_material() -> ShaderMaterial:
-	var sss := Qualite.extras_on() and Qualite.at_least(Qualite.ELEVEE)
+	var sss := _face_sss()
 	var sh := Shader.new()
 	sh.code = FACE_SHADER.replace("{MODE}", ", sss_mode_skin" if sss else "") \
 		.replace("{SSS}", "SSS_STRENGTH = 0.5;" if sss else "")
@@ -2955,8 +3010,8 @@ uniform sampler2D normal_tex : hint_normal, filter_linear_mipmap;
 uniform vec3 tint = vec3(0.55, 0.53, 0.5);
 uniform vec3 eye_l = vec3(-0.7, 1.68, 1.95);
 uniform vec3 eye_r = vec3(0.52, 1.68, 1.95);
-uniform vec2 neck = vec2(-2.9, -1.3);
-uniform float ragged = 1.3;
+uniform vec2 neck = vec2(-3.5, -1.3);
+uniform float ragged = 1.7;
 varying vec3 obj;
 float h3(vec3 p) {
 	p = fract(p * 0.3183099 + vec3(0.11, 0.17, 0.13));
@@ -2979,16 +3034,23 @@ void fragment() {
 	float sock = smoothstep(0.3, 1.05, d);
 	float n = vn(obj * 0.9) * 0.65 + vn(obj * 2.7 + vec3(7.1)) * 0.35;
 	float fade = smoothstep(neck.x, neck.y, obj.y + (n - 0.5) * ragged);
-	ALBEDO = a * mix(0.1, 1.0, sock);
+	// lambeaux : le seuil de découpe suit un bruit fin (environ 1 cm et 4 mm à l'échelle du visage), étiré
+	// pour couvrir 0..1 ; le bord de chaque trou s'assombrit et la bande entière s'éteint vers le bas
+	float fine = vn(obj * 3.1 + vec3(3.7, 1.3, 5.9)) * 0.62 + vn(obj * 8.3 + vec3(1.9)) * 0.38;
+	float thr = clamp((fine - 0.5) * 1.9 + 0.5, 0.02, 0.98);
+	float edge = mix(smoothstep(0.0, 0.3, fade - thr), 1.0, smoothstep(0.75, 1.0, fade));
+	// (la gorge s'enfonce dans l'ombre dès le menton : l'œil va au visage, le buste se perd puis s'effiloche)
+	float dim = mix(0.1, 1.0, edge) * mix(0.15, 1.0, smoothstep(0.0, 0.9, fade)) * mix(0.4, 1.0, smoothstep(-2.4, -0.8, obj.y));
+	ALBEDO = a * mix(0.1, 1.0, sock) * dim;
 	NORMAL_MAP = texture(normal_tex, UV).rgb;
 	float skull = smoothstep(2.7, 3.3, obj.y);
 	float brow = smoothstep(1.95, 2.35, obj.y) * (1.0 - skull);
-	ROUGHNESS = mix(mix(0.45, 0.42, brow), 0.55, skull);
-	SPECULAR = 0.35 * mix(0.3, 1.0, sock);
+	ROUGHNESS = mix(0.8, mix(mix(0.45, 0.42, brow), 0.55, skull), edge);
+	SPECULAR = 0.35 * mix(0.3, 1.0, sock) * edge;
 	AO = mix(0.3, 1.0, sock);
 	AO_LIGHT_AFFECT = 0.7;
 	ALPHA = fade;
-	ALPHA_HASH_SCALE = 1.0;
+	ALPHA_SCISSOR_THRESHOLD = thr;
 	{SSS}
 }
 """

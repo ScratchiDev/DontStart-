@@ -98,6 +98,14 @@ var _tape_mat: StandardMaterial3D
 var _old_cable: StandardMaterial3D
 var _chrome: StandardMaterial3D
 
+# Toiles et mannequin : construits dans furnish avec les matières du rendu logiciel (pas de nouvelle
+# variante de shader pendant la mesure de B16) ; _dress_textiles() y pose les matières de vraie carte.
+var _tarp_mi: MeshInstance3D               # la bâche (« Bache »)
+var _tarp_draped := false                  # toile simulée (TARP_MESH) plutôt que champ de hauteurs
+var _tape_boxes: Array[MeshInstance3D] = []  # les deux plaques de scotch (cachées par le vrai ruban)
+var _mq_node: Node3D                       # « Mannequin »
+var _mq_soft := {}                         # rôle (linen, wood, chrome, iron, dress) -> matière posée
+
 
 func furnish(h: House) -> void:
 	house = h
@@ -573,46 +581,59 @@ func _bed() -> void:
 	tarp.albedo_color = Color(0.6, 0.64, 0.68)
 	tarp.roughness = 0.42
 	tarp.metallic_specular = 0.6
-	if not Builder.soft_render():
-		# vraie carte : vieille bâche de peintre gris laiteux, satinée et froissée (plis d'emballage, faux
-		# plis), un peu translucide ; poussiéreuse. Elle redevient une silhouette dans le faisceau (elle
-		# brûlait en beige sous la lampe : revues de la vague 2)
-		tarp.albedo_color = TARP_ALBEDO_NET
-		tarp.roughness = TARP_ROUGH_NET
-		tarp.metallic_specular = 0.4
-		if ResourceLoader.exists(TARP_NORMAL):
-			tarp.normal_enabled = true
-			tarp.normal_texture = load(TARP_NORMAL)
-			tarp.normal_scale = 1.5
-			tarp.uv1_scale = Vector3(1.0 / TARP_TILE, 1.0 / TARP_TILE, 1.0)
-		tarp.backlight_enabled = true
-		tarp.backlight = Color(TARP_BACKLIGHT_NET, TARP_BACKLIGHT_NET, TARP_BACKLIGHT_NET)
-		tarp = _grimy(tarp, 1.3)
+	# (vraie carte : la bâche de peintre froissée est posée ensuite par _dress_textiles)
 	var draped: Mesh = load(TARP_MESH) as Mesh if ResourceLoader.exists(TARP_MESH) else null
 	if draped:
 		# la toile simulée : elle déborde du matelas de 10 à 15 cm, tombe en plis évasés jusqu'à 1 ou 2 cm
 		# du sol, se tend en plis du carton vers la tête de lit ; coin du chevet recoupé
 		var dm := _no_gi(_mesh(draped, Vector3.ZERO, tarp))
 		dm.name = "Bache"
-		_tarp_tape(true)
+		_tarp_mi = dm
+		_tarp_draped = true
+		_tarp_tape()
 		return
 	_tarp_heightfield(top, tarp)
-	_tarp_tape(false)
+	_tarp_mi = get_node_or_null("Bache") as MeshInstance3D
+	_tarp_tape()
 
 
-## Les deux bandes de scotch qui tiennent la bâche à la tête de lit (vraie carte, toile simulée : du
-## ruban adhésif brun, Tape004, sinon deux plaques).
-func _tarp_tape(draped: bool) -> void:
-	if draped and not Builder.soft_render() and ResourceLoader.exists("res://assets/textures/Tape004/Tape004_albedo.png"):
-		for x in [-0.52, 0.5]:
-			# (bande couchée sur le dessus de la tête de lit, dans le sens du lit, qui mord sur la bâche)
-			var q := _tape_quad(Vector2(0.17, 0.05), 0 if x < 0.0 else 2)
-			q.position = Vector3(x, 0.6505, 6.17)
-			q.rotation = Vector3(-PI / 2.0, PI / 2.0 + (0.08 if x < 0.0 else -0.06), 0.0)
-			q.name = "Scotch"
-		return
+## Vraie carte (dress_details) : vieille bâche de peintre gris laiteux, satinée et froissée (plis
+## d'emballage, faux plis), un peu translucide ; poussiéreuse. Elle redevient une silhouette dans le
+## faisceau (elle brûlait en beige sous la lampe : revues de la vague 2).
+func _tarp_net() -> StandardMaterial3D:
+	var tarp := StandardMaterial3D.new()
+	tarp.albedo_color = TARP_ALBEDO_NET
+	tarp.roughness = TARP_ROUGH_NET
+	tarp.metallic_specular = 0.4
+	if ResourceLoader.exists(TARP_NORMAL):
+		tarp.normal_enabled = true
+		tarp.normal_texture = load(TARP_NORMAL)
+		tarp.normal_scale = 1.5
+		tarp.uv1_scale = Vector3(1.0 / TARP_TILE, 1.0 / TARP_TILE, 1.0)
+	tarp.backlight_enabled = true
+	tarp.backlight = Color(TARP_BACKLIGHT_NET, TARP_BACKLIGHT_NET, TARP_BACKLIGHT_NET)
+	return _grimy(tarp, 1.3)
+
+
+## Les deux bandes de scotch qui tiennent la bâche à la tête de lit : deux plaques (les mêmes qu'avant le
+## lot) ; en vraie carte, sur la toile simulée, _dress_textiles les remplace par du ruban adhésif brun
+## (Tape004).
+func _tarp_tape() -> void:
 	for x in [-0.55, 0.55]:
-		_box(Vector3(0.05, 0.002, 0.14), Vector3(x, 0.652, 6.16), _plain(Color(0.45, 0.32, 0.18), 0.4))
+		_tape_boxes.append(_box(Vector3(0.05, 0.002, 0.14), Vector3(x, 0.652, 6.16), _plain(Color(0.45, 0.32, 0.18), 0.4)))
+
+
+func _tarp_tape_net() -> void:
+	if not _tarp_draped or not ResourceLoader.exists("res://assets/textures/Tape004/Tape004_albedo.png"):
+		return
+	for b in _tape_boxes:
+		b.visible = false
+	for x in [-0.52, 0.5]:
+		# (bande couchée sur le dessus de la tête de lit, dans le sens du lit, qui mord sur la bâche)
+		var q := _tape_quad(Vector2(0.17, 0.05), 0 if x < 0.0 else 2)
+		q.position = Vector3(x, 0.6505, 6.17)
+		q.rotation = Vector3(-PI / 2.0, PI / 2.0 + (0.08 if x < 0.0 else -0.06), 0.0)
+		q.name = "Scotch"
 
 
 ## Morceau de ruban adhésif (atlas Tape004 : 0, 1, 2 = bandes horizontales aux bouts déchirés), dans le
@@ -1482,40 +1503,18 @@ func _mannequin() -> void:
 	# (l'ancienne robe à pois : ses 4 096 tirages restent ici, dans l'ordre du hasard de la pièce, R4)
 	var old_dots := _dots_texture()
 	var soft := Builder.soft_render()
-	var linen: StandardMaterial3D
-	var wood: StandardMaterial3D
-	var chrome: StandardMaterial3D
-	var iron: StandardMaterial3D
+	# (matières du rendu logiciel ; en vraie carte, _dress_textiles les remplace par _mannequin_net)
+	var linen := _linen(Color(0.86, 0.9, 0.82))
+	var wood := _m(Color(0.25, 0.17, 0.11), 0.5)
+	var chrome := _plain(Color(0.4, 0.38, 0.35), 0.35, 0.6)
+	var iron := _plain(Color(0.07, 0.068, 0.065), 0.5, 0.3)
 	var dress := StandardMaterial3D.new()
 	dress.roughness = 0.88
-	if soft:
-		linen = _linen(Color(0.86, 0.9, 0.82))
-		wood = _m(Color(0.25, 0.17, 0.11), 0.5)
-		chrome = _plain(Color(0.4, 0.38, 0.35), 0.35, 0.6)
-		iron = _plain(Color(0.07, 0.068, 0.065), 0.5, 0.3)
-		dress.albedo_texture = old_dots
-		dress.uv1_scale = Vector3(1.0 / DRESS_TILE_OLD, 1.0 / DRESS_TILE_OLD, 1.0)
-	else:
-		# lin écru (Fabric045, neutre, teinté), posé sur les UV du loft (mètres) ; bois sombre ciré ;
-		# chrome terni ; fonte noire
-		linen = Surfaces.pbr_acg("Fabric045/Fabric045", 0.3, Color(0.8, 0.73, 0.6), 0.8)
-		linen.uv1_triplanar = false
-		linen.uv1_world_triplanar = false
-		linen.uv1_scale = Vector3(1.0 / 0.3, 1.0 / 0.3, 1.0)
-		linen = _grimy(linen, 1.2)
-		wood = _grimy(Surfaces.pbr("Wood008/Wood008", 0.35, Color(0.62, 0.5, 0.42)), 1.5)
-		chrome = Surfaces.pbr("Metal049B/Metal049B", 0.25, Color(0.86, 0.85, 0.83), 1.0, true, false, -1.0, true)
-		iron = Surfaces.pbr("Metal046B/Metal046B", 0.3, Color(0.42, 0.41, 0.4), 1.0, true, false, -1.0, true)
-		dress.albedo_texture = load(DRESS_DOTS)
-		dress.uv1_scale = Vector3(1.0 / DRESS_TILE, 1.0 / DRESS_TILE, 1.0)
-		dress.normal_enabled = true
-		dress.normal_texture = load("res://assets/textures/Fabric045/Fabric045_NormalGL.jpg")
-		dress.normal_scale = 0.5
-		dress.rim_enabled = true
-		dress.rim = 0.25
-		dress.rim_tint = 0.5
-		dress.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+	dress.albedo_texture = old_dots
+	dress.uv1_scale = Vector3(1.0 / DRESS_TILE_OLD, 1.0 / DRESS_TILE_OLD, 1.0)
 	dress = _grimy(dress, 0.8)
+	_mq_node = mq
+	_mq_soft = {"linen": linen, "wood": wood, "chrome": chrome, "iron": iron, "dress": dress}
 	# --- le buste
 	var seams := {}
 	for d in BUST_SEAMS:
@@ -1663,6 +1662,52 @@ func _mannequin() -> void:
 	_collider(Vector3(0.42, 1.65, 0.42), Vector3(0, 0.825, 0), mq)
 	_look("Regarder le mannequin", Vector3(0.5, 1.2, 0.45), mq.position + Vector3(0, 1.0, 0),
 		"Le mannequin de couture de Mamie. Une robe à moitié épinglée.", "mannequin")
+
+
+## Vraie carte : lin écru (Fabric045, neutre, teinté), posé sur les UV du loft (mètres) ; bois sombre ciré ;
+## chrome terni ; fonte noire ; la robe marine à pois de 1 cm (robe_pois.png), trame de Fabric045.
+func _mannequin_net() -> Dictionary:
+	var linen := Surfaces.pbr_acg("Fabric045/Fabric045", 0.3, Color(0.8, 0.73, 0.6), 0.8)
+	linen.uv1_triplanar = false
+	linen.uv1_world_triplanar = false
+	linen.uv1_scale = Vector3(1.0 / 0.3, 1.0 / 0.3, 1.0)
+	linen = _grimy(linen, 1.2)
+	var dress := StandardMaterial3D.new()
+	dress.roughness = 0.88
+	dress.albedo_texture = load(DRESS_DOTS)
+	dress.uv1_scale = Vector3(1.0 / DRESS_TILE, 1.0 / DRESS_TILE, 1.0)
+	dress.normal_enabled = true
+	dress.normal_texture = load("res://assets/textures/Fabric045/Fabric045_NormalGL.jpg")
+	dress.normal_scale = 0.5
+	dress.rim_enabled = true
+	dress.rim = 0.25
+	dress.rim_tint = 0.5
+	dress.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+	return {
+		"linen": linen,
+		"wood": _grimy(Surfaces.pbr("Wood008/Wood008", 0.35, Color(0.62, 0.5, 0.42)), 1.5),
+		"chrome": Surfaces.pbr("Metal049B/Metal049B", 0.25, Color(0.86, 0.85, 0.83), 1.0, true, false, -1.0, true),
+		"iron": Surfaces.pbr("Metal046B/Metal046B", 0.3, Color(0.42, 0.41, 0.4), 1.0, true, false, -1.0, true),
+		"dress": _grimy(dress, 0.8),
+	}
+
+
+## Matières de vraie carte des toiles et du mannequin (dress_details, hors de la mesure de B16 : leurs
+## variantes de shader se compilent là, pas pendant la construction). Géométrie, collisions et nœuds ne
+## changent pas.
+func _dress_textiles() -> void:
+	if _tarp_mi:
+		_tarp_mi.material_override = _tarp_net()
+	_tarp_tape_net()
+	if _mq_node == null or _mq_soft.is_empty():
+		return
+	var net := _mannequin_net()
+	for g in _mq_node.find_children("*", "GeometryInstance3D", true, false):
+		var gi := g as GeometryInstance3D
+		for role in _mq_soft:
+			if gi.material_override == _mq_soft[role]:
+				gi.material_override = net[role]
+				break
 
 
 # ------------------------------------------------------------------ les cartons du vide-grenier
@@ -2054,6 +2099,7 @@ const TV_SNOW_RES := Vector2(320.0, 240.0)
 ## (x 2,25 → 3,2 ; z 2,9 → 3,9) et des chemins vers la boîte à biscuits, la télé et l'antenne. Aucun
 ## tirage dans le hasard de la pièce.
 func dress_details() -> void:
+	_dress_textiles()
 	_dress_tv()
 	_dress_floor()
 	_vide_grenier()

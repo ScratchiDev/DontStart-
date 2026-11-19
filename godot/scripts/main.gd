@@ -156,7 +156,8 @@ func _build_house() -> void:
 ## B16 (build_ms, gi_ms), avant le réglage de l'image et l'autotest.
 ##  - avec une vraie carte graphique (Qualite.details_on()) : la sonde de reflets de chaque pièce
 ##    (prepare_reflections, capturée plus tard, voir _capture_reflections), puis ses objets de décor
-##    (dress_details, Builder.detail) ; la chambre de la mère comprise ;
+##    (dress_details, Builder.detail) ; la chambre de la mère comprise ; puis Surfaces.after_build
+##    (chemins d'usure des moquettes) ;
 ##  - dans tous les cas : le groupe « apres_maison » reçoit on_house_built(main).
 func _after_build() -> void:
 	# (premier lancement : la détection de la carte, refaite ici si l'autoload l'a faite trop tôt)
@@ -170,6 +171,8 @@ func _after_build() -> void:
 			r.dress_details()
 		# la lampe de poche (et ce qui suit le joueur) n'apparaît jamais dans les reflets figés
 		Qualite.hide_from_probes(player.flashlight)
+		# (chemins d'usure des moquettes, posés par les pièces : teinte et mélange des poils tassés)
+		Surfaces.after_build(get_tree())
 		print("détails et sondes posés en %d ms" % (Time.get_ticks_msec() - t0))
 	get_tree().call_group("apres_maison", "on_house_built", self)
 

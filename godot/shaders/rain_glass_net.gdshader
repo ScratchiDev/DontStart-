@@ -5,8 +5,7 @@
 //  - teinte de nuit plus sombre : le jardin garde son noir ;
 //  - réfraction plus faible, et qui ne lit jamais ce qui est DEVANT la vitre (montants, appui, rideaux :
 //    test de profondeur) : les gouttes près de la croisée faisaient un bourrelet blanc ;
-//  - un peu de buée dans les coins et en bas, éclairée par la pièce (la lampe la fait apparaître),
-//    essuyée par les gouttes qui glissent.
+//  - un peu de buée dans les coins et en bas, éclairée par la pièce (la lampe la fait apparaître).
 shader_type spatial;
 render_mode blend_mix, cull_back, depth_draw_never, specular_schlick_ggx, fog_disabled;
 
@@ -91,20 +90,30 @@ void fragment() {
 		suv = SCREEN_UV;
 	}
 	vec3 bg = textureLod(screen_tex, suv, mix(0.3, 1.2, mask)).rgb;
+	// bord des gouttes : une goutte d'eau renvoie, sur son pourtour, le sol sombre qu'elle voit à l'envers ;
+	// sans ce liseré, sous l'éclair, les gouttes n'étaient que des disques clairs (de la neige)
+	float rim = clamp(mask * (1.0 - mask) * 4.0, 0.0, 1.0);
+	bg *= 1.0 - 0.25 * rim;
 	// buée : coins et bas de la vitre, en taches irrégulières ; les gouttes la traversent
 	vec2 m = UV * glass_size;
 	vec2 e = min(m, glass_size - m);
 	float corner = 1.0 - smoothstep(0.0, 0.3, length(e));
 	float low = 1.0 - smoothstep(0.0, 0.12, glass_size.y - m.y);
 	float n = vnoise(m * 9.0) * 0.6 + vnoise(m * 31.0) * 0.4;
-	float fm = clamp((corner * 0.9 + low * 0.6) * (0.35 + 0.9 * n) - 0.2, 0.0, 1.0) * frost * (1.0 - mask);
+	// (la buée est dedans, la pluie dehors : les gouttes ne l'essuient qu'à peine ; essuyée en plein, la buée
+	// éclairée par la lampe laissait une goutte noire à chaque goutte, des trous dans la vitre)
+	float fm = clamp((corner * 0.9 + low * 0.6) * (0.35 + 0.9 * n) - 0.2, 0.0, 1.0) * frost * (1.0 - 0.3 * mask);
 	ALBEDO = frost_color * fm;
-	// (éclair : la vitre et la buée s'allument, les gouttes un peu plus ; à « 0,15 + gouttes », elles faisaient
-	// une neige blanche)
-	EMISSION = bg * tint * (0.92 + 0.25 * mask) * (1.0 - 0.75 * fm) + vec3(0.6, 0.7, 0.9) * flash * (0.2 + 0.35 * mask + 0.4 * fm);
-	// (la vitre reflète un peu la pièce ; les gouttes, mates, presque pas : brillantes, elles prenaient
-	// chacune le reflet de la lampe de la pièce, et la vitre semblait sous la neige)
-	ROUGHNESS = mix(mix(0.3, 0.65, mask), 0.85, fm);
-	SPECULAR = mix(0.14, 0.02, clamp(mask * 1.5, 0.0, 1.0));
+	// (éclair : c'est le ciel derrière la vitre qui s'allume et découpe les arbres ; la vitre n'en prend qu'un
+	// reflet, la buée un peu plus, le cœur des gouttes à peine ; avec un voile uniforme de 0,2 et des gouttes
+	// à 0,35, la vitre devenait un panneau laiteux sous une neige blanche)
+	EMISSION = bg * tint * (0.92 + 0.25 * mask) * (1.0 - 0.75 * fm) + vec3(0.6, 0.7, 0.9) * flash * (0.05 + 0.12 * mask * (1.0 - rim) + 0.4 * fm);
+	// (la vitre reflète un peu la pièce, gouttes comprises : le reflet vient de la face intérieure, que la
+	// pluie ne touche pas, d'où une rugosité et un reflet uniformes. Plus rugueuses, les gouttes prenaient
+	// chacune une tache du reflet de la lampe (une neige blanche) ; plus lisses, moins réfléchissantes ou
+	// avec leur courbure en normale, elles faisaient des trous noirs dans le voile du reflet (des
+	// moisissures). On ne les voit donc que par ce qu'elles réfractent du dehors (lampadaire, ciel, éclair).)
+	ROUGHNESS = mix(0.3, 0.85, fm);
+	SPECULAR = 0.14;
 	ALPHA = 1.0;
 }

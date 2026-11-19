@@ -81,7 +81,7 @@ const STYLES := {
 	"P1": {"bois": false, "teinte": Color(0.8, 0.77, 0.7), "crasse": 1.6, "metal": "laiton"},     # ta chambre : peinture fatiguée
 	"P2": {"bois": false, "teinte": Color(0.79, 0.74, 0.62), "crasse": 1.1, "metal": "laiton"},   # Henriette : ivoire jauni
 	"P3": {"bois": false, "teinte": Color(0.69, 0.71, 0.69), "crasse": 1.0, "metal": "laiton"},   # chambre d'amis : gris perle
-	"P4": {"bois": false, "teinte": Color(0.88, 0.88, 0.85), "crasse": 0.6, "metal": "chrome", "laque": 0.3},  # salle de bain
+	"P4": {"bois": false, "teinte": Color(0.88, 0.88, 0.85), "crasse": 0.6, "metal": "chrome", "laque": 0.4},  # salle de bain
 	"P5": {"bois": false, "teinte": Color(0.6, 0.63, 0.56), "crasse": 1.3, "metal": "fer"},      # lingerie : vert de gris
 	"P6": {"bois": true, "teinte": Color(0.86, 0.7, 0.53), "metal": "laiton"},                  # escalier : chêne blond vitré
 	"P7": {"bois": true, "teinte": Color(0.56, 0.42, 0.32), "metal": "laiton"},                 # bureau d'Albert : chêne foncé
@@ -464,7 +464,7 @@ func _glazing(b: Builder, dir: float, x0: float, x1: float, y0: float, y1: float
 	var q := QuadMesh.new()
 	q.size = Vector2(gx1 - gx0, gy1 - gy0)
 	pane.mesh = q
-	pane.material_override = b.mats.frosted
+	pane.material_override = _cathedral_mat(q.size)
 	pane.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	pane.position = Vector3(dir * (gx0 + gx1) / 2.0, (gy0 + gy1) / 2.0, 0.0)
 	pane.name = "Vitre"
@@ -677,6 +677,43 @@ static func _metal_mat(kind: String) -> Material:
 	m.roughness = spec[1]
 	m.metallic = spec[2]
 	_metal_mats[kind] = m
+	return m
+
+
+## Verre cathédrale (vraie carte) : verre martelé à peine teinté, brillant, dont les cupules (bruit
+## cellulaire, en carte de normales calculée par Godot hors du fil principal) brisent ce qu'on voit
+## derrière (réfraction) et accrochent la lampe en éclats. L'ancienne matière dépolie (albédo 0,7, alpha
+## 0,55, rugosité 0,9) devenait sous la lampe de poche un panneau blanc uni, comme du papier.
+static var _cathedral_normal: NoiseTexture2D
+
+
+static func _cathedral_mat(size: Vector2) -> StandardMaterial3D:
+	if _cathedral_normal == null:
+		var n := FastNoiseLite.new()
+		n.noise_type = FastNoiseLite.TYPE_CELLULAR
+		n.cellular_distance_function = FastNoiseLite.DISTANCE_EUCLIDEAN
+		n.cellular_return_type = FastNoiseLite.RETURN_DISTANCE
+		n.cellular_jitter = 0.85
+		n.frequency = 0.075              # une cupule tous les ~13 px : ~2,5 cm sur une tuile de 0,5 m
+		n.seed = 6
+		_cathedral_normal = NoiseTexture2D.new()
+		_cathedral_normal.width = 256
+		_cathedral_normal.height = 256
+		_cathedral_normal.seamless = true
+		_cathedral_normal.as_normal_map = true
+		_cathedral_normal.bump_strength = 7.0
+		_cathedral_normal.noise = n
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Color(0.62, 0.6, 0.52, 0.34)
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.roughness = 0.16
+	m.metallic_specular = 0.6
+	m.normal_enabled = true
+	m.normal_texture = _cathedral_normal
+	m.normal_scale = 0.9
+	m.refraction_enabled = true
+	m.refraction_scale = 0.035
+	m.uv1_scale = Vector3(size.x / 0.5, size.y / 0.5, 1.0)
 	return m
 
 

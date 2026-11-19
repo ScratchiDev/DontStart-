@@ -264,10 +264,11 @@ func _quad(size: Vector2, pos: Vector3, mat: Material, rot_y := 0.0, parent: Nod
 ## centile de la luminance linéaire de l'image, p95) vers PAPER_WHITE, au prorata de la part claire de
 ## l'image (pixels au-dessus de 0,5 : f) : k = 1 − (1 − PAPER_WHITE / p95) × min(1, f / 0,5). Mesuré sur
 ## les images (aaa_fab/V2-NUIT/outils/papiers.py). Sans cela, une note à 0,84 d'albédo prise dans le
-## faisceau de la lampe brillait comme une lampe, deux fois plus claire que le papier peint.
+## faisceau de la lampe brillait comme une lampe, deux fois plus claire que le papier peint. (V2-RETOUCHES :
+## note et feuille 3:12 encore × 0,85, la revue y mesurait 74 % de pixels à 250 ou plus la nuit.)
 const PAPER_WHITE := 0.5
 const PAPER_K := {
-	"note.png": 0.56, "paper_312.png": 0.59, "manual.png": 0.56, "vhs_label.png": 0.57,
+	"note.png": 0.48, "paper_312.png": 0.5, "manual.png": 0.56, "vhs_label.png": 0.57,
 	"calendar.png": 0.64, "corkboard.png": 0.74, "poster_spectres.png": 0.77, "floppy_label.png": 0.77,
 	"clock_face.png": 0.81, "photo.png": 0.94, "poster_choisis.png": 0.98,
 }
@@ -2110,6 +2111,19 @@ func trim(axis: String, u0: float, u1: float, face: float, dir: float, h: float,
 	var dado: Material = style.get("dado", mats.wainscot)
 	var wood: Material = style.get("wood", mats.wood_dark)
 	var crown: Material = style.get("crown_mat", mats.paint)
+	if not soft_render():
+		# (lot V2-RETOUCHES, vraie carte) corniche en plâtre mat, lambris propre à la pièce
+		if not style.has("crown_mat") and mats.has("crown"):
+			crown = mats.crown
+		if dado_h > 0.0 and dado == mats.get("wainscot"):
+			var v: Dictionary = LAMBRIS.get(_lambris_room(), {})
+			if not v.is_empty() and mats.has(v.get("dado", "wainscot")) and mats.has(v.get("wood", "wood_dark")):
+				style = style.duplicate()
+				dado = mats[v.get("dado", "wainscot")]
+				if not style.has("wood"):
+					wood = mats[v.get("wood", "wood_dark")]
+				style["cadres"] = bool(v.get("cadres", false))
+				style["cimaise_seule"] = bool(v.get("cimaise_seule", false))
 	if not soft_render() and _uv_free(dado) and _uv_free(wood) and _uv_free(crown):
 		_trim_profiled(axis, u0, u1, face, dir, h, gaps, style, y0, parent, dado_h, dado, wood, crown)
 		return
@@ -2135,6 +2149,41 @@ func trim(axis: String, u0: float, u1: float, face: float, dir: float, h: float,
 ## retour) ; quand la plinthe déborde du chambranle (lambris), un socle de chambranle la reçoit. Le lambris
 ## reste une boîte (sous la cimaise et le chambranle) ; la faïence sans cimaise reçoit un listel arrondi.
 ## Coût : environ 25 sommets par mètre de moulure, construit pendant la maison (vraie carte seulement).
+## Lambris de chaque pièce sur vraie carte (lot V2-RETOUCHES ; la revue voyait le même aplat brun dans cinq
+## pièces) : quand la pièce garde le lambris par défaut (mats.wainscot), elle prend ici sa matière (clé de
+## « mats », Surfaces.LAMBRIS_MATS) et son style. « dado » : le lambris ; « wood » : cimaise et plinthe ;
+## « cadres » : moulures rapportées en panneaux (_frames_add) ; « cimaise_seule » : pas de lambris, la
+## cimaise posée sur le papier peint. La hauteur reste 0,92 m (appuis de fenêtre à 0,95). Collisions,
+## noms de nœuds et rendu logiciel inchangés (les trims n'ont ni collision ni nom).
+##  - mère : lames vernies miel de 9,5 cm ; bureau : lames larges de chêne foncé ciré (14 cm) ;
+##  - couloir et cage d'escalier : lambris à cadres en noyer verni ;
+##  - grands-parents : lames peintes crème, plinthe et cimaise peintes ;
+##  - chambre d'amis : lames larges peintes gris-bleu (le lambris reste : amis.gd y pose prises et câbles).
+## (« cimaise_seule » reste disponible : à n'utiliser que dans une pièce où rien n'est posé sur le lambris.)
+const LAMBRIS := {
+	"mere": {"dado": "lambris_miel"},
+	"bureau": {"dado": "lambris_chene", "wood": "boiserie_chene"},
+	"couloir": {"dado": "lambris_noyer", "wood": "lambris_noyer", "cadres": true},
+	"escalier": {"dado": "lambris_noyer", "wood": "lambris_noyer", "cadres": true},
+	"gp": {"dado": "lambris_creme", "wood": "boiserie_creme"},
+	"amis": {"dado": "lambris_gris", "wood": "boiserie_gris"},
+}
+## Lambris à cadres : montants entre les cadres et jusqu'aux bouts (m), écart sous la cimaise, bas des cadres
+## (au-dessus des prises posées à 0,24 m sur le lambris du couloir), largeur visée d'un cadre, plus petit
+## cadre posé.
+const FRAME_STILE := 0.075
+const FRAME_RAIL := 0.075
+const FRAME_LO := 0.3
+const FRAME_W := 0.5
+const FRAME_MIN := 0.16
+
+
+## La pièce qui construit (HouseRoom.room_id ; « » pour un Builder qui n'est pas une pièce).
+func _lambris_room() -> String:
+	var rid: Variant = get("room_id")
+	return String(rid) if rid != null else ""
+
+
 const CASING_OUT := 0.0645      # bord extérieur du chambranle (door.gd) au-delà du bord de l'ouverture
 const CASING_IN := 0.0205       # bord intérieur du chambranle en deçà du bord de l'ouverture
 const PLINTH_BLOCK := Vector2(0.15, 0.004)   # socle de chambranle : hauteur, saillie au-delà de la plinthe
@@ -2157,20 +2206,25 @@ func _trim_profiled(axis: String, u0: float, u1: float, face: float, dir: float,
 	var spans := _spans(u0, u1, gaps)
 	var base_on: bool = style.get("base", true)
 	var casing: Material = style.get("casing", mats.paint)
+	# (cimaise seule : pas de lambris ; la cimaise, reculée de l'épaisseur du lambris, se pose sur le mur)
+	var box_h := 0.0 if style.get("cimaise_seule", false) else dado_h
 	for s in spans:
 		var a: float = s[0]
 		var b: float = s[1]
 		# (un bout contre une porte s'arrête au chambranle ; contre un mur, il va jusqu'au mur)
 		var pa := a + (CASING_OUT if absf(a - u0) > 0.0005 else 0.0)
 		var pb := b - (CASING_OUT if absf(b - u1) > 0.0005 else 0.0)
-		if dado_h > 0.0:
+		if box_h > 0.0:
 			_trim_piece(axis, a, b, face + dir * wt / 2.0, y0 + dado_h / 2.0, dado_h, wt, dado, parent)
+		if dado_h > 0.0:
 			if style.get("rail", true):
-				_profile_add(accs, keys, wood, _profile("rail"), axis, pa, pb, face, dir, 0.0, y0 + dado_h - 0.008)
-			else:
+				_profile_add(accs, keys, wood, _profile("rail"), axis, pa, pb, face, dir, 0.0 if box_h > 0.0 else 0.001 - wt, y0 + dado_h - 0.008)
+			elif box_h > 0.0:
 				_profile_add(accs, keys, dado, _profile("cap"), axis, pa, pb, face, dir, 0.0, y0 + dado_h - 0.004)
+		if box_h > 0.0 and style.get("cadres", false):
+			_frames_add(accs, keys, wood, axis, pa, pb, face, dir, wt, y0 + FRAME_LO, y0 + dado_h - 0.008 - FRAME_RAIL)
 		if base_on:
-			_profile_add(accs, keys, wood, _profile("base"), axis, pa, pb, face, dir, wt if dado_h > 0.0 else 0.0, y0)
+			_profile_add(accs, keys, wood, _profile("base"), axis, pa, pb, face, dir, wt if box_h > 0.0 else 0.0, y0)
 	if style.get("crown", true):
 		_profile_add(accs, keys, crown, _profile("crown"), axis, u0, u1, face, dir, 0.0, y0 + h - 0.09)
 	if accs.is_empty():
@@ -2190,7 +2244,7 @@ func _trim_profiled(axis: String, u0: float, u1: float, face: float, dir: float,
 	mi.mesh = am
 	parent.add_child(mi)
 	# socles de chambranle : la plinthe posée sur le lambris déborde du chambranle
-	if base_on and dado_h > 0.0:
+	if base_on and box_h > 0.0:
 		var depth := wt + 0.016 + PLINTH_BLOCK.y
 		for g in gaps:
 			for side: float in [-1.0, 1.0]:
@@ -2240,6 +2294,14 @@ static func _profile(kind: String) -> PackedVector2Array:
 			p.append_array(_arc(Vector2(0.01, 0.004 + r), Vector2(r, r), -90.0, 0.0, 7, true))
 			p.append_array(_arc(Vector2(0.01 + 2.0 * r, 0.004 + r), Vector2(r, r), 180.0, 90.0, 7, true))
 			p.append_array([Vector2(0.094, 0.004 + 2.0 * r), Vector2(0.094, 0.09), Vector2(0, 0.09)])
+		"cadre":
+			# (w, d) : w vers l'intérieur du cadre depuis son bord extérieur, d = saillie sur le lambris ;
+			# doucine de 26 mm, 12 mm de saillie : quart-de-rond, plat, gorge
+			p.append_array([Vector2(0, 0), Vector2(0, 0.003)])
+			p.append_array(_arc(Vector2(0.009, 0.003), Vector2(0.009, 0.009), 180.0, 90.0, 5, true))
+			p.append(Vector2(0.012, 0.012))
+			p.append_array(_arc(Vector2(0.024, 0.012), Vector2(0.012, 0.012), 180.0, 270.0, 5, true))
+			p.append(Vector2(0.026, 0.0))
 	_profiles[kind] = p
 	return p
 
@@ -2312,6 +2374,80 @@ static func _profile_add(accs: Dictionary, keys: Array, m: Material, prof: Packe
 			acc.uv.append(q)
 		for t in range(0, tris.size(), 3):
 			_trim_tri(acc, k + tris[t], k + tris[t + 1], k + tris[t + 2], end[1])
+
+
+## Lambris à cadres : de pa à pb, des cadres de moulure (profil « cadre ») posés sur le lambris (saillie d0),
+## entre y_lo et y_hi, séparés et bordés de FRAME_STILE, d'environ FRAME_W de large. Chaque cadre est le
+## profil balayé le long d'un rectangle : les quatre côtés se rejoignent en onglet (les anneaux du profil
+## sont des rectangles rentrés de w). Rien si la place manque (moins de FRAME_MIN).
+static func _frames_add(accs: Dictionary, keys: Array, m: Material, axis: String, pa: float, pb: float, face: float,
+		dir: float, d0: float, y_lo: float, y_hi: float) -> void:
+	var span := pb - pa
+	if y_hi - y_lo < FRAME_MIN or span < FRAME_MIN + 2.0 * FRAME_STILE:
+		return
+	var n := maxi(1, roundi((span - FRAME_STILE) / (FRAME_W + FRAME_STILE)))
+	var fw := (span - (n + 1) * FRAME_STILE) / n
+	if fw < FRAME_MIN:
+		n = 1
+		fw = span - 2.0 * FRAME_STILE
+	var prof := _profile("cadre")
+	if not accs.has(m):
+		accs[m] = TrimAcc.new()
+		keys.append(m)
+	var acc: TrimAcc = accs[m]
+	var np := prof.size()
+	var sn: Array[Vector2] = []
+	for i in np - 1:
+		var t := (prof[i + 1] - prof[i]).normalized()
+		sn.append(Vector2(-t.y, t.x))
+	var ua := Vector3(1, 0, 0) if axis == "x" else Vector3(0, 0, 1)
+	var wn := Vector3(0, 0, dir) if axis == "x" else Vector3(dir, 0, 0)
+	for f in n:
+		var u_a := pa + FRAME_STILE + f * (fw + FRAME_STILE)
+		var u_b := u_a + fw
+		# côtés : [coin de départ (u, y), coin d'arrivée, direction vers l'intérieur (u, y)]
+		for side in 4:
+			for i in np - 1:
+				var n0 := sn[i]
+				var n1 := sn[i]
+				if i > 0 and sn[i - 1].dot(sn[i]) > TRIM_SMOOTH_COS:
+					n0 = (sn[i - 1] + sn[i]).normalized()
+				if i < np - 2 and sn[i + 1].dot(sn[i]) > TRIM_SMOOTH_COS:
+					n1 = (sn[i + 1] + sn[i]).normalized()
+				var k := acc.v.size()
+				var inw := Vector2.ZERO
+				for j in 2:
+					var q: Vector2 = prof[i + j]
+					var w := q.x
+					var c0: Vector2
+					var c1: Vector2
+					match side:
+						0:
+							c0 = Vector2(u_a + w, y_lo + w)
+							c1 = Vector2(u_b - w, y_lo + w)
+							inw = Vector2(0, 1)
+						1:
+							c0 = Vector2(u_b - w, y_lo + w)
+							c1 = Vector2(u_b - w, y_hi - w)
+							inw = Vector2(-1, 0)
+						2:
+							c0 = Vector2(u_b - w, y_hi - w)
+							c1 = Vector2(u_a + w, y_hi - w)
+							inw = Vector2(0, -1)
+						_:
+							c0 = Vector2(u_a + w, y_hi - w)
+							c1 = Vector2(u_a + w, y_lo + w)
+							inw = Vector2(1, 0)
+					var nn: Vector2 = n0 if j == 0 else n1
+					var nrm := (ua * (nn.x * inw.x) + Vector3.UP * (nn.x * inw.y) + wn * nn.y).normalized()
+					for c in [c0, c1]:
+						acc.v.append(_trim_pos(axis, c.x, face, dir, d0 + q.y, c.y))
+						acc.n.append(nrm)
+						acc.uv.append(Vector2(c.x, c.y))
+				# k : (ring i, c0), k+1 : (ring i, c1), k+2 : (ring i+1, c0), k+3 : (ring i+1, c1)
+				var fn := (ua * (sn[i].x * inw.x) + Vector3.UP * (sn[i].x * inw.y) + wn * sn[i].y).normalized()
+				_trim_tri(acc, k, k + 1, k + 2, fn)
+				_trim_tri(acc, k + 2, k + 1, k + 3, fn)
 
 
 ## Un triangle, retourné si besoin pour que sa face avant regarde du côté de n (sens horaire de Godot).

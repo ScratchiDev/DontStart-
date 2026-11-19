@@ -142,7 +142,7 @@ func _buses() -> void:
 			check("bus %s → %s" % [nm, origin], _bus_ok(nm, origin) and lp != null
 				and is_equal_approx(lp.cutoff_hz, float(A.CLASSES[cl][0]))
 				and is_equal_approx(AudioServer.get_bus_volume_db(i), float(A.CLASSES[cl][2])))
-	check("bus Tonnerre et Joueur", _bus_ok("Tonnerre", "Master") and _bus_ok("Joueur", "Master")
+	check("bus Tonnerre et Joueur", _bus_ok("Tonnerre", "Ambiance") and _bus_ok("Joueur", "Master")
 		and AudioServer.get_bus_effect(AudioServer.get_bus_index("Joueur"), 0) is AudioEffectReverb)
 	var last := AudioServer.get_bus_effect(0, AudioServer.get_bus_effect_count(0) - 1) as AudioEffectHardLimiter
 	check("limiteur en fin de Master (plafond -1 dB)", last != null and is_equal_approx(last.ceiling_db, -1.0))

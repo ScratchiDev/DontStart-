@@ -221,7 +221,8 @@ func prepare_reflections() -> void:
 	probe.blend_distance = 0.15
 	probe.mesh_lod_threshold = 4.0
 	probe.enable_shadows = true          # (une seule capture : les ombres ne coûtent qu'une fois)
-	probe.cull_mask = 0xFFFFF & ~(Builder.layer_bit(LAYER_FEED_ONLY) | Builder.layer_bit(Qualite.LAYER_NO_PROBE))
+	# (ni la couche 11, ni la lampe de poche, ni les mains du joueur : Viewmodel.LAYER)
+	probe.cull_mask = 0xFFFFF & ~(Builder.layer_bit(LAYER_FEED_ONLY) | Builder.layer_bit(Qualite.LAYER_NO_PROBE) | Builder.layer_bit(Viewmodel.LAYER))
 	probe.intensity = 0.0
 	probe.visible = false
 	add_child(probe)

@@ -857,6 +857,15 @@ func _apply_style() -> void:
 ## Un éclair : deux ou trois flashs, la pièce s'illumine à travers la fenêtre, puis le tonnerre.
 func strike() -> void:
 	lightning_struck.emit()
+	# (un éclair à la fois : lancé pendant un autre (éclair scripté sur un éclair au hasard), il attend la fin
+	# du premier ; sinon il prenait le ciel et l'ambiance en plein flash pour leurs valeurs de base et les y
+	# laissait. Mêmes tirages, dans le même ordre.)
+	while _striking and is_inside_tree():
+		await get_tree().process_frame
+	# (la scène a pu être rechargée pendant l'attente — « Continuer », retour au titre : ce dehors-là n'est
+	# plus dans l'arbre, celui de la nouvelle scène a ses propres éclairs)
+	if not is_inside_tree():
+		return
 	_striking = true
 	var sky := _sky()
 	var sky_base := sky.energy_multiplier if sky else 0.0
@@ -886,10 +895,13 @@ func strike() -> void:
 		for m in moons:
 			var l := m as Light3D
 			if l and Qualite.extras_on():
-				l.light_energy = float(l.get_meta("lune_energie", 1.0)) * (1.0 + MOON_FLASH_K * x / 60.0)
+				l.light_energy = float(l.get_meta("lune_e", l.get_meta("lune_energie", 1.0))) * (1.0 + MOON_FLASH_K * x / 60.0)
 		if x > 0.0 and x >= peak:
 			flash_peak.emit()
 		if e[1] > 0.0:
+			if not is_inside_tree():
+				_striking = false
+				return
 			var f0 := Engine.get_frames_drawn()
 			await get_tree().create_timer(e[1]).timeout
 			# (au moins deux images par palier : sur une machine lente, le flash se voit quand même)
@@ -902,13 +914,15 @@ func strike() -> void:
 	for m in moons:
 		var l := m as Light3D
 		if l:
-			l.light_energy = float(l.get_meta("lune_energie", 1.0)) if Qualite.extras_on() else 0.0
+			l.light_energy = float(l.get_meta("lune_e", l.get_meta("lune_energie", 1.0))) if Qualite.extras_on() else 0.0
 	_striking = false
 	if rng.randf() < 0.5:
 		set_someone(not someone_there)
 	# tonnerre : délai tiré comme avant (0,7 à 2,6 s, environ 240 à 900 m) ; proche, il claque plus fort et
 	# plus aigu ; loin, il roule plus bas (Sfx le retient pendant un silence de l'entité)
 	var delay := rng.randf_range(0.7, 2.6)
+	if not is_inside_tree():
+		return
 	await get_tree().create_timer(delay).timeout
 	var kd := clampf((delay - 0.7) / 1.9, 0.0, 1.0)
 	Sfx.play("thunder", -3.0 + THUNDER_DB_PER_S * (delay - 0.7), rng.randf_range(0.8, 1.1) * lerpf(1.05, 0.92, kd))

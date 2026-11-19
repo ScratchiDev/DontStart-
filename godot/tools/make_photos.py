@@ -12,8 +12,10 @@ les photos (PHOTOS) avec les autres images HD.
 Dépendances : numpy, Pillow. Le hasard est local (graines fixes) : deux lancements donnent les mêmes fichiers.
 
 Règle (GDD § 11.1) : aucun visage humain généré. Les personnes sont de dos, à contre-jour, en silhouette (aieule :
-une silhouette de papier découpé, de profil), ou leur visage est brûlé par le flash (ecole : un ovale clair sans
-aucun trait, comme portrait_1996.png).
+une silhouette de papier découpé, de profil), floues au premier plan (noel), ou leur visage est rayé au stylo
+jusqu'à disparaître (ecole, scribble()). Lot V2-RETOUCHES : les figures sont intégrées à la photo (render_person :
+lwrap, match, soft) au lieu d'être collées en aplat, et jardin n'a plus personne.
+Pour essayer sans toucher au jeu : PHOTO_OUT=<dossier> (les images y sont écrites au lieu de assets/images/photos).
 """
 import hashlib
 import os
@@ -185,7 +187,7 @@ def blob(d, k, pts, fill=255, steps=10):
 
 def save(arr, name, folder=None):
     """Enregistre arr (flottants 0 à 1) en PNG RGB 8 bits dans folder (par défaut OUT)."""
-    folder = folder or OUT
+    folder = folder or os.environ.get('PHOTO_OUT', OUT)
     os.makedirs(folder, exist_ok=True)
     Image.fromarray((np.clip(arr, 0, 1) * 255 + 0.5).astype(np.uint8), 'RGB').save(os.path.join(folder, name), optimize=True)
 
@@ -492,14 +494,18 @@ ALIAS = {'jupe': 'bas', 'avant_bras': 'bras', 'cou': 'peau', 'tete': 'peau', 'ma
 
 
 def render_person(arr, p, mats, light=(-0.5, -0.6, 0.62), amb=(0.42, 0.44, 0.5), sun=(1.0, 0.94, 0.85),
-                  rim=None, shadow=None, soft=0.7, seed=0, alpha=1.0, haze=None):
+                  rim=None, shadow=None, soft=0.7, seed=0, alpha=1.0, haze=None, lwrap=None, match=0.0):
     """Pose la personne p sur arr (flottants 0 à 1). mats : matière -> couleur, ou (couleur, genre) avec
     genre 'tissu' (plis verticaux), 'laine', 'cheveux' (mèches, reflet), 'peau', 'fleurs' (robe à fleurs),
     'uni'. Les matières absentes se replient : jupe -> bas, avant_bras -> bras -> haut, cou/tete/mains ->
     peau, jambes -> peau si robe, sinon bas. light : direction d'où vient la lumière (x, y de l'écran, z
     vers l'objectif ; z < 0 : contre-jour). amb : lumière du ciel ; sun : lumière directe. rim : (couleur,
     dx, dy) : liseré de contre-jour du côté (dx, dy). shadow : (dx, dy, force) : ombre portée au sol, la
-    silhouette couchée vers (dx, dy) par unité de hauteur. haze : (couleur, force) : voile de distance."""
+    silhouette couchée vers (dx, dy) par unité de hauteur. haze : (couleur, force) : voile de distance.
+    Intégration (V2-RETOUCHES : la revue voyait des figures en aplat collées sur les photos) : lwrap = (rayon,
+    force) : la lumière du fond déborde sur les bords de la personne (« light wrap » : un fond clair mange
+    son contour, comme sur un vrai négatif) ; match (0 à 1) : la personne prend la dominante de couleur du
+    décor autour d'elle ; soft : flou (mise au point, bouger) de la personne et de son contour."""
     H, W = arr.shape[:2]
     parts = p.draw(W, H)
     body = np.zeros((H, W), np.float32)
@@ -604,6 +610,17 @@ def render_person(arr, p, mats, light=(-0.5, -0.6, 0.62), amb=(0.42, 0.44, 0.5),
         rc, dx, dy = rim
         edge = np.clip(acc - shift(acc, dx, dy), 0, 1)
         out = out + blur(edge, 0.9)[..., None] * np.asarray(rc, np.float32)
+    if match > 0:
+        bgm = blur(arr, p.hh * 2.5)
+        cast = bgm / np.maximum(bgm.mean(-1, keepdims=True), 1e-3)
+        out = out * (1 - match + match * np.clip(cast, 0.5, 1.6))
+    if lwrap is not None:
+        wr, wk = lwrap
+        av = np.clip(acc, 0, 1)
+        inv = 1 - av
+        bgw = blur(arr * inv[..., None], wr) / np.maximum(blur(inv, wr), 1e-3)[..., None]
+        band = np.clip(av * (1 - blur(av, wr)) * 2.2, 0, 1)
+        out = out + bgw * (band * wk)[..., None]
     if haze is not None:
         hc, hk = haze
         out = out * (1 - hk) + np.asarray(hc, np.float32) * hk
@@ -789,14 +806,15 @@ def plage():
     ccol = ccol + np.array([0.25, 0.18, 0.15]) * np.exp(-((yy - (cy - R * 0.3)) / 8) ** 2)[..., None] * dome[..., None] * 0.3
     a = lay(a, canopy, ccol)
     light = (0.15, -0.35, -0.9)                                    # le soleil derrière eux, sur la mer
-    common = dict(light=light, amb=(0.56, 0.5, 0.56), sun=(1.0, 0.85, 0.72), rim=((0.55, 0.4, 0.32), 0, 2),
-                  shadow=(0.12, 0.45, 0.3), soft=0.8, haze=((0.75, 0.68, 0.72), 0.06))
-    m = Person(W * 0.43, H * 0.9, H * 0.47, 'femme', hair='permanente', hat='paille', dress=True, arms='main', seed=41)
+    # (contre-jour : leur dos est dans l'ombre, sombre et terne ; le ciel mange leur contour)
+    common = dict(light=light, amb=(0.3, 0.27, 0.31), sun=(1.0, 0.85, 0.72), rim=((0.75, 0.55, 0.42), 0, 2),
+                  shadow=(0.12, 0.45, 0.3), soft=1.1, haze=((0.75, 0.68, 0.72), 0.1), lwrap=(4.5, 0.6), match=0.35)
+    m = Person(W * 0.43, H * 0.89, H * 0.43, 'femme', hair='permanente', hat='paille', dress=True, arms='main', seed=41)
     a = render_person(a, m, {'haut': ((0.64, 0.14, 0.16), 'fleurs'), 'bas': ((0.64, 0.14, 0.16), 'fleurs'),
                              'peau': (SKIN, 'peau'), 'cheveux': ((0.34, 0.24, 0.17), 'cheveux'),
                              'chapeau': ((0.9, 0.8, 0.56), 'laine'), 'chaussures': (0.75, 0.65, 0.5)},
                       seed=41, **common)
-    c = Person(W * 0.31, H * 0.915, H * 0.255, 'fille', hair='carre', arms='main', seed=42)
+    c = Person(W * 0.315, H * 0.905, H * 0.235, 'fille', hair='carre', arms='main', seed=42)
     a = render_person(a, c, {'haut': ((0.95, 0.78, 0.2), 'uni'), 'bas': ((0.95, 0.78, 0.2), 'uni'), 'jambes': (SKIN, 'peau'),
                              'peau': (SKIN, 'peau'), 'cheveux': ((0.36, 0.22, 0.12), 'cheveux'), 'chaussures': (SKIN, 'peau')},
                       seed=42, **common)
@@ -810,19 +828,14 @@ def plage():
 
 
 def jardin():
-    """Papi devant la maison, l'été où il a repeint les volets (vers 2008) : de dos, en bleu de travail et
-    casquette, le pot de peinture à la main, il regarde son travail. Façade rose aux volets verts (Poly
-    Haven vignaioli, CC0), ciel couvert."""
+    """La maison, l'été où Papi a repeint les volets (vers 2008) : les volets verts tout neufs, l'échelle encore
+    contre le mur, le pot de peinture au pied ; Papi n'est pas sur la photo (c'est lui qui la prend). Façade
+    rose aux volets verts (Poly Haven vignaioli, CC0), ciel couvert. (V2-RETOUCHES : la silhouette en bleu
+    de travail, collée sur la façade, est retirée.)"""
     W, H = W4, H4
     rs = np.random.RandomState(4102)
     a = plate('vignaioli/DSC07532', crop_box('vignaioli/DSC07532', 0.74, 0.5, 0.52, (W, H)), (W, H))
     a = np.clip(a * np.array([1.06, 1.0, 0.94]) * 1.08, 0, 1)
-    p = Person(W * 0.42, H * 0.985, H * 0.4, 'homme', hair='court', hat='casquette', arms='devant', seed=51, turn=0.3)
-    a = render_person(a, p, {'haut': ((0.2, 0.3, 0.5), 'tissu'), 'bas': ((0.18, 0.26, 0.44), 'tissu'),
-                             'peau': (SKIN, 'peau'), 'cheveux': ((0.42, 0.4, 0.38), 'cheveux'),
-                             'chapeau': ((0.16, 0.2, 0.3), 'laine'), 'chaussures': (0.2, 0.17, 0.15)},
-                      light=(0.3, -0.75, 0.55), amb=(0.6, 0.62, 0.66), sun=(0.55, 0.53, 0.5),
-                      shadow=(0.05, 0.12, 0.3), soft=0.8, seed=52)
     # l'échelle contre le mur, à droite, et le pot de peinture verte posé au pied
     def ladder(d, k):
         for x_ in (W * 0.7, W * 0.77):
@@ -831,9 +844,11 @@ def jardin():
             u = (i + 0.5) / 9
             y_ = H * (0.22 + 0.7 * u)
             d.line([((W * 0.7 + 30 * (1 - u)) * k, y_ * k), ((W * 0.77 + 30 * (1 - u)) * k, y_ * k)], fill=255, width=int(4 * k))
-    lad = mask(W, H, ladder)
+    lad = blur(mask(W, H, ladder), 0.7)
     a = a * (1 - 0.3 * blur(shift(lad, 10, 4), 4)[..., None])
-    a = lay(a, lad, np.array([0.55, 0.46, 0.34]) * (0.8 + 0.2 * noise(W, H, 1.0, 9, sy=6))[..., None])
+    # (montants éclairés du côté du ciel, bois grisé)
+    lit = 0.72 + 0.28 * np.clip(blur(lad, 2.0) - shift(blur(lad, 2.0), 3, 0), 0, 1) * 3
+    a = lay(a, lad, np.array([0.5, 0.43, 0.34]) * (lit * (0.85 + 0.15 * noise(W, H, 1.0, 9, sy=6)))[..., None])
     pot = mask(W, H, lambda d, k: d.rectangle([(W * 0.6) * k, (H * 0.86) * k, (W * 0.64) * k, (H * 0.925) * k], fill=255))
     a = a * (1 - 0.35 * blur(shift(pot, 6, 3), 3)[..., None])
     a = lay(a, pot, np.array([0.62, 0.6, 0.56]) * (0.75 + 0.3 * np.clip((np.arange(W)[None, :] - W * 0.6) / (W * 0.04), 0, 1))[..., None])
@@ -851,15 +866,15 @@ def labo():
     rs = np.random.RandomState(4103)
     a = plate('residential_garden/IMG_0603', crop_box('residential_garden/IMG_0603', 0.47, 0.5, 0.74, (W, H)), (W, H))
     a = np.clip((a - 0.02) * 1.06, 0, 1)
-    p = Person(W * 0.37, H * 0.93, H * 0.5, 'homme', hair='court', arms='bas', seed=61, turn=-0.2)
+    p = Person(W * 0.4, H * 0.8, H * 0.27, 'homme', hair='court', arms='bas', seed=61, turn=-0.2)
     a = render_person(a, p, {'haut': ((0.17, 0.18, 0.21), 'tissu'), 'bas': ((0.15, 0.16, 0.19), 'tissu'),
                              'peau': (SKIN, 'peau'), 'cheveux': ((0.38, 0.36, 0.34), 'cheveux'), 'chaussures': (0.06, 0.05, 0.05)},
                       light=(-0.4, -0.7, 0.4), amb=(0.62, 0.64, 0.68), sun=(0.6, 0.58, 0.54),
-                      shadow=(-0.1, 0.15, 0.3), soft=0.7, seed=62)
+                      shadow=(-0.1, 0.15, 0.3), soft=0.9, seed=62, lwrap=(2.5, 0.3), match=0.4)
     # le sac du cadeau de départ (papier kraft, anses en corde), dans la main droite
     J, _ = p.joints()
     wx, wy = J[1][2]
-    bag = mask(W, H, lambda d, k: d.rectangle([(wx - 12) * k, (wy + 8) * k, (wx + 14) * k, (wy + 40) * k], fill=255))
+    bag = blur(mask(W, H, lambda d, k: d.rectangle([(wx - 6) * k, (wy + 4) * k, (wx + 7) * k, (wy + 21) * k], fill=255)), 0.8)
     a = lay(a, bag, np.array([0.62, 0.48, 0.32]) * (0.9 + 0.1 * noise(W, H, 2.0, 7))[..., None])
     a = develop(a, rs, 'couleur', blur_px=0.55, grain=0.018, fade=0.15, vignette=0.15, warm=0.3)
     a = wear(a, rs, 0.25, scratches=2, dust=20)
@@ -873,10 +888,11 @@ def _couple(a, rs, x, yf, h, seed, light, amb, sun, gap=0.95, shadow=None):
     g = Person(x + gap * hh * 0.85, yf, h * 1.02, 'homme', hair='court', arms='bas', seed=seed + 1)
     a = render_person(a, g, {'haut': ((0.08, 0.08, 0.09), 'tissu'), 'bas': ((0.08, 0.08, 0.09), 'tissu'),
                              'peau': (SKIN, 'peau'), 'cheveux': ((0.12, 0.09, 0.07), 'cheveux'), 'chaussures': (0.03, 0.03, 0.03)},
-                      light=light, amb=amb, sun=sun, shadow=shadow, soft=0.9, seed=seed + 2)
-    a = render_person(a, b, {'haut': ((0.92, 0.9, 0.86), 'tissu'), 'bas': ((0.93, 0.91, 0.87), 'tissu'),
-                             'peau': (SKIN, 'peau'), 'cheveux': ((0.2, 0.14, 0.1), 'cheveux'), 'voile': (0.95, 0.94, 0.92)},
-                      light=light, amb=amb, sun=sun, shadow=shadow, soft=0.9, seed=seed + 3)
+                      light=light, amb=amb, sun=sun, shadow=shadow, soft=1.3, seed=seed + 2, lwrap=(3.5, 0.35), match=0.3)
+    # (robe et voile un peu moins blancs : la nuit, dans le couloir, la mariée brillait comme une lampe)
+    a = render_person(a, b, {'haut': ((0.8, 0.78, 0.74), 'tissu'), 'bas': ((0.81, 0.79, 0.75), 'tissu'),
+                             'peau': (SKIN, 'peau'), 'cheveux': ((0.2, 0.14, 0.1), 'cheveux'), 'voile': (0.84, 0.83, 0.8)},
+                      light=light, amb=amb, sun=sun, shadow=shadow, soft=1.3, seed=seed + 3, lwrap=(3.5, 0.35), match=0.3)
     return a
 
 
@@ -888,8 +904,8 @@ def mariage():
     a = plate('small_cathedral_02/DSC_0681', crop_box('small_cathedral_02/DSC_0681', 0.535, 0.55, 0.42, (W, H)), (W, H))
     a = _couple(a, rs, W * 0.5, H * 0.9, H * 0.42, 71, light=(0.2, -0.6, 0.5), amb=(0.6, 0.6, 0.62), sun=(0.7, 0.68, 0.64),
                 shadow=(0.1, 0.18, 0.3))
-    a = np.clip((a - 0.12) * 1.35, 0, 1)
-    a = develop(a, rs, 'sepia', blur_px=1.0, grain=0.04, fade=0.45, vignette=0.32)
+    a = np.clip((a - 0.12) * 1.3, 0, 0.94)
+    a = develop(a, rs, 'sepia', blur_px=1.1, grain=0.04, fade=0.45, vignette=0.32)
     a = wear(a, rs, 1.0, scratches=9, dust=90)
     save(border(a, rs, 'dentele', 0.05, paper=(0.93, 0.9, 0.82), yellow=0.6), 'mariage.png')
 
@@ -902,8 +918,8 @@ def gp_mariage():
     a = plate('small_cathedral_02/DSC_0701', crop_box('small_cathedral_02/DSC_0701', 0.58, 0.48, 0.4, (W, H)), (W, H))
     a = _couple(a, rs, W * 0.5, H * 0.86, H * 0.47, 81, light=(-0.75, -0.45, 0.35), amb=(0.42, 0.42, 0.44),
                 sun=(0.95, 0.92, 0.86), gap=0.9, shadow=(0.25, 0.18, 0.35))
-    a = np.clip((a - 0.1) * 1.3, 0, 1)
-    a = develop(a, rs, 'sepia', blur_px=1.1, grain=0.035, fade=0.35, vignette=0.4)
+    a = np.clip((a - 0.1) * 1.26, 0, 0.94)
+    a = develop(a, rs, 'sepia', blur_px=1.2, grain=0.035, fade=0.35, vignette=0.4)
     a = a * np.array([0.97, 0.99, 1.02])
     a = wear(a, rs, 0.6, scratches=4, dust=40)
     save(border(a, rs, 'ovale', paper=(0.86, 0.82, 0.72), yellow=0.4), 'gp_mariage.png')
@@ -942,39 +958,128 @@ def noel():
                                    d.ellipse([W * 0.59 * k, H * 0.705 * k, W * 0.618 * k, H * 0.742 * k], fill=255)))
     a = lay(a, blur(bow, 0.8), np.array([0.98, 0.84, 0.38]) * 0.95)
     a = a + blur(lid * (noise(W, H, 0.5, 22) > 0.8), 1.5)[..., None] * 0.5
+    # (le paquet est un peu derrière le plan de netteté : flou léger, le flash tombe plus bas que lui)
+    gm = np.clip(blur(np.maximum(np.maximum(box, side), np.maximum(lid, bow)), 2.0) * 1.5, 0, 1)
+    gfall = 0.8 + 0.2 * np.clip((H * 0.74 - yy) / (H * 0.14) + 1, 0, 1)
+    a = a * (1 - gm[..., None]) + blur(a, 1.3) * (gfall * gm)[..., None]
     c = Person(W * 0.44, H * 1.0, H * 0.72, 'fille', pose='genoux', hair='carre', arms='devant', seed=91, turn=0.4)
     a = render_person(a, c, {'haut': ((0.75, 0.1, 0.14), 'laine'), 'bas': ((0.75, 0.1, 0.14), 'laine'),
                              'peau': (SKIN, 'peau'), 'cheveux': ((0.3, 0.18, 0.1), 'cheveux'), 'chaussures': ((0.85, 0.75, 0.68), 'peau')},
-                      light=(0.05, -0.1, 1.0), amb=(0.2, 0.17, 0.15), sun=(1.1, 1.04, 0.98), soft=0.6, seed=92)
+                      light=(0.05, -0.1, 1.0), amb=(0.2, 0.17, 0.15), sun=(1.1, 1.04, 0.98), soft=4.5, seed=92,
+                      lwrap=(6.0, 0.2))
     a = develop(a, rs, 'couleur', blur_px=0.65, grain=0.03, fade=0.45, vignette=0.3, warm=0.8)
     a = wear(a, rs, 0.6)
     save(border(a, rs, 'blanc', 0.04, yellow=0.45), 'noel.png')
 
 
+def scribble(a, rs, region, ink=(0.07, 0.085, 0.2), strokes=760):
+    """Un visage rayé au stylo à bille (GDD : « visages hors cadre ou rayés au stylo » ; comme la photo de
+    Manon au visage rayé de sa chambre) : des boucles serrées et des zigzags d'encre bleu-noir, qui
+    débordent un peu de la zone (region : masque 0 à 1) jusqu'à la couvrir entièrement ; l'encre épaisse
+    brille un peu ; trois traits appuyés ont rayé l'émulsion jusqu'au papier. Rend l'image et le masque."""
+    H, W = a.shape[:2]
+    ys, xs = np.nonzero(region > 0.5)
+    cy, cx = ys.mean(), xs.mean()
+    ry, rx = (ys.max() - ys.min()) / 2.0, (xs.max() - xs.min()) / 2.0
+    ss = 3
+    im = Image.new('L', (W * ss, H * ss), 0)
+    d = ImageDraw.Draw(im)
+    for k in range(strokes):
+        ang, r = rs.uniform(0, 2 * np.pi), np.sqrt(rs.uniform(0, 1))
+        x, y = cx + np.cos(ang) * r * rx * 1.05, cy + np.sin(ang) * r * ry * 1.05
+        heading = rs.uniform(0, 2 * np.pi)
+        loop = rs.uniform(0.25, 0.65) * (1 if rs.uniform() < 0.5 else -1)
+        step = rs.uniform(1.8, 3.4)
+        pts = []
+        for i in range(rs.randint(25, 70)):
+            heading += loop + rs.normal(0, 0.3)
+            x += np.cos(heading) * step
+            y += np.sin(heading) * step * 1.1
+            dx, dy = (x - cx) / (rx * 1.12), (y - cy) / (ry * 1.12)
+            if dx * dx + dy * dy > 1.0:                             # la main revient sur le visage
+                x -= (x - cx) * 0.18
+                y -= (y - cy) * 0.18
+            pts.append((x * ss, y * ss))
+        d.line(pts, fill=int(rs.uniform(150, 255)), width=int(rs.choice([2, 3, 3, 4])), joint='curve')
+    for k in range(14):                                             # zigzags appuyés en travers
+        y = cy + rs.uniform(-0.9, 0.9) * ry
+        x = cx - rx * rs.uniform(0.9, 1.15)
+        pts = []
+        while x < cx + rx * 1.1:
+            pts.append((x * ss, (y + rs.uniform(-0.12, 0.12) * ry) * ss))
+            x += rs.uniform(4, 9)
+            y += rs.uniform(-6, 6)
+        d.line(pts, fill=255, width=5, joint='curve')
+    m = np.asarray(im.resize((W, H), Image.BOX), np.float32) / 255.0
+    core = np.clip(blur(region, 6.0) * 1.5 - 0.5, 0, 1)             # au cœur, l'encre bouche presque tout
+    m = np.clip(np.maximum(m * 1.1, core * (0.7 + 0.2 * noise(W, H, 1.2, rs.randint(1 << 30)))), 0, 1)
+    inkc = np.asarray(ink, np.float32)
+    sheen = np.clip(blur(m, 1.5) - 0.8, 0, 1) * 0.5 * noise(W, H, 0.8, rs.randint(1 << 30), sx=0.3, sy=1.0)
+    out = a * (1 - 0.94 * m[..., None]) + (inkc + sheen[..., None] * np.array([0.25, 0.27, 0.35])) * 0.94 * m[..., None]
+    # l'émulsion rayée jusqu'au papier : trois traits clairs, un peu en relief
+    sc = Image.new('L', (W * ss, H * ss), 0)
+    ds = ImageDraw.Draw(sc)
+    for k in range(3):
+        a0 = rs.uniform(-0.6, 0.6)
+        x0, y0 = cx - np.cos(a0) * rx * 0.9, cy - np.sin(a0) * ry * 0.7 + rs.uniform(-0.3, 0.3) * ry
+        x1, y1 = cx + np.cos(a0) * rx * 0.95, cy + np.sin(a0) * ry * 0.7 + rs.uniform(-0.3, 0.3) * ry
+        ds.line([(x0 * ss, y0 * ss), ((x0 + x1) / 2 * ss + rs.uniform(-6, 6), (y0 + y1) / 2 * ss), (x1 * ss, y1 * ss)],
+                fill=255, width=3, joint='curve')
+    scr = np.asarray(sc.resize((W, H), Image.BOX), np.float32) / 255.0
+    out = out * (1 - 0.8 * scr[..., None]) + np.array([0.9, 0.88, 0.82]) * 0.8 * scr[..., None]
+    return np.clip(out, 0, 1), m
+
+
 def ecole():
-    """La photo de classe de ta mère (vers 2007), fond bleu marbré : le flash du photographe a brûlé son
-    visage (comme le portrait de 1996 du couloir : un ovale blanc, sans traits) ; carré brun, col blanc,
-    gilet rouge."""
+    """La photo de classe de ta mère (vers 2007), fond bleu marbré, carré brun, col blanc, gilet rouge ; son
+    visage a été rayé au stylo à bille, jusqu'à disparaître (V2-RETOUCHES : avant, un ovale brûlé par le
+    flash, que la revue lisait comme un visage vide collé). L'ombre portée du flash sur la toile de fond."""
     W, H = H4, W4
     rs = np.random.RandomState(4107)
     a = studio_backdrop(W, H, rs, (0.14, 0.2, 0.34), (0.48, 0.6, 0.8), center=(0.5, 0.36), spread=0.5, marble=0.5)
     p = Person(W * 0.5, H * 1.3, H * 1.55, 'fille', pose='buste', hair='carre', seed=101, front=True, width=0.9)
-    a = render_person(a, p, {'haut': ((0.68, 0.1, 0.13), 'laine'), 'peau': (SKIN, 'peau'),
-                             'visage': ((0.86, 0.68, 0.6), 'brule'), 'cheveux': ((0.33, 0.2, 0.11), 'cheveux')},
-                      light=(-0.15, -0.25, 0.95), amb=(0.36, 0.38, 0.46), sun=(0.9, 0.86, 0.8),
-                      rim=((0.2, 0.25, 0.35), 2, 0), soft=1.6, seed=102)
+    parts = p.draw(W, H)
+    body = np.zeros((H, W), np.float32)
+    for v in parts.values():
+        body = np.maximum(body, v)
+    a = a * (1 - 0.32 * blur(shift(body, 16, 9), 12))[..., None]     # l'ombre du flash, à droite derrière elle
+    a = render_person(a, p, {'haut': ((0.56, 0.1, 0.13), 'laine'), 'peau': (SKIN, 'peau'),
+                             'visage': (SKIN, 'peau'), 'cheveux': ((0.33, 0.2, 0.11), 'cheveux')},
+                      light=(-0.35, -0.3, 0.88), amb=(0.34, 0.36, 0.44), sun=(0.92, 0.88, 0.82),
+                      rim=((0.2, 0.25, 0.35), 2, 0), soft=1.8, seed=102, lwrap=(4.0, 0.25), match=0.15)
     # le col blanc du chemisier, rabattu sur le gilet
     hh = p.hh
     t = p.top()
     yn = t + p.B['neck'] * hh
-    col = mask(W, H, lambda d, k: blob(d, k, [(W * 0.5 - 0.3 * hh, yn - 0.05 * hh), (W * 0.5, yn + 0.25 * hh),
-                                             (W * 0.5 + 0.3 * hh, yn - 0.05 * hh), (W * 0.5 + 0.7 * hh, yn + 0.25 * hh),
-                                             (W * 0.5 + 0.1 * hh, yn + 0.62 * hh), (W * 0.5 - 0.1 * hh, yn + 0.62 * hh),
-                                             (W * 0.5 - 0.7 * hh, yn + 0.25 * hh)], steps=6))
-    a = lay(a, blur(col, 1.2) * 0.97, np.array([0.95, 0.94, 0.92]) * (0.85 + 0.15 * noise(W, H, 2.0, 5))[..., None])
-    a = a + blur(np.clip(a.mean(-1) - 0.75, 0, 1), 9.0)[..., None] * 1.1     # halo de la surexposition
-    a = a + blur(np.clip(a.mean(-1) - 0.75, 0, 1), 3.0)[..., None] * 0.5
+    # (col Claudine : deux petits rabats arrondis de part et d'autre du cou)
+    col = mask(W, H, lambda d, k: (blob(d, k, [(W * 0.5 - 0.02 * hh, yn + 0.02 * hh), (W * 0.5 - 0.2 * hh, yn - 0.04 * hh),
+                                               (W * 0.5 - 0.44 * hh, yn + 0.1 * hh), (W * 0.5 - 0.38 * hh, yn + 0.3 * hh),
+                                               (W * 0.5 - 0.12 * hh, yn + 0.33 * hh)], steps=6),
+                                   blob(d, k, [(W * 0.5 + 0.02 * hh, yn + 0.02 * hh), (W * 0.5 + 0.2 * hh, yn - 0.04 * hh),
+                                               (W * 0.5 + 0.44 * hh, yn + 0.1 * hh), (W * 0.5 + 0.38 * hh, yn + 0.3 * hh),
+                                               (W * 0.5 + 0.12 * hh, yn + 0.33 * hh)], steps=6)))
+    # le gilet : côtes du tricot, la lumière du flash qui tombe vers la droite, une patte boutonnée
+    haut = parts['haut']
+    xx_ = np.arange(W, dtype=np.float32)[None, :]
+    ribs = 1 - 0.09 * (0.5 + 0.5 * np.sin(2 * np.pi * xx_ / 5.0))
+    side = 1 - 0.26 * np.clip((xx_ - W * 0.3) / (W * 0.65), 0, 1)
+    a = a * (1 - haut[..., None]) + a * (ribs * side * (0.92 + 0.08 * noise(W, H, 2.2, 7, sy=4.0)))[..., None] * haut[..., None]
+    plk = mask(W, H, lambda d, k: d.line([(W * 0.5 * k, (yn + 0.3 * hh) * k), (W * 0.505 * k, H * k)], fill=255, width=int(2 * k)))
+    a = a * (1 - 0.3 * blur(plk, 1.0) * haut)[..., None]
+    for i in range(3):
+        by = yn + (0.6 + 0.46 * i) * hh
+        btn = mask(W, H, lambda d, k: d.ellipse([(W * 0.5 + 6 - 0.05 * hh) * k, (by - 0.05 * hh) * k,
+                                                 (W * 0.5 + 6 + 0.05 * hh) * k, (by + 0.05 * hh) * k], fill=255))
+        a = a * (1 - 0.35 * blur(shift(btn, 1, 2), 1.2))[..., None]
+        a = lay(a, blur(btn, 0.7), np.array([0.8, 0.76, 0.7]) * (0.85 + 0.15 * np.clip((by - np.arange(H)[:, None]) / (0.05 * hh), -1, 1))[..., None])
+    cshade = 0.78 + 0.22 * np.clip(1 - (np.arange(H)[:, None] - yn) / (0.35 * hh), 0, 1)
+    a = a * (1 - 0.25 * blur(shift(col, 2, 4), 2.5))[..., None]
+    a = lay(a, blur(col, 1.4) * 0.97, np.array([0.86, 0.85, 0.83]) * (cshade * (0.88 + 0.12 * noise(W, H, 2.0, 5)))[..., None])
     a = develop(a, rs, 'couleur', blur_px=1.6, grain=0.022, fade=0.35, vignette=0.15, warm=0.4)
+    # le visage (et le front sous la frange) rayé au stylo, sur le tirage
+    face = np.clip(parts['visage'] + parts.get('frange', 0) * parts['tete'] * 0.0, 0, 1)
+    face = np.maximum(face, np.clip(blur(parts['visage'], 6.0) * 2.0 - 0.3, 0, 1))
+    a, _ = scribble(a, rs, face)
     a = wear(a, rs, 0.4, scratches=2, dust=30)
     save(border(a, rs, 'blanc', 0.05, yellow=0.3), 'ecole.png')
 
@@ -1029,7 +1134,7 @@ def famille():
     W, H = H4, W4
     rs = np.random.RandomState(4109)
     a = studio_backdrop(W, H, rs, (0.66, 0.62, 0.56), (0.97, 0.94, 0.88), center=(0.5, 0.42), spread=0.6, marble=0.18)
-    common = dict(light=(0.0, -0.3, -0.95), amb=(0.24, 0.22, 0.21), sun=(1.0, 0.95, 0.88), soft=1.0)
+    common = dict(light=(0.0, -0.3, -0.95), amb=(0.24, 0.22, 0.21), sun=(1.0, 0.95, 0.88), soft=1.4, lwrap=(5.0, 0.55))
     floor = H * 1.25                                                 # le sol, sous le cadre
     # le dossier de la chaise de Mamie, en bois tourné, qui dépasse derrière elle
     chair = mask(W, H, lambda d, k: (taper(d, k, (W * 0.17, H * 0.6), (W * 0.17, H * 1.05), 7, 7),

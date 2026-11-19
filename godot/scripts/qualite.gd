@@ -138,7 +138,22 @@ static func describe() -> String:
 
 # ------------------------------------------------------------------ application
 
-## Échelle de la 3D en Ultra (FSR 2) : native jusqu'en 1440p, « qualité » au-delà.
+## Anticrénelage temporel (FSR 2 « natif ») : Ultra, et Élevée depuis le lot V2-RETOUCHES (la revue voyait
+## les fils fins, câbles, tirettes et arêtes de plinthe en pointillés avec le SMAA seul) ; rendu net sur
+## vraie carte seulement (le rendu logiciel garde l'image bilinéaire d'avant, le rétro son chemin). Coût :
+## celui d'Ultra, de l'ordre de 1 ms par image en 1440p natif pour une carte de la classe d'une RTX 3070
+## (ordre de grandeur publié par AMD ; le TAA de Godot coûte moins mais floute et laisse des traînées).
+## Moyenne garde FSR 1 et FXAA, Basse FSR 1.
+## (« -- --aa-elevee=smaa » : Élevée comme avant, bilinéaire et SMAA, pour les comparaisons et les bancs.)
+static func fsr2_on(q: int, s: bool) -> bool:
+	if s:
+		return false
+	return q == ULTRA or (q == ELEVEE and not OS.get_cmdline_user_args().has("--aa-elevee=smaa"))
+
+const FSR2_SHARPNESS := 0.2
+
+
+## Échelle de la 3D en Élevée et Ultra (FSR 2) : native jusqu'en 1440p, « qualité » au-delà.
 static func fsr2_scale(window_h: int) -> float:
 	if window_h <= 1440:
 		return 1.0
@@ -199,21 +214,21 @@ static func apply(main: Main) -> void:
 		vp.use_debanding = false
 	else:
 		win.content_scale_mode = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
-		match q:
-			BASSE, MOYENNE:
-				vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR
-				vp.scaling_3d_scale = SCALE_3D[q]
-			ULTRA:
-				# FSR 2 « natif » : l'anticrénelage temporel (papier peint rayé, fils fins, reflets)
-				vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR2
-				vp.scaling_3d_scale = fsr2_scale(win.size.y)
-				vp.fsr_sharpness = 0.2
-			_:
-				vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
-				vp.scaling_3d_scale = 1.0
+		var fsr2 := fsr2_on(q, s)
+		if q <= MOYENNE:
+			vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR
+			vp.scaling_3d_scale = SCALE_3D[q]
+		elif fsr2:
+			# FSR 2 « natif » : l'anticrénelage temporel (papier peint rayé, fils fins, reflets)
+			vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR2
+			vp.scaling_3d_scale = fsr2_scale(win.size.y)
+			vp.fsr_sharpness = FSR2_SHARPNESS
+		else:
+			vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
+			vp.scaling_3d_scale = 1.0
 		if s:
 			vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_DISABLED
-		elif q == ULTRA:
+		elif fsr2:
 			vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_DISABLED     # (FSR 2 fait le sien)
 		else:
 			vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_SMAA if q >= ELEVEE else Viewport.SCREEN_SPACE_AA_FXAA

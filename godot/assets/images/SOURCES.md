@@ -17,8 +17,10 @@ Recadrées, réduites, retouchées (couleurs passées, grain, usure du tirage), 
 | photos/gp_mariage.png | small_cathedral_02 | DSC_0701 | https://dl.polyhaven.org/file/ph-assets/HDRIs/extra/Backplates/small_cathedral_02/jpg_plain/DSC_0701.jpg |
 | photos/jardin.png | vignaioli | DSC07532 | https://dl.polyhaven.org/file/ph-assets/HDRIs/extra/Backplates/vignaioli/jpg_plain/DSC07532.jpg |
 | photos/labo.png | residential_garden | IMG_0603 | https://dl.polyhaven.org/file/ph-assets/HDRIs/extra/Backplates/residential_garden/jpg_plain/IMG_0603.jpg |
+| bureau/calendrier_2040.png (photo du mois, bureau) | autumn_road | DSC_0211 | https://dl.polyhaven.org/file/ph-assets/HDRIs/extra/Backplates/autumn_road/jpg_plain/DSC_0211.jpg |
 
 photos/ecole.png, photos/aieule.png, photos/famille.png et photo.png : entièrement dessinées par les scripts.
+Les images de `images/bureau/` (calendrier de la pharmacie, diplôme, étiquettes) sont générées par `tools/gen_bureau.py` (lot V2-BUREAU) ; le diplôme est écrit en DejaVu Serif (non livrée : seules les lettres dessinées le sont).
 
 ## Matières (ambientCG, licence CC0, déjà dans le projet)
 

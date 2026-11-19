@@ -60,6 +60,9 @@ const SPILL_SPECULAR := 0.3
 @onready var flashlight: SpotLight3D = $Head/Camera/Flashlight
 @onready var ray: RayCast3D = $Head/Camera/Ray
 @onready var steps: AudioStreamPlayer = $Steps
+## Les mains et la lampe de poche à l'écran (scripts/viewmodel.gd, réglage « Mains visibles ») : la vue
+## pilote alors la lampe (sa place, sa visée, le poids de la présence) ; mains cachées, la lampe de V2-PRESENCE.
+@onready var viewmodel: Viewmodel = $Head/Camera/Viewmodel
 
 var yaw := 0.0
 var pitch := 0.0
@@ -114,6 +117,7 @@ func _ready() -> void:
 	presence.name = "Presence"
 	add_child(presence)
 	presence.setup(self)
+	viewmodel.setup(self, camera, flashlight)
 	Game.settings_changed.connect(apply_settings)
 
 

@@ -50,6 +50,9 @@ var fov := FOV_DEFAULT
 ## « Mouvements de la caméra » (0 à 1) : multiplie la respiration, l'impact des pas, le roulis et les
 ## secousses de la caméra (couche « présence », lot V2-PRESENCE). 0 = la caméra de la 0.3.3.
 var mouvements_camera := 1.0
+## « Mains visibles » : les mains du joueur et sa lampe de poche à l'écran (Viewmodel) ; sinon, la lampe
+## éclaire depuis l'épaule, comme en 0.3.3.
+var mains_visibles := true
 ## Style rétro (pixels) : image 640×360 agrandie sans lissage, palette réduite et tramage (l'aspect des
 ## versions 0.1 à 0.3). Désactivé : rendu net à la résolution de l'écran (main.gd, _apply_video).
 var style_retro := false
@@ -260,6 +263,7 @@ func _load_settings(path := SETTINGS_PATH) -> void:
 	luminosite = clampf(float(cfg.get_value("video", "luminosite", luminosite)), 0.0, 1.0)
 	fov = clampf(float(cfg.get_value("video", "fov", fov)), FOV_MIN, FOV_MAX)
 	mouvements_camera = clampf(float(cfg.get_value("confort", "mouvements_camera", mouvements_camera)), 0.0, 1.0)
+	mains_visibles = bool(cfg.get_value("video", "mains_visibles", mains_visibles))
 	style_retro = cfg.get_value("video", "style_retro", style_retro)
 	reduced_scares = cfg.get_value("accessibilite", "sursauts_reduits", reduced_scares)
 	soft_flashes = cfg.get_value("accessibilite", "eclairs_adoucis", soft_flashes)
@@ -280,6 +284,7 @@ func save_settings() -> void:
 	cfg.set_value("video", "luminosite", luminosite)
 	cfg.set_value("video", "fov", fov)
 	cfg.set_value("video", "style_retro", style_retro)
+	cfg.set_value("video", "mains_visibles", mains_visibles)
 	cfg.set_value("confort", "mouvements_camera", mouvements_camera)
 	cfg.set_value("accessibilite", "sursauts_reduits", reduced_scares)
 	cfg.set_value("accessibilite", "eclairs_adoucis", soft_flashes)

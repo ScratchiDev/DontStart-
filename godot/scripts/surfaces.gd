@@ -270,6 +270,43 @@ const MOQUETTE_M := 0.9
 const PARQUET_ORM_V2 := "herringbone_parquet/herringbone_parquet_orm_v2.jpg"
 const MOQUETTE_VAR := "Carpet016/moquette_var.png"
 
+## Retouches sur vraie carte (lot V2-RETOUCHES ; le rendu logiciel et ses tests gardent les matières d'avant) :
+##  - parquet : rugosité des lames de 0,6 à 0,82 (PARQUET_ORM_V3) : au-dessus du seuil de 0,6 où Godot
+##    coupe la réflexion en espace écran, le parquet ciré ne reflète plus que la sonde de la pièce, floue :
+##    plus de reflet net des pieds de chaise ni de filet orange au pied des meubles ;
+##  - moquette : variation plus marquée (MOQUETTE_VAR2, ±12 %, taches de poils couchés à deux échelles), et
+##    les chemins d'usure posés par les pièces (Wear.path) renforcés sur la moquette (after_build) ;
+##  - corniche (mats.crown) : plâtre peint mat comme le plafond (rugosité 0,92, reflet 0,25) au lieu du
+##    bois peint satiné : la gorge, tournée vers les suspensions, ne fait plus un tube de néon ;
+##  - lambris : une matière par pièce (LAMBRIS_MATS, Builder.LAMBRIS), textures Lambris/ (lames à joint en
+##    V, lames peintes, panneaux), générées par aaa_fab/V2-RETOUCHES/outils/gen_lambris.py (CC0, d'après
+##    Wood027).
+const PARQUET_ORM_V3 := "herringbone_parquet/herringbone_parquet_orm_v3.jpg"
+const MOQUETTE_VAR2 := "Carpet016/moquette_var2.png"
+const FULL_CROWN_TINT := Color(0.66, 0.645, 0.6)
+const CROWN_ROUGHNESS := 0.92
+const CROWN_SPECULAR := 0.25
+## Chemins d'usure sur la moquette : poils tassés, plus clairs et plus gris que le velours (teinte
+## multipliée par le masque du décalque, mélange de l'albédo).
+const MOQUETTE_PATH_TINT := Color(0.52, 0.38, 0.32)
+const MOQUETTE_PATH_MIX := 0.85
+## Lambris par pièce : clé de « mats » -> [texture sous Lambris/ (ou chemin complet avec « / »), mètres par
+## répétition, teinte, facteur de rugosité, masque de crasse HD (0 : sans crasse)]. Builder.LAMBRIS dit quelle
+## pièce prend quoi. Couleurs moyennes visées (sRGB) : miel (0,36 ; 0,22 ; 0,12), chêne foncé ciré (0,24 ;
+## 0,16 ; 0,1), noyer (0,26 ; 0,15 ; 0,09), crème passé (0,62 ; 0,58 ; 0,47), gris-bleu sourd (0,4 ; 0,45 ;
+## 0,47) : les peints restent assez sombres pour la nuit (la lampe de poche ne doit pas y trouver un mur
+## clair sur un tiers de la hauteur).
+const LAMBRIS_MATS := {
+	"lambris_miel": ["Lambris", 0.76, Color(0.72, 0.7, 0.68), 0.95, 0],
+	"lambris_chene": ["Lambris", 1.1, Color(0.48, 0.5, 0.56), 1.0, 2],
+	"boiserie_chene": ["Panneau", 1.2, Color(0.47, 0.5, 0.56), 1.0, 2],
+	"lambris_noyer": ["Panneau", 1.2, Color(0.51, 0.47, 0.5), 0.9, 2],
+	"lambris_creme": ["LambrisPeint", 0.8, Color(0.72, 0.68, 0.58), 1.0, 3],
+	"boiserie_creme": ["PaintedWood009C/PaintedWood009C", 1.0, Color(0.89, 0.89, 0.81), 1.0, 3],
+	"lambris_gris": ["LambrisPeint", 1.05, Color(0.46, 0.53, 0.58), 1.0, 3],
+	"boiserie_gris": ["PaintedWood009C/PaintedWood009C", 1.0, Color(0.57, 0.69, 0.81), 1.0, 3],
+}
+
 
 ## Remplit « mats » (dictionnaire partagé des pièces) : les clés et leur rôle ne changent pas, seules
 ## les matières deviennent photographiques. Les teintes reprennent la couleur moyenne d'avant.
@@ -301,9 +338,9 @@ static func build(mats: Dictionary) -> void:
 	# (rugosité constante 0,6 : la carte d'origine, très lisse, donnait un sol mouillé ; une carte de moins)
 	mats.floor = pbr("herringbone_parquet/herringbone_parquet", 3.4, Color(0.88, 0.82, 0.77), 1.0, true, true, 0.6)
 	(mats.floor as StandardMaterial3D).ao_light_affect = 0.35
-	if full and ResourceLoader.exists(DIR + PARQUET_ORM_V2):
+	if full and (ResourceLoader.exists(DIR + PARQUET_ORM_V3) or ResourceLoader.exists(DIR + PARQUET_ORM_V2)):
 		var fl := mats.floor as StandardMaterial3D
-		var orm2: Texture2D = load(DIR + PARQUET_ORM_V2)
+		var orm2: Texture2D = load(DIR + (PARQUET_ORM_V3 if ResourceLoader.exists(DIR + PARQUET_ORM_V3) else PARQUET_ORM_V2))
 		fl.ao_texture = orm2
 		fl.roughness = 1.0
 		fl.roughness_texture = orm2
@@ -334,9 +371,10 @@ static func build(mats: Dictionary) -> void:
 		mq.rim_enabled = true
 		mq.rim = 0.35
 		mq.rim_tint = 0.5
-		if ResourceLoader.exists(DIR + MOQUETTE_VAR):
+		var var_path := DIR + (MOQUETTE_VAR2 if ResourceLoader.exists(DIR + MOQUETTE_VAR2) else MOQUETTE_VAR)
+		if ResourceLoader.exists(var_path):
 			mq.detail_enabled = true
-			mq.detail_albedo = load(DIR + MOQUETTE_VAR)
+			mq.detail_albedo = load(var_path)
 			mq.detail_blend_mode = BaseMaterial3D.BLEND_MODE_MUL
 			mq.detail_uv_layer = BaseMaterial3D.DETAIL_UV_2
 			mq.uv2_triplanar = true
@@ -345,8 +383,52 @@ static func build(mats: Dictionary) -> void:
 		mats.moquette = mq
 	else:
 		mats.moquette = pbr_acg("Carpet016/Carpet016", 1.7, Color(0.51, 0.32, 0.28), 1.0, true)
+	if full:
+		_build_retouches(mats)
 	# crasse HD : une image après la construction, vraie carte graphique seulement (hors de B16)
 	schedule_hd(mats)
+
+
+## Corniche et lambris de chaque pièce (vraie carte seulement ; voir PARQUET_ORM_V3 et LAMBRIS_MATS).
+## Une clé absente de « mats » (texture manquante) laisse Builder.trim sur les matières d'avant.
+static func _build_retouches(mats: Dictionary) -> void:
+	var crown := pbr("PaintedPlaster017/PaintedPlaster017", 2.0, FULL_CROWN_TINT, 0.3, false, false, CROWN_ROUGHNESS)
+	crown.resource_name = "corniche_plaster"
+	crown.metallic_specular = CROWN_SPECULAR
+	mats.crown = grime(crown, 0.6, 1)
+	if not ResourceLoader.exists(DIR + "Lambris/Lambris_albedo.jpg"):
+		return
+	for k: String in LAMBRIS_MATS:
+		var e: Array = LAMBRIS_MATS[k]
+		var base: String = e[0] if String(e[0]).contains("/") else "Lambris/" + String(e[0])
+		var m := pbr(base, float(e[1]), e[2] as Color, 1.0, true, false, -1.0)
+		m.resource_name = k
+		m.roughness = float(e[3])
+		if int(e[4]) > 0:
+			m = grime(m, 0.6, int(e[4])) as StandardMaterial3D
+		mats[k] = m
+
+
+## Après la construction et l'habillage des pièces (Main._after_build, vraie carte seulement, hors de B16) :
+## les chemins d'usure (Wear.path, genre « chemin_usure ») posés sur une moquette prennent la teinte et le
+## mélange de MOQUETTE_PATH_* (avec ceux du parquet, ils se perdaient dans le velours sombre). Rend le nombre
+## de décalques retouchés.
+static func after_build(tree: SceneTree) -> int:
+	if Qualite.soft() or tree == null:
+		return 0
+	var n := 0
+	for d in tree.get_nodes_in_group("usure"):
+		var dc := d as Decal
+		if dc == null or String(dc.get_meta("usure", "")) != "chemin_usure":
+			continue
+		var room := dc.get_parent() as HouseRoom
+		if room == null or room.floor_kind != "moquette":
+			continue
+		var a := dc.modulate.a
+		dc.modulate = Color(MOQUETTE_PATH_TINT.r, MOQUETTE_PATH_TINT.g, MOQUETTE_PATH_TINT.b, a)
+		dc.albedo_mix = MOQUETTE_PATH_MIX
+		n += 1
+	return n
 
 
 static func _paper(base: String, tint: Color) -> StandardMaterial3D:

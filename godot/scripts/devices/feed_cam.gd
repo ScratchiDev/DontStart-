@@ -15,7 +15,8 @@ extends Node3D
 ##   cam.look_at(Vector3(-6.4, -2.2, 1.6))
 ##   cam.build()
 
-const ALL_LAYERS := 0xFFFFF
+## (sans la couche 14 : les mains et la lampe du joueur, Viewmodel.LAYER, ne sont vues que par sa caméra)
+const ALL_LAYERS := 0xFFFFF & ~(1 << (Viewmodel.LAYER - 1))
 const FEED_SHADER_CODE := """
 shader_type canvas_item;
 // Image d'une caméra de surveillance : noir et blanc, contraste, grain figé à la cadence de la
