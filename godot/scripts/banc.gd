@@ -6,7 +6,9 @@ extends Node
 ##   Linux   : ./DontPlay.x86_64 -- --banc
 ##   « -- --banc=rapide » : 1 s de mesure par vue au lieu de MEASURE_S ;
 ##   « -- --banc=ultra » (ou basse, moyenne, elevee) : ce seul niveau ;
-##   « -- --banc --resolution 2560x1440 » : la taille de la fenêtre (sinon celle des réglages du jeu).
+##   La taille mesurée est celle du jeu : en plein écran (réglage par défaut), la définition de l'écran (2560 × 1440
+##   sur l'écran de l'auteur). En fenêtre : "Don't Play.exe" --resolution 2560x1440 -- --banc (les options du
+##   moteur, comme --resolution, se placent AVANT « -- », celles du jeu après).
 ##
 ## À la place du menu, après la construction de la maison : pour chaque niveau (Basse, Moyenne, Élevée,
 ## Ultra), le joueur est posé dans les 6 pièces, de « jour » (une lampe de service au plafond, comme les
@@ -201,7 +203,13 @@ func _measure(q: int, vue: String, measure_s: float, _rid: RID) -> Dictionary:
 		total += t
 	var mean_ms := total / maxf(_times.size(), 1.0)
 	var p99: float = sorted[mini(int(ceil(sorted.size() * 0.99)) - 1, sorted.size() - 1)] if sorted.size() > 0 else mean_ms
+	var vp := get_viewport()
+	var mode := ["bilinéaire", "FSR 1", "FSR 2", "MetalFX", "MetalFX temporel"]
+	var rendu := "%s ×%.2f · %s" % [mode[clampi(vp.scaling_3d_mode, 0, mode.size() - 1)], vp.scaling_3d_scale,
+		"MSAA ×%d" % (1 << vp.msaa_3d) if vp.msaa_3d > 0 else ("SMAA" if vp.screen_space_aa == Viewport.SCREEN_SPACE_AA_SMAA else
+		("FXAA" if vp.screen_space_aa == Viewport.SCREEN_SPACE_AA_FXAA else "sans AA d'écran"))]
 	return {
+		"rendu": rendu,
 		"niveau": Qualite.name_of(q), "effectif": Qualite.name_of(Qualite.effective()), "vue": vue,
 		"images": _times.size(), "fps": 1000.0 / maxf(mean_ms, 0.001), "fps_1pc": 1000.0 / maxf(p99, 0.001),
 		"ms": mean_ms, "gpu_ms": _gpu / n, "cpu_ms": _cpu / n, "draws": _draws / n, "vram_mo": _vram, "ram_mo": _ram,
@@ -212,10 +220,10 @@ func _write() -> void:
 	var size := DisplayServer.window_get_size()
 	var csv := FileAccess.open(CSV_PATH, FileAccess.WRITE)
 	if csv:
-		csv.store_line("niveau;effectif;vue;images;ips_moy;ips_1pc_bas;ms_moy;carte_ms;proc_ms;appels_dessin;video_mo;memoire_mo;largeur;hauteur")
+		csv.store_line("niveau;effectif;vue;images;ips_moy;ips_1pc_bas;ms_moy;carte_ms;proc_ms;appels_dessin;video_mo;memoire_mo;largeur;hauteur;rendu")
 		for r in rows:
-			csv.store_line("%s;%s;%s;%d;%.1f;%.1f;%.2f;%.2f;%.2f;%d;%.0f;%.0f;%d;%d" % [r.niveau, r.effectif, r.vue, r.images, r.fps, r.fps_1pc,
-				r.ms, r.gpu_ms, r.cpu_ms, roundi(r.draws), r.vram_mo, r.ram_mo, size.x, size.y])
+			csv.store_line("%s;%s;%s;%d;%.1f;%.1f;%.2f;%.2f;%.2f;%d;%.0f;%.0f;%d;%d;%s" % [r.niveau, r.effectif, r.vue, r.images, r.fps, r.fps_1pc,
+				r.ms, r.gpu_ms, r.cpu_ms, roundi(r.draws), r.vram_mo, r.ram_mo, size.x, size.y, r.rendu])
 		csv.close()
 	var lines: PackedStringArray = []
 	lines.append("DON'T PLAY — BANC D'ESSAI DES PRÉRÉGLAGES (%s)" % ProjectSettings.get_setting("application/config/version", ""))
@@ -252,6 +260,8 @@ func _write() -> void:
 		lines.append("%-8s %-8s %9.1f %11.1f %9.2f %9.2f %8d %9.0f" % [lv, a[0].effectif, k / fps, low, gpu / k, cpu / k, roundi(dr / k), vram])
 	lines.append("")
 	lines.append("(i/s moy : moyenne harmonique des vues ; 1 % bas : la pire vue ; vidéo : maximum.)")
+	for lv in by_level:
+		lines.append("Rendu %s : %s" % [lv, (by_level[lv] as Array)[0].rendu])
 	for lv in by_level:
 		var worst := INF
 		var worst_v := ""

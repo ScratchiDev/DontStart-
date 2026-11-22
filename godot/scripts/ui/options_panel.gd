@@ -37,6 +37,9 @@ var _focused: OptionRow = null
 var _row_w := 350.0
 var _value_w := 140.0
 var _row_h := 17.0
+var _fade_mask: TextureRect = null
+var _fade_grad: Gradient = null
+var _fade_key := ""
 
 
 func _init(is_net := true) -> void:
@@ -113,7 +116,33 @@ func _build() -> void:
 	scroll.follow_focus = true
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
-	add_child(scroll)
+	if net:
+		# la liste s'efface en fondu là où elle déborde (en bas, et en haut une fois défilée) : plus de ligne
+		# tranchée net au bord. Masque = alpha d'un dégradé (clip_children), mis à jour au défilement.
+		_fade_grad = Gradient.new()
+		var gt := GradientTexture2D.new()
+		gt.gradient = _fade_grad
+		gt.width = 4
+		gt.height = 256
+		gt.fill_from = Vector2(0, 0)
+		gt.fill_to = Vector2(0, 1)
+		_fade_mask = TextureRect.new()
+		_fade_mask.texture = gt
+		_fade_mask.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		_fade_mask.stretch_mode = TextureRect.STRETCH_SCALE
+		_fade_mask.clip_children = CanvasItem.CLIP_CHILDREN_ONLY
+		_fade_mask.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_fade_mask.position = scroll.position
+		_fade_mask.size = scroll.size
+		add_child(_fade_mask)
+		scroll.position = Vector2.ZERO
+		_fade_mask.add_child(scroll)
+		var vb := scroll.get_v_scroll_bar()
+		vb.value_changed.connect(func(_v: float) -> void: _update_fade())
+		vb.changed.connect(_update_fade)
+		_update_fade()
+	else:
+		add_child(scroll)
 	var holder := VBoxContainer.new()
 	holder.custom_minimum_size = Vector2(_row_w, 0)
 	scroll.add_child(holder)
@@ -224,7 +253,7 @@ func _binding_header() -> Control:
 		var fs := UiStyle.TINY if net else 10
 		var col := UiStyle.INK_FAINT if net else Color(0.5, 0.49, 0.44)
 		var vx := _row_w - _value_w
-		var w := (_value_w - 52.0) / 2.0
+		var w := OptionRow.slot_width(_value_w, net)
 		var y := 7.0 if net else 10.0
 		c.draw_string(f, Vector2(vx, y), "TOUCHE", HORIZONTAL_ALIGNMENT_CENTER, w, fs, col)
 		c.draw_string(f, Vector2(vx + w + 4.0, y), "AUTRE", HORIZONTAL_ALIGNMENT_CENTER, w, fs, col)
@@ -418,6 +447,24 @@ func show_tab(i: int, sound := true) -> void:
 		UiStyle.play_ui("tick")
 	scroll.scroll_vertical = 0
 	focus_first.call_deferred()
+
+
+## Fondu des bords de la liste (style net) : en bas s'il reste des lignes plus bas, en haut si elle a défilé.
+func _update_fade() -> void:
+	if _fade_grad == null or scroll == null:
+		return
+	var vb := scroll.get_v_scroll_bar()
+	var hidden_below := vb.max_value - vb.page - vb.value > 1.0
+	var hidden_above := vb.value > 1.0
+	var key := "%s%s" % [hidden_above, hidden_below]
+	if key == _fade_key:
+		return
+	_fade_key = key
+	var f := clampf(16.0 / maxf(scroll.size.y, 1.0), 0.02, 0.2)
+	var top_a := 0.0 if hidden_above else 1.0
+	var bot_a := 0.0 if hidden_below else 1.0
+	_fade_grad.offsets = PackedFloat32Array([0.0, f, 1.0 - f, 1.0])
+	_fade_grad.colors = PackedColorArray([Color(1, 1, 1, top_a), Color.WHITE, Color.WHITE, Color(1, 1, 1, bot_a)])
 
 
 func focus_first() -> void:

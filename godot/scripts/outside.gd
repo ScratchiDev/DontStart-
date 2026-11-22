@@ -47,8 +47,10 @@ var _in_base := -1.0
 const FLASH_WHITE_POINT := 0.9
 const BOLT_SPECULAR_NET := 0.15
 ## Ciel derrière les vitres, rendu net (0,6 avant l'étalonnage final ; hors éclair, à 0,4 et avec une vitre plus
-## sombre, le jardin disparaissait : 2/255 en haut de la vitre).
-const SKY_NET_K := 0.5
+## sombre, le jardin disparaissait : 2/255 en haut de la vitre). 0,8 avec la vitre (0,45 ; 0,5 ; 0,6) : haut de la
+## vitre à 6/255 (p90 9), les arbres nus et le toit d'en face se découpent en silhouettes sur le ciel, sans le
+## panneau bleu uniforme d'avant (« -- --tune=sky:<v> »).
+const SKY_NET_K := 0.8
 const THUNDER_DB_PER_S := -3.2         # tonnerre : -3,2 dB par seconde de délai au-delà de 0,7 s
 const THUNDER_SHAKE_DELAY := 1.2       # tonnerre proche (délai < 1,2 s) : petite secousse de la vue
 const THUNDER_SHAKE := 0.05
@@ -874,7 +876,7 @@ func _apply_style() -> void:
 	if sky and not _striking:
 		if _sky_base < 0.0:
 			_sky_base = sky.energy_multiplier
-		sky.energy_multiplier = _sky_base * (SKY_NET_K if net else 1.0)
+		sky.energy_multiplier = _sky_base * (Main.tune("sky", SKY_NET_K) if net else 1.0)
 	if lamp_in:
 		if _in_base < 0.0:
 			_in_base = _in_energy

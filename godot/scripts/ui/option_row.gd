@@ -220,9 +220,24 @@ func _track_rect() -> Rect2:
 	return Rect2(_value_x() + 4.0, y - 1.0, SLIDER_W, 2.0)
 
 
+## Largeur d'une case de touche (les en-têtes de colonnes d'OptionsPanel s'y alignent). En rétro, la colonne
+## de la manette est plus large (« Stick G ↑ » en VT323).
+static func slot_width(value_w_: float, net_: bool) -> float:
+	return (value_w_ - (52.0 if net_ else 70.0)) / 2.0
+
+
 func _slot_rect(i: int) -> Rect2:
-	var w := (value_w - 52.0) / 2.0
+	var w := slot_width(value_w, net)
 	return Rect2(_value_x() + i * (w + 4.0), 2.0, w, size.y - 4.0)
+
+
+## Rétro : VT323 n'est net qu'en 20 et 10 px ; un nom trop long pour sa case (« Clic gauche », « Stick G ↑ »)
+## passe en 10 px au lieu d'être coupé. [police, taille, ligne de base]
+func _fit(font: Font, fs: int, base: float, t: String, w: float) -> Array:
+	if net or font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x <= w:
+		return [font, fs, base]
+	var sm: Font = Connected.no_liga(Game.fonts.pixel_small) if Game.fonts.has("pixel_small") else font
+	return [sm, 10, (size.y + sm.get_ascent(10) - sm.get_descent(10)) / 2.0]
 
 
 func _draw() -> void:
@@ -285,11 +300,14 @@ func _draw() -> void:
 				if t == "—":
 					cc = c_dim
 				var sfs := fs - 1 if net else fs
-				draw_string(font, Vector2(sr.position.x, base), t, HORIZONTAL_ALIGNMENT_CENTER, sr.size.x, sfs, cc)
+				var ft := _fit(font, sfs, base, t, sr.size.x - 2.0)
+				draw_string(ft[0], Vector2(sr.position.x, ft[2]), t, HORIZONTAL_ALIGNMENT_CENTER, sr.size.x, ft[1], cc)
 			if pad_text != "":
 				var sfs2 := (fs - 2) if net else fs
-				draw_string(font, Vector2(_slot_rect(1).end.x + 4.0, base), pad_text, HORIZONTAL_ALIGNMENT_RIGHT,
-					size.x - _slot_rect(1).end.x - 8.0, sfs2, c_dim)
+				var pw := size.x - _slot_rect(1).end.x - 8.0
+				var fp := _fit(font, sfs2, base, pad_text, pw)
+				draw_string(fp[0], Vector2(_slot_rect(1).end.x + 4.0, fp[2]), pad_text, HORIZONTAL_ALIGNMENT_RIGHT,
+					pw, fp[1], c_dim)
 
 
 func _draw_choice(font: Font, fs: int, base: float, t: String, hot: bool, c_val: Color, c_dim: Color) -> void:

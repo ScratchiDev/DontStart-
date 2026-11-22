@@ -52,8 +52,10 @@ const LATTE_WAIT := 6.0
 ## (une vraie lampe de poche éclaire aussi à côté de son rond) ; sans ombre, pas dans le brouillard.
 ## Étalonnage final (lot V3-ETALONNAGE) : à 4 % sur 65°, il lavait des murs entiers (mère nuit_b : 22/255
 ## de médiane avec lui, 9 sans) ; resserré et plus faible, il ne fait plus qu'un liseré autour du rond.
-const SPILL_ANGLE := 45.0
-const SPILL_ENERGY := 0.012
+## (Reprise : à 1,2 % sur 45°, les vues larges restaient bouchées hors du cône — mère nuit_b 1,9/255, 63 % sous
+## 4 ; à 2 % sur 58°, la pièce se devine autour du rond sans que les murs proches ne bougent : amis nuit_a 13,8 -> 14.)
+const SPILL_ANGLE := 58.0
+const SPILL_ENERGY := 0.02
 const SPILL_ATTENUATION := 2.5
 const SPILL_RANGE := 6.0
 const SPILL_SPECULAR := 0.3

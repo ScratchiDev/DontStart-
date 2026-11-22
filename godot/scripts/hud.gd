@@ -752,14 +752,20 @@ func _show_chapter(act: String, title: String, delay: float) -> void:
 	chapter.set_anchors_preset(Control.PRESET_FULL_RECT)
 	if net:
 		chapter.draw.connect(func() -> void:
+			# (bande en trois paliers : un dégradé doux, sans arête visible, assez sombre au centre pour qu'« ACTE II »
+			# reste lisible sur un tableau de liège ou un mur éclairé)
 			var w := chapter.size.x
-			var cy := chapter.size.y / 2.0 - 46.0
+			var cy := chapter.size.y / 2.0 - 48.0
 			var t := Color(0, 0, 0, 0.0)
-			var m := Color(0, 0, 0, 0.42)
-			chapter.draw_polygon(PackedVector2Array([Vector2(0, cy - 44), Vector2(w, cy - 44), Vector2(w, cy), Vector2(0, cy)]),
-				PackedColorArray([t, t, m, m]))
-			chapter.draw_polygon(PackedVector2Array([Vector2(0, cy), Vector2(w, cy), Vector2(w, cy + 44), Vector2(0, cy + 44)]),
-				PackedColorArray([m, m, t, t])))
+			var q := Color(0, 0, 0, 0.3)
+			var m := Color(0, 0, 0, 0.56)
+			for side in [-1.0, 1.0]:
+				var y1: float = cy + side * 22.0
+				var y2: float = cy + side * 56.0
+				chapter.draw_polygon(PackedVector2Array([Vector2(0, cy), Vector2(w, cy), Vector2(w, y1), Vector2(0, y1)]),
+					PackedColorArray([m, m, q, q]))
+				chapter.draw_polygon(PackedVector2Array([Vector2(0, y1), Vector2(w, y1), Vector2(w, y2), Vector2(0, y2)]),
+					PackedColorArray([q, q, t, t])))
 	var col := VBoxContainer.new()
 	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	col.set_anchors_preset(Control.PRESET_CENTER)
@@ -773,7 +779,7 @@ func _show_chapter(act: String, title: String, delay: float) -> void:
 	var a: Label
 	var t: Label
 	if net:
-		a = UiStyle.label(act.to_upper(), UiStyle.tracked(UiStyle.sans_semi(), 3), UiStyle.SMALL, Color(UiStyle.INK, 0.75), true)
+		a = UiStyle.label(act.to_upper(), UiStyle.tracked(UiStyle.sans_semi(), 3), UiStyle.SMALL + 1, Color(UiStyle.INK, 0.9), true)
 		t = UiStyle.label(title, UiStyle.serif_it(), 26, UiStyle.INK, true)
 	else:
 		a = Label.new()

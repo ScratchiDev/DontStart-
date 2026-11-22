@@ -402,8 +402,10 @@ const NET_VIGNETTE_INNER := 0.25
 const NET_BLACK_POINT := 0.008
 ## Vraie carte (lot V2-NUIT) : point noir moitié moins fort. Avec la lampe qui découvre et le halo resserré,
 ## 0,008 écrasait à 0 les ombres de la nuit (23 à 45 % de pixels nuls) ; à 0,004, elles gardent leurs
-## dégradés (le pied de courbe, lui, ne change pas).
-const FULL_BLACK_POINT := 0.004
+## dégradés (le pied de courbe, lui, ne change pas). Étalonnage final (V3-ETALONNAGE) : 0,002 ; à 0,004, 9 à
+## 36 % de pixels nuls dans les vues larges de nuit (mère nuit_b, grands-parents nuit_b, bureau nuit_b), qui
+## perdaient leurs dégradés (« -- --tune=noir:<v> » pour comparer).
+const FULL_BLACK_POINT := 0.002
 const NET_TOE := 0.06
 ## « Luminosité » de 0 à 1 : le point noir bouge de ±0,01 et le pied de courbe de ±0,06 autour du défaut
 ## (de 0,018 et 0,12, sombre, à 0 et 0, clair).
@@ -419,7 +421,9 @@ const FLASH_COOKIE := preload("res://assets/textures/flashlight_cookie.png")
 ## faisceau découvre, le reste de la pièce se devine à peine. Étalonnage final (V3-ETALONNAGE) : à 3, le
 ## rebond remplissait encore la pièce (couloir de 27 à 16 sans lui, salle de bain de 34 à 19) ; avec le
 ## masque et le débordement resserrés, à 2 le rebond fait un halo autour du rond et les volumes de la pièce
-## se devinent (médianes de nuit 4 à 10/255 dans les chambres).
+## se devinent (médianes de nuit 4 à 10/255 dans les chambres). (Reprise de l'étalonnage : plus fort, il ne
+## remonte pas que les vues larges restées noires — mère nuit_b, bureau — mais d'abord les murs proches : à 2,3,
+## amis nuit_a 15 -> 19, couloir nuit_a 10 -> 16 ; c'est le débordement et le point noir qui relèvent le fond.)
 const FLASH_GI_NET := 2.0
 const FLASH_GI_SOFT := 6.0
 ## Brouillard volumétrique, rendu net sur vraie carte : part de la VoxelGI qu'il diffuse (1 par défaut).
@@ -653,7 +657,7 @@ static func _cmd_float(prefix: String, fallback: float) -> float:
 ## Point noir (x) et pied de courbe (y) du rendu net pour une « Luminosité » de 0 (sombre) à 1 (clair).
 static func net_curve(luminosite: float) -> Vector2:
 	var d := 0.5 - clampf(luminosite, 0.0, 1.0)
-	var bp := NET_BLACK_POINT if Qualite.soft() else FULL_BLACK_POINT
+	var bp := NET_BLACK_POINT if Qualite.soft() else tune("noir", FULL_BLACK_POINT)
 	return Vector2(maxf(bp + d * LUMINOSITE_BLACK, 0.0), maxf(NET_TOE + d * LUMINOSITE_TOE, 0.0))
 
 
