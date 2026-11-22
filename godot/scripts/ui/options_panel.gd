@@ -55,7 +55,7 @@ func _ready() -> void:
 func _build() -> void:
 	var lx := 40.0 if net else 24.0
 	_row_w = 350.0 if net else 404.0
-	_value_w = 184.0 if net else 140.0
+	_value_w = 184.0 if net else 170.0
 	_row_h = 17.0 if net else 22.0
 	var top := 22.0 if net else 8.0
 	var head: Label

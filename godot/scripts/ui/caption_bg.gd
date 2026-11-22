@@ -19,6 +19,7 @@ var _sb := StyleBoxFlat.new()
 
 func _init() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	visible = false
 	_sb.set_corner_radius_all(3)
 	_sb.corner_detail = 5
 	_sb.anti_aliasing = true
@@ -55,7 +56,7 @@ func refresh() -> void:
 
 func _draw() -> void:
 	var n := _para.get_line_count()
-	if n == 0:
+	if n == 0 or font == null:
 		return
 	_sb.bg_color = color
 	var lh := font.get_height(font_size) + line_extra

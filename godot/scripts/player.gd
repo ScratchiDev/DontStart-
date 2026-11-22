@@ -92,7 +92,7 @@ const FLASH_NEAR_MIN_NET := 0.18
 const FLASH_NEAR_MIN_ITEM_NET := 0.35
 ## Reflet de la lampe en rendu net sur vraie carte (0,5 par défaut) : les vernis et les peintures laquées à
 ## moins d'un mètre (appuis, montants, cadres) ne renvoient plus un reflet blanc ; appliqué par Main.
-const FLASH_SPECULAR_NET := 0.3
+const FLASH_SPECULAR_NET := 0.2
 ## Rendu net sur vraie carte : rayons dans le rond (angle depuis l'axe) et part de la lumière du centre qu'y
 ## porte le masque de la lampe (Main.flash_cookie_net : épaule du point chaud ≈ 0,6 vers 9°, couronne ≈ 0,42).
 const FLASH_NEAR_EDGE := [[9.0, 0.6], [18.0, 0.42]]

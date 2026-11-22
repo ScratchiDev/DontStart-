@@ -14,9 +14,9 @@ uniform sampler2D depth_tex : hint_depth_texture, filter_nearest;
 uniform vec2 glass_size = vec2(1.4, 1.25);   // en mètres, pour garder des gouttes rondes
 uniform float rain = 1.0;
 uniform float flash = 0.0;                   // éclair : la vitre s'illumine
-// (étalonnage final, lot V3-ETALONNAGE : plus sombre et moins bleue ; à (0,5 ; 0,55 ; 0,64), la vitre de nuit
-// était un écran bleu uniforme, médiane 47/255 contre 6 en 0.3.3)
-uniform vec3 tint : source_color = vec3(0.34, 0.37, 0.42);
+// (étalonnage final, lot V3-ETALONNAGE : un peu plus sombre et moins bleue ; à (0,5 ; 0,55 ; 0,64), la vitre de
+// nuit, prise pendant un éclair, paraissait un écran bleu uniforme)
+uniform vec3 tint : source_color = vec3(0.45, 0.5, 0.6);
 uniform float refraction = 0.022;
 uniform float frost = 0.32;
 uniform vec3 frost_color : source_color = vec3(0.5, 0.53, 0.56);

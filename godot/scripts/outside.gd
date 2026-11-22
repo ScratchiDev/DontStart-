@@ -26,10 +26,10 @@ signal flash_peak                      # le palier le plus fort de l'éclair est
 const BOLT_NET_ANGLE := 13.0
 ## Étalonnage final (lot V3-ETALONNAGE), rendu net hors « Éclairs adoucis » : l'éclair saisit sans brûler
 ## (38_fenetre_clovis avait 30 % de pixels écrêtés et un sous-titre illisible, 06e 14 %). Crêtes × BOLT_NET_K
-## (42 / 60 -> 23 / 33), et le même facteur sur tout ce qui flashe avec lui : ciel, poussée de l'ambiance
+## (42 / 60 -> 17 / 24), et le même facteur sur tout ce qui flashe avec lui : ciel, poussée de l'ambiance
 ## (BOLT_AMBIENT), lunes des fenêtres (MOON_FLASH_K), reflet de la vitre (GLASS_FLASH_NET). Mêmes paliers,
 ## mêmes tirages ; « Éclairs adoucis » inchangé.
-const BOLT_NET_K := 0.55
+const BOLT_NET_K := 0.4
 const BOLT_AMBIENT := 0.8              # éclairage ambiant + 0,8 × k × e / 60 pendant le flash
 const MOON_FLASH_K := 3.0              # lunes des fenêtres × (1 + 3 × k × e / 60)
 const GLASS_FLASH_NET := 0.6
@@ -40,10 +40,15 @@ const MOON_FLASH_ADOUCI := 12.0
 ## l'appui de la fenêtre et le lit, en plein dans l'éclair, gardent leur matière au lieu de virer au blanc.
 ## Reflet du projecteur de l'éclair (0,5 par défaut : l'appui ciré renvoyait l'éclair en plein).
 const FLASH_EXPO_K := 1.0
+## Lampadaire dans la chambre (lamp_in, rendu net hors rétro) : × LAMP_IN_NET_K. À 14, la tache orange sur le
+## lit, sous la fenêtre, était écrêtée (38 : 3 % de l'image) ; la rue garde son lampadaire (lamp_down).
+const LAMP_IN_NET_K := 0.6
+var _in_base := -1.0
 const FLASH_WHITE_POINT := 0.9
 const BOLT_SPECULAR_NET := 0.15
-## Ciel derrière les vitres, rendu net (0,6 avant l'étalonnage final : la vitre de nuit restait laiteuse).
-const SKY_NET_K := 0.4
+## Ciel derrière les vitres, rendu net (0,6 avant l'étalonnage final ; hors éclair, à 0,4 et avec une vitre plus
+## sombre, le jardin disparaissait : 2/255 en haut de la vitre).
+const SKY_NET_K := 0.5
 const THUNDER_DB_PER_S := -3.2         # tonnerre : -3,2 dB par seconde de délai au-delà de 0,7 s
 const THUNDER_SHAKE_DELAY := 1.2       # tonnerre proche (délai < 1,2 s) : petite secousse de la vue
 const THUNDER_SHAKE := 0.05
@@ -870,6 +875,11 @@ func _apply_style() -> void:
 		if _sky_base < 0.0:
 			_sky_base = sky.energy_multiplier
 		sky.energy_multiplier = _sky_base * (SKY_NET_K if net else 1.0)
+	if lamp_in:
+		if _in_base < 0.0:
+			_in_base = _in_energy
+		_in_energy = _in_base * (LAMP_IN_NET_K if net else 1.0)
+		lamp_in.light_energy = _in_energy
 
 
 ## Un éclair : deux ou trois flashs, la pièce s'illumine à travers la fenêtre, puis le tonnerre.

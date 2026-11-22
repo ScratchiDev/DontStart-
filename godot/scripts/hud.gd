@@ -132,6 +132,7 @@ var chapter: Control
 var _chapter_tw: Tween
 var _ui_player: AudioStreamPlayer
 var _style_key := ""
+var _pending_chapter: Array = []
 
 
 func _ready() -> void:
@@ -721,9 +722,28 @@ func show_saving() -> void:
 
 ## Carte de chapitre (lot V3-INTERFACE) : « ACTE II » puis le titre (« Essais réels »), qui apparaît et
 ## s'efface sans rien bloquer. Option « Cartes de chapitre » (Game.chapter_cards). Sous le fondu au noir.
+## Elle attend que le joueur ait la main : pas de fondu au noir, aucun mot ni écran ouvert, inventaire fermé
+## (au début de l'acte II, le mot de Papi s'ouvre en même temps) ; elle se cache si l'un d'eux s'ouvre.
 func chapter_card(act: String, title: String, delay := 0.6) -> void:
 	if not Game.chapter_cards:
 		return
+	_pending_chapter = [act, title, delay]
+	_try_chapter()
+
+
+func _chapter_blocked() -> bool:
+	return is_reading() or inv_open or fade.color.a > 0.05
+
+
+func _try_chapter() -> void:
+	if _pending_chapter.is_empty() or _chapter_blocked():
+		return
+	var p: Array = _pending_chapter
+	_pending_chapter = []
+	_show_chapter(str(p[0]), str(p[1]), float(p[2]))
+
+
+func _show_chapter(act: String, title: String, delay: float) -> void:
 	if chapter and is_instance_valid(chapter):
 		chapter.queue_free()
 	# une bande sombre, douce, sur toute la largeur (le titre reste lisible sur un mur éclairé), puis le titre
@@ -1339,6 +1359,10 @@ func _process(delta: float) -> void:
 		if _hint_left <= 0.0:
 			create_tween().tween_property(hint_lbl, "modulate:a", 0.0, 0.6)
 	_process_objective(delta)
+	if not _pending_chapter.is_empty():
+		_try_chapter()
+	if chapter and is_instance_valid(chapter):
+		chapter.visible = not _chapter_blocked()
 	if save_ind.visible:
 		_save_spin = fmod(_save_spin + delta * 5.0, TAU)
 		save_ind.queue_redraw()

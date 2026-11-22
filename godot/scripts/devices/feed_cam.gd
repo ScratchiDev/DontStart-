@@ -20,13 +20,15 @@ const ALL_LAYERS := 0xFFFFF & ~(1 << (Viewmodel.LAYER - 1))
 ## Couche de RENDU de l'éclairage infrarouge des captures (lot V3-ETALONNAGE) : une lumière de cette seule
 ## couche n'est vue (et n'éclaire la scène) que par les caméras qui la gardent dans leur cull_mask : les
 ## caméras de flux, pas celle du joueur (Main l'en retire). Pendant capture() (vraie carte, hors rétro), un
-## projecteur infrarouge gris, posé sur la caméra, révèle les murs, les portes et le plafond ; la lampe du
-## joueur reste le plus clair de l'image. (Sans lui, la photo imprimée du couloir sortait à 61 % de pixels
-## noirs : sur vraie carte, la VoxelGI éteinte remplace la lumière ambiante du flux.)
+## projecteur infrarouge gris, posé sous l'objectif et tourné comme lui (cône IR_FILL_ANGLE : le plafond
+## autour du dôme reste hors du faisceau), révèle les murs, les portes et le sol ; la lampe du joueur reste
+## le plus clair de l'image. (Sans lui, la photo imprimée du couloir sortait à 61 % de pixels noirs : sur
+## vraie carte, la VoxelGI éteinte remplace la lumière ambiante du flux.)
 const LAYER_IR := 18
 const IR_FILL_COLOR := Color(0.82, 0.85, 0.9)
-const IR_FILL_RANGE := 9.0
-const IR_FILL_ATTENUATION := 1.4
+const IR_FILL_RANGE := 10.0
+const IR_FILL_ANGLE := 40.0
+const IR_FILL_ATTENUATION := 1.2
 const FEED_SHADER_CODE := """
 shader_type canvas_item;
 // Image d'une caméra de surveillance : noir et blanc, contraste, grain figé à la cadence de la
@@ -80,8 +82,8 @@ var flip_h := false
 var ir := 1.0                    # éclairage infrarouge de la caméra (lumière ambiante grise ; 0 = aucun)
 var exposure := 1.35             # exposition de l'image (les caméras « voient » mieux que l'œil la nuit)
 var shadows := false             # ombres des lampes dans l'image (coûteux en rendu logiciel)
-## Énergie de l'infrarouge des captures (capture(), vraie carte hors rétro ; 0 = aucun).
-var capture_fill := 0.7
+## Énergie de l'infrarouge des captures (capture(), vraie carte hors rétro ; 0 = aucun ; « -- --tune=ir_photo:… »).
+var capture_fill := 0.25
 ## Pièces dans lesquelles son image est regardée (console : « bureau » ; miroir : « sdb »).
 ## Haunt.room_changed() n'active la caméra que si le joueur est dans l'une d'elles.
 var viewer_rooms: PackedStringArray = []
@@ -97,7 +99,7 @@ var _room_ok := false
 var _t := 0.0
 var _clock_t := 0.0
 var _views: Array = []           # [racine, horodatage, point REC]
-var _ir_fill: OmniLight3D
+var _ir_fill: SpotLight3D
 
 
 func _enter_tree() -> void:
@@ -160,12 +162,14 @@ func build() -> void:
 	cam.environment = env
 	vp.add_child(cam)
 	cam.current = true
-	_ir_fill = OmniLight3D.new()
+	_ir_fill = SpotLight3D.new()
 	_ir_fill.name = "InfrarougeCapture"
 	_ir_fill.layers = 1 << (LAYER_IR - 1)
 	_ir_fill.light_color = IR_FILL_COLOR
-	_ir_fill.omni_range = IR_FILL_RANGE
-	_ir_fill.omni_attenuation = IR_FILL_ATTENUATION
+	_ir_fill.spot_range = IR_FILL_RANGE
+	_ir_fill.spot_angle = IR_FILL_ANGLE
+	_ir_fill.spot_angle_attenuation = 1.5
+	_ir_fill.spot_attenuation = IR_FILL_ATTENUATION
 	_ir_fill.shadow_enabled = false
 	_ir_fill.light_specular = 0.2
 	_ir_fill.light_volumetric_fog_energy = 0.0
@@ -173,6 +177,7 @@ func build() -> void:
 	_ir_fill.light_bake_mode = Light3D.BAKE_DISABLED
 	_ir_fill.visible = false
 	add_child(_ir_fill)
+	_ir_fill.position = Vector3(0.0, -0.05, -0.03)
 	_sync()
 
 
@@ -244,7 +249,7 @@ func capture() -> Image:
 	_sync()
 	var fill := _ir_fill != null and capture_fill > 0.0 and Qualite.extras_on()
 	if fill:
-		_ir_fill.light_energy = capture_fill
+		_ir_fill.light_energy = Main.tune("ir_photo", capture_fill)
 		_ir_fill.visible = true
 	var before := vp.render_target_update_mode
 	vp.render_target_update_mode = SubViewport.UPDATE_ONCE

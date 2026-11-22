@@ -2351,6 +2351,16 @@ func run_etal(ids: String, spec: String) -> void:
 					await wait(1.0)
 					await shot("e%d_38_calme" % vi)
 					await strike_shot("e%d_38_eclair" % vi)
+			if r.room_id == "couloir" and float(d.get("photo", 0.0)) > 0.5:
+				# (la photo imprimée de CAM 1 : le joueur dans le couloir, comme run_revue)
+				var cl: Node = house.rooms.get("couloir")
+				look_from(Vector3(4.0, 0, 3.6), Vector3(4.0, 0.8, 1.0))
+				cl.call("track", player)
+				await until(func() -> bool: return bool(cl.call("cam_on_target", 6.0)), 6.0)
+				await wait(0.5)
+				var ph: Image = await cl.call("photo")
+				if ph:
+					await tex_shot(ImageTexture.create_from_image(ph), "e%d_photo_couloir" % vi)
 	Main.tunes = {}
 
 
